@@ -113,7 +113,78 @@ async function main() {
     }
   });
 
-  console.log('Seed completo: rubros creados y Ahorróptica cargada como primer cliente.');
+  // ------------------------------------------------------------
+  // LuxVision — segundo tenant, usado para PROBAR el motor de
+  // disponibilidad y agendamiento con datos reales de horario.
+  // ------------------------------------------------------------
+  const luxvision = await prisma.empresa.upsert({
+    where: { id: 'luxvision-seed-id' },
+    update: {},
+    create: {
+      id: 'luxvision-seed-id',
+      nombre: 'LuxVision',
+      rubroTemplateId: optica.id
+    }
+  });
+
+  const recursoLuxVision = await prisma.recursoAgendable.upsert({
+    where: { id: 'luxvision-recurso-seed-id' },
+    update: {},
+    create: {
+      id: 'luxvision-recurso-seed-id',
+      empresaId: luxvision.id,
+      nombre: 'Optómetra LuxVision',
+      tipo: 'profesional',
+      duracionCitaMinutos: 30,
+      anticipacionMinimaMin: 120,
+      horizonteAgendaDias: 28
+    }
+  });
+
+  // Horario real: Lunes(1), Miércoles(3), Viernes(5) 10:00-13:30 y 14:30-19:00.
+  // Sábado(6) 10:00-14:00.
+  const bloquesHorario = [
+    { diaSemana: 1, horaInicio: '10:00', horaFin: '13:30' },
+    { diaSemana: 1, horaInicio: '14:30', horaFin: '19:00' },
+    { diaSemana: 3, horaInicio: '10:00', horaFin: '13:30' },
+    { diaSemana: 3, horaInicio: '14:30', horaFin: '19:00' },
+    { diaSemana: 5, horaInicio: '10:00', horaFin: '13:30' },
+    { diaSemana: 5, horaInicio: '14:30', horaFin: '19:00' },
+    { diaSemana: 6, horaInicio: '10:00', horaFin: '14:00' }
+  ];
+
+  for (const bloque of bloquesHorario) {
+    const idDeterministico = `luxvision-horario-${bloque.diaSemana}-${bloque.horaInicio}`;
+    await prisma.horarioSemanal.upsert({
+      where: { id: idDeterministico },
+      update: {},
+      create: {
+        id: idDeterministico,
+        recursoAgendableId: recursoLuxVision.id,
+        diaSemana: bloque.diaSemana,
+        horaInicio: bloque.horaInicio,
+        horaFin: bloque.horaFin,
+        activo: true
+      }
+    });
+  }
+
+  const serviciosLuxVision = ['Examen de la vista', 'Control anual', 'Adaptación lentes de contacto'];
+  for (const nombreServicio of serviciosLuxVision) {
+    const idDeterministico = `luxvision-servicio-${nombreServicio.toLowerCase().replace(/\s+/g, '-')}`;
+    await prisma.servicio.upsert({
+      where: { id: idDeterministico },
+      update: {},
+      create: {
+        id: idDeterministico,
+        empresaId: luxvision.id,
+        nombre: nombreServicio,
+        duracionMinutos: 30
+      }
+    });
+  }
+
+  console.log('Seed completo: rubros, Ahorróptica y LuxVision (con horario y servicios) cargados.');
 }
 
 main()
