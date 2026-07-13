@@ -3,7 +3,7 @@ const express = require('express');
 const cors = require('cors');
 const prisma = require('./lib/prisma');
 const { sendWhatsAppTextMessage } = require('./services/whatsapp');
-const { generarRespuestaChatbot } = require('./services/claude');
+const { procesarMensajeEntrante } = require('./services/chatbotEngine');
 
 const app = express();
 app.use(cors());
@@ -54,7 +54,7 @@ app.post('/webhook/whatsapp', async (req, res) => {
     const textoEntrante = mensaje.text?.body || '';
     const nombreContacto = value.contacts?.[0]?.profile?.name || null;
 
-    // 1. Identificar a qué empresa (tenant) pertenece este número de WhatsApp
+    // Identificar a qué empresa (tenant) pertenece este número de WhatsApp
     const empresa = await prisma.empresa.findFirst({
       where: { whatsappNumeroId: phoneNumberId },
       include: { rubroTemplate: true },
@@ -65,36 +65,14 @@ app.post('/webhook/whatsapp', async (req, res) => {
       return;
     }
 
-    // 2. Buscar o crear el Cliente por teléfono dentro de esa empresa
-    let cliente = await prisma.cliente.findFirst({
-      where: { empresaId: empresa.id, telefono: telefonoCliente },
-    });
-
-    if (!cliente) {
-      cliente = await prisma.cliente.create({
-        data: {
-          empresaId: empresa.id,
-          telefono: telefonoCliente,
-          nombre: nombreContacto || 'Sin nombre',
-        },
-      });
-    }
-
-    // 3. Buscar o crear la Conversacion activa con este cliente
-    let conversacion = await prisma.conversacion.findFirst({
-      where: { empresaId: empresa.id, telefono: telefonoCliente },
-    });
-
-    const historialPrevio = conversacion?.mensajes || [];
-
-    // 4. Generar la respuesta con Claude, usando el historial guardado
-    const respuestaTexto = await generarRespuestaChatbot({
+    const { respuestaTexto } = await procesarMensajeEntrante({
       empresa,
-      historial: historialPrevio,
-      mensajeEntrante: textoEntrante,
+      telefonoCliente,
+      textoEntrante,
+      nombreContacto,
     });
 
-    // 5. Enviar la respuesta por WhatsApp
+    // Enviar la respuesta por WhatsApp
     const accessToken = empresa.whatsappToken || process.env.WHATSAPP_ACCESS_TOKEN;
 
     if (!accessToken) {
@@ -109,27 +87,49 @@ app.post('/webhook/whatsapp', async (req, res) => {
       accessToken,
     });
 
-    // 6. Guardar el intercambio (mensaje entrante + respuesta) en la Conversacion
-    const mensajesActualizados = [
-      ...historialPrevio,
-      { rol: 'usuario', contenido: textoEntrante, timestamp: new Date().toISOString() },
-      { rol: 'asistente', contenido: respuestaTexto, timestamp: new Date().toISOString() },
-    ];
-
-    await prisma.conversacion.upsert({
-      where: { id: conversacion?.id || '00000000-0000-0000-0000-000000000000' },
-      update: { mensajes: mensajesActualizados, clienteId: cliente.id },
-      create: {
-        empresaId: empresa.id,
-        clienteId: cliente.id,
-        telefono: telefonoCliente,
-        mensajes: mensajesActualizados,
-      },
-    });
-
     console.log(`Respondido a ${telefonoCliente} (${empresa.nombre}): "${respuestaTexto}"`);
   } catch (error) {
     console.error('Error procesando mensaje entrante de WhatsApp:', error);
+  }
+});
+
+// ------------------------------------------------------------
+// ENDPOINT DE PRUEBA — simula una conversación SIN pasar por WhatsApp.
+// Útil para probar disponibilidad/agendamiento con tenants (ej. LuxVision)
+// que todavía no tienen número de WhatsApp conectado a esta app.
+//
+// NOTA: este endpoint no tiene autenticación — es solo para pruebas
+// internas durante el desarrollo. Debe eliminarse o protegerse antes
+// de considerar el backend listo para producción real.
+// ------------------------------------------------------------
+app.post('/test/chat', async (req, res) => {
+  try {
+    const { empresaId, telefono, mensaje } = req.body;
+
+    if (!empresaId || !telefono || !mensaje) {
+      return res.status(400).json({ error: 'Faltan campos: empresaId, telefono, mensaje' });
+    }
+
+    const empresa = await prisma.empresa.findUnique({
+      where: { id: empresaId },
+      include: { rubroTemplate: true },
+    });
+
+    if (!empresa) {
+      return res.status(404).json({ error: `Empresa ${empresaId} no existe` });
+    }
+
+    const { respuestaTexto } = await procesarMensajeEntrante({
+      empresa,
+      telefonoCliente: telefono,
+      textoEntrante: mensaje,
+      nombreContacto: 'Cliente de prueba',
+    });
+
+    res.json({ respuesta: respuestaTexto });
+  } catch (error) {
+    console.error('Error en /test/chat:', error);
+    res.status(500).json({ error: error.message });
   }
 });
 
