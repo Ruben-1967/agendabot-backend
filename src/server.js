@@ -4,10 +4,12 @@ const cors = require('cors');
 const prisma = require('./lib/prisma');
 const { sendWhatsAppTextMessage } = require('./services/whatsapp');
 const { procesarMensajeEntrante } = require('./services/chatbotEngine');
+const { renderFormulario, renderConfirmacion, PLANES } = require('./services/contratoHtml');
 
 const app = express();
 app.use(cors());
 app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
 app.get('/', (req, res) => {
   res.json({ status: 'ok', app: 'AgendaBot backend' });
@@ -90,6 +92,79 @@ app.post('/webhook/whatsapp', async (req, res) => {
     console.log(`Respondido a ${telefonoCliente} (${empresa.nombre}): "${respuestaTexto}"`);
   } catch (error) {
     console.error('Error procesando mensaje entrante de WhatsApp:', error);
+  }
+});
+
+// ------------------------------------------------------------
+// CONTRATO DE ACEPTACIÓN (clickwrap) — el cliente elige plan y acepta
+// ------------------------------------------------------------
+app.get('/contrato/:empresaId', async (req, res) => {
+  const empresa = await prisma.empresa.findUnique({ where: { id: req.params.empresaId } });
+
+  if (!empresa) {
+    return res.status(404).send('Empresa no encontrada');
+  }
+
+  res.send(renderFormulario(empresa));
+});
+
+app.post('/contrato/:empresaId/aceptar', async (req, res) => {
+  try {
+    const empresa = await prisma.empresa.findUnique({ where: { id: req.params.empresaId } });
+    if (!empresa) {
+      return res.status(404).send('Empresa no encontrada');
+    }
+
+    const { plan, nombreQuienAcepta, emailQuienAcepta, aceptoTerminos, aceptoDatosPacientes } = req.body;
+    const planInfo = PLANES[plan];
+
+    if (!planInfo) {
+      return res.status(400).send('Plan inválido');
+    }
+
+    const hoy = new Date();
+    const proximoCobroHosting = new Date(hoy);
+    proximoCobroHosting.setFullYear(proximoCobroHosting.getFullYear() + 1);
+
+    // Registrar/actualizar la Suscripcion con el plan elegido
+    await prisma.suscripcion.upsert({
+      where: { empresaId: empresa.id },
+      update: {
+        plan,
+        montoMensualActual: planInfo.montoMensual,
+        citasIncluidas: planInfo.citasIncluidas,
+        precioCitaExcedente: planInfo.precioCitaExcedente,
+      },
+      create: {
+        empresaId: empresa.id,
+        plan,
+        estado: 'PENDIENTE_PAGO',
+        montoMensualActual: planInfo.montoMensual,
+        citasIncluidas: planInfo.citasIncluidas,
+        precioCitaExcedente: planInfo.precioCitaExcedente,
+        fechaProximoCobro: hoy,
+        fechaProximoCobroHosting: proximoCobroHosting,
+      },
+    });
+
+    // Dejar registro legal de la aceptación (clickwrap)
+    await prisma.contratoAceptado.create({
+      data: {
+        empresaId: empresa.id,
+        versionContrato: 'grilla-abc-v1',
+        aceptoTerminos: aceptoTerminos === 'true',
+        aceptoDatosPacientes: aceptoDatosPacientes === 'true',
+        nombreQuienAcepta,
+        emailQuienAcepta,
+        ipAddress: req.ip,
+        userAgent: req.headers['user-agent'],
+      },
+    });
+
+    res.send(renderConfirmacion({ empresa, plan, nombreQuienAcepta }));
+  } catch (error) {
+    console.error('Error al aceptar contrato:', error);
+    res.status(500).send('Ocurrió un error al procesar la aceptación. Por favor intenta de nuevo.');
   }
 });
 
