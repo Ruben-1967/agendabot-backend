@@ -1,0 +1,411 @@
+// ============================================================
+// AgendaBot (MultiDigital) — Modelo de datos
+// Multi-tenant, multi-rubro, agenda + chatbot + suscripciones
+// ============================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ------------------------------------------------------------
+// RUBROS Y PLANTILLAS
+// Define qué campos captura la "ficha de cliente" de cada rubro
+// (receta óptica, ficha estética, ficha de equipo, etc.)
+// ------------------------------------------------------------
+model RubroTemplate {
+  id            String   @id @default(uuid())
+  clave         String   @unique // "optica", "centro_estetico", "salud_independiente", "mantencion_tecnica", "otro"
+  nombre        String
+  camposFicha   Json     // definición de los campos de la ficha de cliente para este rubro
+  serviciosBase Json     // lista de tipos de servicio sugeridos (ej. "Examen de la vista")
+  automatizacionesBase Json // reglas de automatización sugeridas (ej. recordatorio de control anual)
+  creadoEn      DateTime @default(now())
+
+  empresas Empresa[]
+}
+
+// ------------------------------------------------------------
+// EMPRESAS (TENANTS)
+// Cada cliente de AgendaBot es una Empresa (Ahorróptica, etc.)
+// ------------------------------------------------------------
+model Empresa {
+  id              String   @id @default(uuid())
+  nombre          String   // "Ahorróptica"
+  sucursal        String?  // "Sucursal Lautaro"
+  rut             String?
+  telefonoContacto String?
+
+  rubroTemplate   RubroTemplate @relation(fields: [rubroTemplateId], references: [id])
+  rubroTemplateId String
+
+  // WhatsApp Business propio del cliente (no de MultiDigital)
+  whatsappNumeroId String? // phone_number_id de Meta
+  whatsappWabaId   String? // ID de la WhatsApp Business Account
+  whatsappToken    String? // token de acceso (almacenar cifrado en producción)
+
+  googleCalendarId    String?
+  googleRefreshToken  String? // almacenar cifrado en producción
+
+  creadoEn        DateTime @default(now())
+
+  usuarios        Usuario[]
+  recursos        RecursoAgendable[]
+  clientes        Cliente[]
+  servicios       Servicio[]
+  citas           Cita[]
+  listaEspera     ListaEspera[]
+  conversaciones  Conversacion[]
+  ventas          Venta[]
+  suscripcion     Suscripcion?
+  contratosAceptados ContratoAceptado[]
+
+  @@index([rubroTemplateId])
+}
+
+// ------------------------------------------------------------
+// USUARIOS DEL PANEL (staff de cada empresa)
+// ------------------------------------------------------------
+enum RolUsuario {
+  ADMIN       // dueño/administrador de la empresa cliente
+  RECEPCION   // solo agenda, sin ver datos clínicos
+  PROFESIONAL // ve su propia disponibilidad y ficha clínica de sus clientes
+}
+
+model Usuario {
+  id        String     @id @default(uuid())
+  empresa   Empresa    @relation(fields: [empresaId], references: [id])
+  empresaId String
+
+  nombre    String
+  email     String     @unique
+  passwordHash String
+  rol       RolUsuario
+
+  // Si el usuario es un profesional, se vincula a su recurso agendable
+  recursoAgendable   RecursoAgendable? @relation(fields: [recursoAgendableId], references: [id])
+  recursoAgendableId String?
+
+  creadoEn  DateTime   @default(now())
+
+  @@index([empresaId])
+}
+
+// ------------------------------------------------------------
+// RECURSOS AGENDABLES (profesionales, boxes, máquinas, etc.)
+// ------------------------------------------------------------
+model RecursoAgendable {
+  id        String   @id @default(uuid())
+  empresa   Empresa  @relation(fields: [empresaId], references: [id])
+  empresaId String
+
+  nombre    String   // "Dra. Camila Reyes"
+  tipo      String   @default("profesional") // "profesional" | "box" | "equipo"
+
+  duracionCitaMinutos   Int @default(30)
+  anticipacionMinimaMin Int @default(120) // minutos mínimos antes de poder agendar
+  horizonteAgendaDias   Int @default(28)
+
+  horarios     HorarioSemanal[]
+  bloqueos     Bloqueo[]
+  citas        Cita[]
+  usuarios     Usuario[]
+
+  @@index([empresaId])
+}
+
+model HorarioSemanal {
+  id                 String   @id @default(uuid())
+  recurso            RecursoAgendable @relation(fields: [recursoAgendableId], references: [id])
+  recursoAgendableId String
+
+  diaSemana  Int      // 0 = domingo ... 6 = sábado
+  horaInicio String   // "09:00"
+  horaFin    String   // "13:00"
+  activo     Boolean  @default(true)
+
+  @@index([recursoAgendableId])
+}
+
+model Bloqueo {
+  id                 String   @id @default(uuid())
+  recurso            RecursoAgendable @relation(fields: [recursoAgendableId], references: [id])
+  recursoAgendableId String
+
+  fechaInicio DateTime
+  fechaFin    DateTime
+  motivo      String?
+
+  @@index([recursoAgendableId])
+}
+
+// ------------------------------------------------------------
+// SERVICIOS (tipos de atención que ofrece cada empresa)
+// ------------------------------------------------------------
+model Servicio {
+  id        String   @id @default(uuid())
+  empresa   Empresa  @relation(fields: [empresaId], references: [id])
+  empresaId String
+
+  nombre    String   // "Examen de la vista", "Limpieza facial", "Mantención preventiva"
+  duracionMinutos Int?
+  activo    Boolean  @default(true)
+
+  citas     Cita[]
+
+  @@index([empresaId])
+}
+
+// ------------------------------------------------------------
+// CLIENTES / PACIENTES (genérico, ficha configurable por rubro)
+// ------------------------------------------------------------
+model Cliente {
+  id        String   @id @default(uuid())
+  empresa   Empresa  @relation(fields: [empresaId], references: [id])
+  empresaId String
+
+  nombre    String
+  rut       String?
+  telefono  String?
+  email     String?
+  fechaNacimiento DateTime?
+
+  // Datos específicos del rubro (receta óptica, ficha estética, ficha de equipo, etc.)
+  // La estructura de este JSON la define RubroTemplate.camposFicha
+  // Los campos "clínicos" dentro de fichaJson deben filtrarse por rol al leer (RECEPCION no los ve)
+  fichaJson Json?
+
+  consentimientoDatos Boolean @default(false)
+  consentimientoFecha DateTime?
+
+  creadoEn  DateTime @default(now())
+
+  citas       Cita[]
+  listaEspera ListaEspera[]
+  ventas      Venta[]
+  conversaciones Conversacion[]
+
+  @@index([empresaId])
+  @@index([telefono])
+}
+
+// ------------------------------------------------------------
+// CITAS
+// ------------------------------------------------------------
+enum EstadoCita {
+  PENDIENTE
+  CONFIRMADA
+  CANCELADA
+  COMPLETADA
+  NO_ASISTIO
+}
+
+model Cita {
+  id        String   @id @default(uuid())
+  empresa   Empresa  @relation(fields: [empresaId], references: [id])
+  empresaId String
+
+  cliente   Cliente  @relation(fields: [clienteId], references: [id])
+  clienteId String
+
+  recurso   RecursoAgendable @relation(fields: [recursoAgendableId], references: [id])
+  recursoAgendableId String
+
+  servicio  Servicio? @relation(fields: [servicioId], references: [id])
+  servicioId String?
+
+  fechaHoraInicio DateTime
+  fechaHoraFin    DateTime
+  estado    EstadoCita @default(PENDIENTE)
+
+  googleEventId String? // id del evento creado en Google Calendar
+
+  origenCanal String @default("whatsapp") // "whatsapp" | "panel" | "widget"
+
+  creadoEn  DateTime @default(now())
+  actualizadoEn DateTime @updatedAt
+
+  @@index([empresaId, fechaHoraInicio])
+  @@index([clienteId])
+  @@index([recursoAgendableId])
+}
+
+// ------------------------------------------------------------
+// LISTA DE ESPERA
+// ------------------------------------------------------------
+enum EstadoListaEspera {
+  ESPERANDO
+  OFRECIDO
+  CONFIRMADO
+  EXPIRADO
+  CANCELADO
+}
+
+model ListaEspera {
+  id        String   @id @default(uuid())
+  empresa   Empresa  @relation(fields: [empresaId], references: [id])
+  empresaId String
+
+  cliente   Cliente  @relation(fields: [clienteId], references: [id])
+  clienteId String
+
+  preferenciaRecursoId String?  // null = cualquier profesional
+  preferenciaFranja    String?  // ej. "AM", "PM", "esta semana"
+
+  estado    EstadoListaEspera @default(ESPERANDO)
+  ofrecidoEn DateTime?
+  expiraEn   DateTime?
+
+  creadoEn  DateTime @default(now())
+
+  @@index([empresaId])
+}
+
+// ------------------------------------------------------------
+// CONVERSACIONES DE WHATSAPP (historial + estado del chatbot)
+// ------------------------------------------------------------
+model Conversacion {
+  id        String   @id @default(uuid())
+  empresa   Empresa  @relation(fields: [empresaId], references: [id])
+  empresaId String
+
+  cliente   Cliente? @relation(fields: [clienteId], references: [id])
+  clienteId String?
+
+  telefono  String   // número del paciente, por si aún no existe como Cliente
+  mensajes  Json      // arreglo de {rol, contenido, timestamp}
+  escaladoAHumano Boolean @default(false)
+
+  actualizadoEn DateTime @updatedAt
+  creadoEn  DateTime @default(now())
+
+  @@index([empresaId])
+  @@index([telefono])
+}
+
+// ------------------------------------------------------------
+// VENTAS (compras del cliente: armazones, sesiones, mantenciones, etc.)
+// ------------------------------------------------------------
+enum EstadoPagoVenta {
+  PAGADO
+  PENDIENTE
+}
+
+model Venta {
+  id        String   @id @default(uuid())
+  empresa   Empresa  @relation(fields: [empresaId], references: [id])
+  empresaId String
+
+  cliente   Cliente  @relation(fields: [clienteId], references: [id])
+  clienteId String
+
+  descripcion String  // "Armazón Ray-Ban + cristales progresivos"
+  monto       Int     // en CLP
+  estadoPago  EstadoPagoVenta @default(PENDIENTE)
+
+  fichaAsociadaId String? // referencia opcional a la receta/ficha vigente al momento de la venta
+
+  creadoEn  DateTime @default(now())
+
+  @@index([empresaId])
+  @@index([clienteId])
+}
+
+// ------------------------------------------------------------
+// SUSCRIPCIÓN Y FACTURACIÓN
+// ------------------------------------------------------------
+enum PlanSuscripcion {
+  PLAN_A
+  PLAN_B
+  PLAN_C
+  PLAN_INICIO_LEGACY // condiciones especiales de Ahorróptica, pre-grilla A/B/C
+}
+
+enum EstadoSuscripcion {
+  PENDIENTE_PAGO
+  ACTIVA
+  PAUSADA_POR_IMPAGO
+  CANCELADA
+}
+
+model Suscripcion {
+  id        String   @id @default(uuid())
+  empresa   Empresa  @relation(fields: [empresaId], references: [id])
+  empresaId String   @unique
+
+  plan      PlanSuscripcion
+  estado    EstadoSuscripcion @default(PENDIENTE_PAGO)
+
+  tokenFlow String?  // token de tarjeta tokenizada en Flow
+
+  fechaInicio           DateTime @default(now())
+  fechaCambioPrecio     DateTime? // fechaInicio + 6 meses, para planes con promo inicial
+  montoMensualActual    Int
+  citasIncluidas        Int
+  precioCitaExcedente   Int
+
+  fechaProximoCobro         DateTime
+  fechaProximoCobroHosting  DateTime
+
+  intentosFallidosConsecutivos Int @default(0)
+  fechaUltimoPago               DateTime?
+
+  pagos     Pago[]
+
+  @@index([empresaId])
+}
+
+enum TipoPago {
+  MENSUALIDAD
+  HOSTING
+  PRIMER_PAGO
+  EXCEDENTE
+}
+
+enum EstadoPago {
+  EXITOSO
+  FALLIDO
+}
+
+model Pago {
+  id             String   @id @default(uuid())
+  suscripcion    Suscripcion @relation(fields: [suscripcionId], references: [id])
+  suscripcionId  String
+
+  tipo           TipoPago
+  monto          Int
+  valorUfDelDia  Float?   // solo si tipo = HOSTING
+  estado         EstadoPago
+  flowOrderId    String?
+  boletaFolio    String?
+
+  fecha          DateTime @default(now())
+
+  @@index([suscripcionId])
+}
+
+// ------------------------------------------------------------
+// CONTRATO DE ACEPTACIÓN (registro legal del clickwrap)
+// ------------------------------------------------------------
+model ContratoAceptado {
+  id            String   @id @default(uuid())
+  empresa       Empresa  @relation(fields: [empresaId], references: [id])
+  empresaId     String
+
+  versionContrato String  // ej. "plan-inicio-v1"
+  aceptoTerminos      Boolean
+  aceptoDatosPacientes Boolean
+
+  nombreQuienAcepta String
+  emailQuienAcepta  String
+  ipAddress         String?
+  userAgent         String?
+
+  fechaAceptacion   DateTime @default(now())
+
+  @@index([empresaId])
+}
