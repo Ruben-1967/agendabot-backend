@@ -4,7 +4,7 @@ const cors = require('cors');
 const prisma = require('./lib/prisma');
 const { sendWhatsAppTextMessage } = require('./services/whatsapp');
 const { procesarMensajeEntrante } = require('./services/chatbotEngine');
-const { renderFormulario, renderConfirmacion, PLANES } = require('./services/contratoHtml');
+const { renderFormulario, PLANES } = require('./services/contratoHtml');
 
 const app = express();
 app.use(cors());
@@ -161,7 +161,12 @@ app.post('/contrato/:empresaId/aceptar', async (req, res) => {
       },
     });
 
-    res.send(renderConfirmacion({ empresa, plan, nombreQuienAcepta }));
+    res.json({
+      ok: true,
+      empresaNombre: empresa.nombre,
+      plan,
+      planLabel: planInfo.etiqueta,
+    });
   } catch (error) {
     console.error('Error al aceptar contrato:', error);
     res.status(500).send('Ocurrió un error al procesar la aceptación. Por favor intenta de nuevo.');
