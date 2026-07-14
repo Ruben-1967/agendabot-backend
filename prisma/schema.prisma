@@ -43,6 +43,8 @@ model Empresa {
   rubroTemplate   RubroTemplate @relation(fields: [rubroTemplateId], references: [id])
   rubroTemplateId String
 
+  logoUrl         String? // URL del logo del negocio (para el panel, el chatbot, y la futura landing page)
+
   // WhatsApp Business propio del cliente (no de MultiDigital)
   whatsappNumeroId String? // phone_number_id de Meta
   whatsappWabaId   String? // ID de la WhatsApp Business Account
@@ -181,6 +183,11 @@ model Cliente {
 
   consentimientoDatos Boolean @default(false)
   consentimientoFecha DateTime?
+
+  // Control de recordatorios automáticos (evita reenviar el mismo aviso
+  // repetidamente). Se agregarán más campos similares si se suman otros
+  // tipos de recordatorio por rubro (ej. próxima sesión, mantención).
+  recordatorioControlAnualEnviadoEn DateTime?
 
   creadoEn  DateTime @default(now())
 
