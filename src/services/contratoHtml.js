@@ -167,6 +167,10 @@ function renderFormulario(empresa) {
       <div class="price-line"><span class="lbl">Citas incluidas</span><span class="val" id="sel-citas"></span></div>
       <div class="price-line"><span class="lbl">Excedente por cita</span><span class="val" id="sel-excedente"></span></div>
       <div class="price-line"><span class="lbl">Hosting (anual)</span><span class="val">1 UF<small> /año</small></span></div>
+      <div class="price-line"><span class="lbl">Clientes y pacientes registrados</span><span class="val">Ilimitados</span></div>
+      <div class="price-line"><span class="lbl">Servicios configurables</span><span class="val">Ilimitados</span></div>
+      <div class="price-line"><span class="lbl">Profesionales / boxes agendables</span><span class="val">Ilimitados</span></div>
+      <div class="price-line"><span class="lbl">Usuarios del panel administrativo</span><span class="val">Ilimitados</span></div>
       <div class="first-charge" id="sel-first-charge"></div>
     </div>
 
@@ -178,16 +182,6 @@ function renderFormulario(empresa) {
         <li>Puedes cancelar cuando quieras, avisando con 30 días de anticipación</li>
         <li>Los datos de tus pacientes son tuyos — exportables si algún día te vas</li>
         <li>La cuenta de WhatsApp Business queda a tu nombre, no al de MultiDigital</li>
-      </ul>
-    </div>
-
-    <div class="summary">
-      <h3>Incluido siempre, sin importar tu plan</h3>
-      <ul>
-        <li>Clientes y pacientes registrados: ilimitados</li>
-        <li>Servicios configurables: ilimitados</li>
-        <li>Profesionales / boxes agendables: ilimitados</li>
-        <li>Usuarios del panel administrativo: ilimitados</li>
       </ul>
     </div>
 
