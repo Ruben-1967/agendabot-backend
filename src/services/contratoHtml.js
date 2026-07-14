@@ -52,10 +52,15 @@ function renderFormulario(empresa) {
   .sub{color:var(--muted);font-size:.9rem;margin:0 0 22px;line-height:1.5;}
 
   /* ---------- SELECTOR DE PLAN ---------- */
-  .plan-selector{display:flex;gap:8px;margin-bottom:14px;}
+  .plan-selector{display:flex;gap:8px;margin-bottom:14px;align-items:flex-start;}
   .plan-option{
-    flex:1;text-align:center;padding:11px 6px;border:1.5px solid var(--line);border-radius:8px;
+    position:relative;flex:1;text-align:center;padding:11px 6px;border:1.5px solid var(--line);border-radius:8px;
     cursor:pointer;background:var(--card);transition:background .15s,border-color .15s;
+  }
+  .plan-badge{
+    position:absolute;top:-10px;left:50%;transform:translateX(-50%);
+    background:var(--brass);color:#fff;font-size:.62rem;font-weight:700;letter-spacing:.02em;
+    padding:2px 8px;border-radius:10px;white-space:nowrap;text-transform:uppercase;
   }
   .plan-option .name{font-weight:600;font-size:.85rem;}
   .plan-option .price{font-family:'IBM Plex Mono',monospace;font-size:.76rem;color:var(--muted);margin-top:2px;}
@@ -258,6 +263,7 @@ function renderFormulario(empresa) {
     const cont = document.getElementById('plan-selector');
     cont.innerHTML = Object.entries(PLANES).map(([clave, p]) => \`
       <div class="plan-option \${clave === planActual ? 'active' : ''}" onclick="elegirPlan('\${clave}')">
+        \${clave === 'PLAN_B' ? '<div class="plan-badge">Más elegido</div>' : ''}
         <div class="name">\${p.etiqueta}</div>
         <div class="price">\${formatoCLP(p.montoMensual)}/mes</div>
       </div>
