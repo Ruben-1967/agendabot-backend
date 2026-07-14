@@ -11,7 +11,7 @@
 
 require('dotenv').config();
 const fs = require('fs');
-const prisma = require('../lib/prisma');
+const prisma = require('../src/lib/prisma');
 
 const EMPRESA_ID = 'luxvision-seed-id';
 
