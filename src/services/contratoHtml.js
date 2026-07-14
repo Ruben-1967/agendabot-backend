@@ -181,6 +181,18 @@ function renderFormulario(empresa) {
       </ul>
     </div>
 
+    <div class="summary">
+      <h3>Incluido siempre, sin importar tu plan</h3>
+      <ul>
+        <li>Clientes y pacientes registrados: ilimitados</li>
+        <li>Servicios configurables: ilimitados</li>
+        <li>Profesionales / boxes agendables: ilimitados</li>
+        <li>Usuarios del panel administrativo: ilimitados</li>
+        <li>Historial de conversaciones conservado sin límite de tiempo</li>
+        <li>Actualizaciones de la plataforma incluidas siempre</li>
+      </ul>
+    </div>
+
     <div class="your-data">
       <h3>Quién acepta</h3>
       <label>Nombre completo
