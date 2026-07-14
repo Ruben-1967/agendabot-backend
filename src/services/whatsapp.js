@@ -39,4 +39,53 @@ async function sendWhatsAppTextMessage({ phoneNumberId, to, text, accessToken })
   return data;
 }
 
-module.exports = { sendWhatsAppTextMessage };
+/**
+ * Envía un mensaje de PLANTILLA por WhatsApp (obligatorio para mensajes
+ * iniciados por el negocio, fuera de la ventana de 24h de servicio).
+ *
+ * @param {Object} params
+ * @param {string} params.phoneNumberId
+ * @param {string} params.to
+ * @param {string} params.accessToken
+ * @param {string} params.templateName - Nombre exacto de la plantilla aprobada (ej. 'recordatorio_control_anual').
+ * @param {string[]} params.variables - Valores en orden para {{1}}, {{2}}, etc. del body.
+ */
+async function sendWhatsAppTemplateMessage({ phoneNumberId, to, accessToken, templateName, variables = [] }) {
+  const url = `https://graph.facebook.com/${GRAPH_API_VERSION}/${phoneNumberId}/messages`;
+
+  const components = variables.length > 0
+    ? [{
+        type: 'body',
+        parameters: variables.map((texto) => ({ type: 'text', text: texto })),
+      }]
+    : [];
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${accessToken}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      messaging_product: 'whatsapp',
+      to,
+      type: 'template',
+      template: {
+        name: templateName,
+        language: { code: 'es' },
+        components,
+      },
+    }),
+  });
+
+  const data = await response.json();
+
+  if (!response.ok) {
+    console.error('Error enviando plantilla de WhatsApp:', JSON.stringify(data, null, 2));
+    throw new Error(`WhatsApp API error: ${data.error?.message || response.statusText}`);
+  }
+
+  return data;
+}
+
+module.exports = { sendWhatsAppTextMessage, sendWhatsAppTemplateMessage };
