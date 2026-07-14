@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Importa clientes históricos desde un archivo CSV con columnas:
-// fecha,nombre,telefono
+// fecha;nombre;telefono  (o separadas por coma, se detecta solo)
 //
 // El "fecha" se guarda como fichaJson.receta.fecha, que es lo que usa
 // el cron de recordatorios (src/jobs/enviarRecordatorios.js) para saber
@@ -47,23 +47,30 @@ function convertirFecha(ddmmyyyy) {
 
 /**
  * Parser simple de CSV: soporta campos entre comillas (por si algún
- * nombre trae coma adentro), separador coma.
+ * nombre trae coma adentro), y detecta automáticamente si el separador
+ * es coma (,) o punto y coma (;) — Excel en español suele exportar con ";".
  */
 function parsearCSV(contenido) {
   const lineas = contenido.trim().split('\n').filter((l) => l.trim().length > 0);
+  const encabezado = lineas[0];
+  const separador =
+    (encabezado.match(/;/g) || []).length >= (encabezado.match(/,/g) || []).length ? ';' : ',';
+
   const filas = lineas.slice(1); // saltar encabezado
 
-  return filas.map((linea, i) => {
-    const columnas = linea.split(',').map((v) => v.trim().replace(/^"|"$/g, ''));
-    const [fecha, nombre, telefono] = columnas;
+  return filas
+    .map((linea, i) => {
+      const columnas = linea.split(separador).map((v) => v.trim().replace(/^"|"$/g, ''));
+      const [fecha, nombre, telefono] = columnas;
 
-    if (!fecha || !nombre || !telefono) {
-      console.warn(`Fila ${i + 2} incompleta, se omite: "${linea}"`);
-      return null;
-    }
+      if (!fecha || !nombre || !telefono) {
+        console.warn(`Fila ${i + 2} incompleta, se omite: "${linea}"`);
+        return null;
+      }
 
-    return { fecha, nombre, telefono };
-  }).filter(Boolean);
+      return { fecha, nombre, telefono };
+    })
+    .filter(Boolean);
 }
 
 async function importar(rutaArchivo) {
