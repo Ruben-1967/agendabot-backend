@@ -45,15 +45,19 @@ app.post('/webhook/whatsapp', async (req, res) => {
     const value = change?.value;
     const mensaje = value?.messages?.[0];
 
-    // Ignoramos silenciosamente eventos que no son mensajes de texto entrantes
-    // (ej. confirmaciones de entrega/lectura, cambios de estado de cuenta, etc.)
-    if (!mensaje || mensaje.type !== 'text') {
+    // Aceptamos mensajes de texto libre Y clics en botones de plantillas
+    // (ej. el botón "Agendar" del recordatorio de control anual).
+    // Ignoramos silenciosamente cualquier otro tipo (imágenes, ubicación,
+    // confirmaciones de entrega/lectura, cambios de estado de cuenta, etc.).
+    if (!mensaje || (mensaje.type !== 'text' && mensaje.type !== 'button')) {
       return;
     }
 
     const phoneNumberId = value.metadata?.phone_number_id;
     const telefonoCliente = mensaje.from; // ej. "56912345678"
-    const textoEntrante = mensaje.text?.body || '';
+    const textoEntrante = mensaje.type === 'button'
+      ? (mensaje.button?.text || '')
+      : (mensaje.text?.body || '');
     const nombreContacto = value.contacts?.[0]?.profile?.name || null;
 
     // Identificar a qué empresa (tenant) pertenece este número de WhatsApp
