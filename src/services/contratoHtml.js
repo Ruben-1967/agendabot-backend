@@ -188,8 +188,6 @@ function renderFormulario(empresa) {
         <li>Servicios configurables: ilimitados</li>
         <li>Profesionales / boxes agendables: ilimitados</li>
         <li>Usuarios del panel administrativo: ilimitados</li>
-        <li>Historial de conversaciones conservado sin límite de tiempo</li>
-        <li>Actualizaciones de la plataforma incluidas siempre</li>
       </ul>
     </div>
 
