@@ -5,11 +5,29 @@ const prisma = require('./lib/prisma');
 const { sendWhatsAppTextMessage } = require('./services/whatsapp');
 const { procesarMensajeEntrante } = require('./services/chatbotEngine');
 const { renderFormulario, PLANES } = require('./services/contratoHtml');
+const authRouter = require('./routes/auth');
+const campanasRouter = require('./routes/campanas');
+const productosRouter = require('./routes/productos');
+const pedidosRouter = require('./routes/pedidos');
+const { procesarMensajeCatalogoRotativo } = require('./services/pedidosEngine');
 
 const app = express();
-app.use(cors());
+
+// En desarrollo, si PANEL_FRONTEND_URL no está definida, se permite cualquier
+// origen para no bloquear pruebas locales. En producción, definir esa env var
+// con la URL real del Static Site del panel (ej. https://agendabot-panel.onrender.com)
+const origenesPermitidos = process.env.PANEL_FRONTEND_URL
+  ? process.env.PANEL_FRONTEND_URL.split(',').map((s) => s.trim())
+  : true;
+
+app.use(cors({ origin: origenesPermitidos }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+
+app.use('/auth', authRouter);
+app.use('/campanas', campanasRouter);
+app.use('/productos', productosRouter);
+app.use('/pedidos', pedidosRouter);
 
 app.get('/', (req, res) => {
   res.json({ status: 'ok', app: 'AgendaBot backend' });
@@ -45,19 +63,16 @@ app.post('/webhook/whatsapp', async (req, res) => {
     const value = change?.value;
     const mensaje = value?.messages?.[0];
 
-    // Aceptamos mensajes de texto libre Y clics en botones de plantillas
-    // (ej. el botón "Agendar" del recordatorio de control anual).
+    // Aceptamos mensajes de texto libre, clics en botones de plantillas, y
+    // selecciones de listas interactivas (usadas por el catálogo rotativo).
     // Ignoramos silenciosamente cualquier otro tipo (imágenes, ubicación,
     // confirmaciones de entrega/lectura, cambios de estado de cuenta, etc.).
-    if (!mensaje || (mensaje.type !== 'text' && mensaje.type !== 'button')) {
+    if (!mensaje || !['text', 'button', 'interactive'].includes(mensaje.type)) {
       return;
     }
 
     const phoneNumberId = value.metadata?.phone_number_id;
     const telefonoCliente = mensaje.from; // ej. "56912345678"
-    const textoEntrante = mensaje.type === 'button'
-      ? (mensaje.button?.text || '')
-      : (mensaje.text?.body || '');
     const nombreContacto = value.contacts?.[0]?.profile?.name || null;
 
     // Identificar a qué empresa (tenant) pertenece este número de WhatsApp
@@ -70,6 +85,23 @@ app.post('/webhook/whatsapp', async (req, res) => {
       console.warn(`No se encontró ninguna Empresa para phone_number_id=${phoneNumberId}`);
       return;
     }
+
+    // Rubros de catálogo rotativo (panadería, rotisería, etc.) usan un motor
+    // de conversación distinto al de agendamiento — reacciona a botones y
+    // listas interactivas, y envía sus propias respuestas.
+    if (empresa.rubroTemplate.modoOperacion === 'CATALOGO_ROTATIVO') {
+      await procesarMensajeCatalogoRotativo({ empresa, telefonoCliente, mensaje, nombreContacto });
+      return;
+    }
+
+    // A partir de aquí, flujo normal de agendamiento (solo texto y botones)
+    if (mensaje.type === 'interactive') {
+      return; // el chatbot de agendamiento no maneja listas interactivas
+    }
+
+    const textoEntrante = mensaje.type === 'button'
+      ? (mensaje.button?.text || '')
+      : (mensaje.text?.body || '');
 
     const { respuestaTexto } = await procesarMensajeEntrante({
       empresa,
