@@ -17,12 +17,22 @@ datasource db {
 // Define qué campos captura la "ficha de cliente" de cada rubro
 // (receta óptica, ficha estética, ficha de equipo, etc.)
 // ------------------------------------------------------------
+
+// AGENDAMIENTO: el cliente escribe primero y agenda un horario (óptica, estética, etc.)
+// CATALOGO_ROTATIVO: el negocio inicia el contacto ofreciendo un catálogo que cambia
+// seguido (panadería, rotisería, viandas, verdulería, carnicería, meal prep, etc.)
+enum ModoOperacionRubro {
+  AGENDAMIENTO
+  CATALOGO_ROTATIVO
+}
+
 model RubroTemplate {
   id            String   @id @default(uuid())
-  clave         String   @unique // "optica", "centro_estetico", "salud_independiente", "mantencion_tecnica", "otro"
+  clave         String   @unique // "optica", "centro_estetico", "salud_independiente", "mantencion_tecnica", "panaderia_gourmet", "otro"
   nombre        String
+  modoOperacion ModoOperacionRubro @default(AGENDAMIENTO)
   camposFicha   Json     // definición de los campos de la ficha de cliente para este rubro
-  serviciosBase Json     // lista de tipos de servicio sugeridos (ej. "Examen de la vista")
+  serviciosBase Json     // lista de tipos de servicio sugeridos (ej. "Examen de la vista") o catálogo sugerido si es CATALOGO_ROTATIVO
   automatizacionesBase Json // reglas de automatización sugeridas (ej. recordatorio de control anual)
   creadoEn      DateTime @default(now())
 
@@ -65,6 +75,11 @@ model Empresa {
   ventas          Venta[]
   suscripcion     Suscripcion?
   contratosAceptados ContratoAceptado[]
+
+  // Catálogo rotativo (panadería, rotisería, viandas, etc.)
+  productos       Producto[]
+  campanasEnvio   CampanaEnvio[]
+  pedidos         Pedido[]
 
   @@index([rubroTemplateId])
 }
@@ -184,6 +199,10 @@ model Cliente {
   consentimientoDatos Boolean @default(false)
   consentimientoFecha DateTime?
 
+  // Si es false, se excluye de los envíos masivos de campañas (catálogo rotativo).
+  // No afecta su capacidad de escribir y recibir respuesta normalmente.
+  optInCampanas Boolean @default(true)
+
   // Control de recordatorios automáticos (evita reenviar el mismo aviso
   // repetidamente). Se agregarán más campos similares si se suman otros
   // tipos de recordatorio por rubro (ej. próxima sesión, mantención).
@@ -195,6 +214,7 @@ model Cliente {
   listaEspera ListaEspera[]
   ventas      Venta[]
   conversaciones Conversacion[]
+  pedidos     Pedido[]
 
   @@index([empresaId])
   @@index([telefono])
@@ -393,6 +413,154 @@ model Pago {
   fecha          DateTime @default(now())
 
   @@index([suscripcionId])
+}
+
+// ------------------------------------------------------------
+// CATÁLOGO ROTATIVO (panadería, rotisería, viandas, verdulería,
+// carnicería, meal prep, etc.) — el negocio ofrece proactivamente
+// un catálogo que cambia seguido, en vez de esperar que el cliente
+// pida hora. Ver ModoOperacionRubro.
+// ------------------------------------------------------------
+model Producto {
+  id          String   @id @default(uuid())
+  empresa     Empresa  @relation(fields: [empresaId], references: [id])
+  empresaId   String
+
+  nombre      String    // "Croissant", "Roll de canela", "Pan ciabatta"
+  descripcion String?
+  precio      Int       // CLP
+  unidad      String   @default("unidad") // "unidad" | "kg" | "docena" | "porción"
+  activo      Boolean  @default(true) // disponible en el catálogo general del negocio
+
+  creadoEn    DateTime @default(now())
+
+  pedidoItems PedidoItem[]
+
+  @@index([empresaId])
+}
+
+// Configuración de CUÁNDO se dispara la preparación de un envío.
+// El disparo en la hora configurada solo crea un EnvioRealizado en
+// estado BORRADOR — el panadero elige los productos de ese envío
+// específico y lo envía manualmente desde el panel.
+model CampanaEnvio {
+  id          String   @id @default(uuid())
+  empresa     Empresa  @relation(fields: [empresaId], references: [id])
+  empresaId   String
+
+  nombre      String    // "Panes de la mañana"
+  diasSemana  Int[]     // 0 = domingo ... 6 = sábado. Ej. [1,3,5] = lun/mié/vie
+  hora        String    // "08:00", hora local de la empresa
+
+  // Nombre exacto de la plantilla de WhatsApp aprobada en Meta que abre
+  // la conversación (con botón de respuesta rápida "Ver el menú de hoy").
+  plantillaWhatsapp String
+
+  activa      Boolean  @default(true)
+  creadoEn    DateTime @default(now())
+
+  // Segmentación: si está activa, el envío no va a TODOS los clientes con
+  // optInCampanas=true, sino solo a quienes cumplan el historial de compra
+  // definido acá — reduce el costo real de Meta al no mandarle a quien no
+  // le interesa, y sirve para ofertas dirigidas ("solo a quienes ya
+  // compraron ciabatta antes").
+  segmentada Boolean @default(false)
+  segmentoDias Int?              // ventana de tiempo a evaluar (ej. 30 = "últimos 30 días")
+  segmentoMontoMinimoClp Int?    // debe haber gastado al menos esto en esa ventana (null = sin mínimo)
+  segmentoProductoIds String[] @default([])   // debe haber comprado al menos uno de estos productos (vacío = cualquiera)
+
+  enviosRealizados EnvioRealizado[]
+
+  @@index([empresaId])
+}
+
+enum EstadoEnvioRealizado {
+  BORRADOR  // creado por el cron a la hora programada, esperando que el panadero elija productos
+  ENVIADO   // el panadero ya eligió productos y se disparó el mensaje a los clientes
+  CANCELADO
+}
+
+// Snapshot de CADA disparo real de una campaña — permite trazabilidad
+// (qué se ofreció y a cuántos) y agrupar los pedidos de ese envío.
+model EnvioRealizado {
+  id          String   @id @default(uuid())
+  campana     CampanaEnvio @relation(fields: [campanaId], references: [id])
+  campanaId   String
+
+  fechaProgramada DateTime // el día para el que se preparó (para no duplicar el mismo día)
+  estado      EstadoEnvioRealizado @default(BORRADOR)
+
+  // Snapshot de qué productos y precios se ofrecieron en este envío específico
+  // (arreglo de { productoId, nombre, precio, unidad }). Se llena al enviar.
+  productosOfrecidosJson Json?
+
+  fechaHoraEnvio    DateTime?
+  destinatariosCount Int?
+
+  // Costo real estimado en CLP de este envío (destinatariosCount × tarifa
+  // Meta vigente al momento de enviar). Se guarda al enviar para llevar
+  // historial de gasto, aunque la tarifa de Meta cambie más adelante.
+  costoEstimadoClp Int?
+
+  creadoEn    DateTime @default(now())
+
+  pedidos     Pedido[]
+
+  @@index([campanaId])
+  @@index([campanaId, fechaProgramada])
+}
+
+enum EstadoPedido {
+  PENDIENTE
+  CONFIRMADO
+  LISTO
+  ENTREGADO
+  CANCELADO
+}
+
+model Pedido {
+  id          String   @id @default(uuid())
+  empresa     Empresa  @relation(fields: [empresaId], references: [id])
+  empresaId   String
+
+  cliente     Cliente  @relation(fields: [clienteId], references: [id])
+  clienteId   String
+
+  envioRealizado   EnvioRealizado? @relation(fields: [envioRealizadoId], references: [id])
+  envioRealizadoId String?
+
+  estado      EstadoPedido @default(PENDIENTE)
+  fechaRetiro DateTime?
+  notas       String?
+
+  // Cuando el cliente elige un producto de la lista, queda acá mientras
+  // el bot espera que responda "¿cuántos quieres?". Null cuando no hay
+  // ninguna pregunta de cantidad pendiente.
+  productoPendienteId String?
+
+  creadoEn    DateTime @default(now())
+  actualizadoEn DateTime @updatedAt
+
+  items       PedidoItem[]
+
+  @@index([empresaId])
+  @@index([clienteId])
+  @@index([envioRealizadoId])
+}
+
+model PedidoItem {
+  id          String   @id @default(uuid())
+  pedido      Pedido   @relation(fields: [pedidoId], references: [id])
+  pedidoId    String
+
+  producto    Producto @relation(fields: [productoId], references: [id])
+  productoId  String
+
+  cantidad    Int      @default(1)
+  precioUnitario Int   // copiado al momento del pedido, no referencia flotante al precio actual
+
+  @@index([pedidoId])
+  @@index([productoId])
 }
 
 // ------------------------------------------------------------

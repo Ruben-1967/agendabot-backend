@@ -72,6 +72,33 @@ async function main() {
     }
   });
 
+  // Primer rubro de tipo CATALOGO_ROTATIVO: el negocio ofrece proactivamente
+  // (por campaña con frecuencia configurable) un catálogo de productos que
+  // cambia seguido, en vez de esperar que el cliente pida hora.
+  await prisma.rubroTemplate.upsert({
+    where: { clave: 'panaderia_gourmet' },
+    update: {},
+    create: {
+      clave: 'panaderia_gourmet',
+      nombre: 'Panadería gourmet',
+      modoOperacion: 'CATALOGO_ROTATIVO',
+      camposFicha: {
+        preferencias: 'text', // ej. "sin gluten", "le gustan los rolls de canela"
+        direccionRetiro: 'text'
+      },
+      // Catálogo sugerido al crear la empresa — el panadero lo ajusta después
+      // desde el panel (agregar/desactivar productos y precios).
+      serviciosBase: [
+        { nombre: 'Roll de canela', precio: 2200, unidad: 'unidad' },
+        { nombre: 'Croissant', precio: 1800, unidad: 'unidad' },
+        { nombre: 'Pan ciabatta', precio: 3500, unidad: 'unidad' },
+        { nombre: 'Baguette', precio: 2800, unidad: 'unidad' },
+        { nombre: 'Pan de masa madre', precio: 4500, unidad: 'unidad' }
+      ],
+      automatizacionesBase: ['campana_catalogo_rotativo']
+    }
+  });
+
   await prisma.rubroTemplate.upsert({
     where: { clave: 'otro' },
     update: {},
