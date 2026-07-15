@@ -11,14 +11,18 @@
     "prisma:migrate": "prisma migrate dev --name init",
     "prisma:studio": "prisma studio",
     "seed": "node prisma/seed.js",
-    "cron:recordatorios": "node src/jobs/enviarRecordatorios.js"
+    "crear:usuario": "node scripts/crear-usuario.js",
+    "cron:recordatorios": "node src/jobs/enviarRecordatorios.js",
+    "cron:campanas": "node src/jobs/prepararEnviosCampana.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.32.0",
     "@prisma/client": "^5.20.0",
+    "bcryptjs": "^3.0.3",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
-    "express": "^4.19.2"
+    "express": "^4.19.2",
+    "jsonwebtoken": "^9.0.3"
   },
   "devDependencies": {
     "prisma": "^5.20.0"
