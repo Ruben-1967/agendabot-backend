@@ -1,21 +1,13 @@
-// routes/billetera.js
+// src/routes/billetera.js
 //
-// AJUSTAR AL INTEGRAR:
-// - Ruta del Prisma client y del middleware de auth (mismo patrón que routes-clientes.js)
-// - Las credenciales/SDK real de Flow.cl (acá dejo la forma del flujo, no el detalle exacto
-//   de su API, porque aún no está integrado en tu backend según el roadmap)
-//
-// Flujo:
-//   1. Cliente ingresa cuántos créditos quiere comprar (número libre, con un mínimo)
-//   2. Se calcula el monto en CLP (cantidad × $149)
-//   3. Se crea una orden de pago en Flow.cl y se devuelve la URL de pago al panel
-//   4. Cuando Flow confirma el pago (webhook), recién ahí se acreditan los créditos
-//      -> nunca se acreditan créditos antes de la confirmación real del pago
+// AJUSTAR AL INTEGRAR EL SDK REAL DE FLOW.CL: las llamadas a flowClient están
+// comentadas porque esa integración todavía no existe en el backend — ver
+// las notas // AJUSTAR más abajo.
 
 const express = require('express');
 const router = express.Router();
-const prisma = require('../lib/prisma'); // AJUSTAR
-const { verificarToken, requireRole } = require('../middleware/auth'); // AJUSTAR
+const prisma = require('../lib/prisma');
+const { requireAuth, requireRole } = require('../middleware/auth');
 
 const PRECIO_POR_CREDITO_CLP = 149;
 const MINIMO_CREDITOS_COMPRA = 50; // evita que la comisión de Flow se coma el margen en compras muy chicas
@@ -24,9 +16,9 @@ const MINIMO_CREDITOS_COMPRA = 50; // evita que la comisión de Flow se coma el 
 // GET /billetera
 // Saldo actual + últimos movimientos, para mostrar en el panel
 // ------------------------------------------------------------
-router.get('/', verificarToken, requireRole(['ADMIN', 'RECEPCION']), async (req, res) => {
+router.get('/', requireAuth, requireRole('ADMIN', 'RECEPCION'), async (req, res) => {
   try {
-    const empresaId = req.usuario.empresaId; // AJUSTAR
+    const empresaId = req.usuario.empresaId;
 
     let billetera = await prisma.billeteraCreditos.findUnique({
       where: { empresaId },
@@ -61,9 +53,9 @@ router.get('/', verificarToken, requireRole(['ADMIN', 'RECEPCION']), async (req,
 // Body: { cantidadCreditos: number }
 // Crea la orden de pago en Flow.cl y devuelve la URL para redirigir al cliente
 // ------------------------------------------------------------
-router.post('/comprar', verificarToken, requireRole(['ADMIN']), async (req, res) => {
+router.post('/comprar', requireAuth, requireRole('ADMIN'), async (req, res) => {
   try {
-    const empresaId = req.usuario.empresaId; // AJUSTAR
+    const empresaId = req.usuario.empresaId;
     const { cantidadCreditos } = req.body;
 
     if (!Number.isInteger(cantidadCreditos) || cantidadCreditos < MINIMO_CREDITOS_COMPRA) {
@@ -81,19 +73,17 @@ router.post('/comprar', verificarToken, requireRole(['ADMIN']), async (req, res)
     //     commerceOrder: `creditos-${empresaId}-${Date.now()}`,
     //     subject: `Compra de ${cantidadCreditos} créditos de campaña`,
     //     amount: montoClp,
-    //     email: req.usuario.email,
     //     urlConfirmation: `${process.env.BACKEND_URL}/billetera/flow-webhook`,
     //     urlReturn: `${process.env.PANEL_FRONTEND_URL}/billetera/resultado`,
     //   });
-    //
-    // Guardamos la orden como "pendiente" para poder conciliarla cuando llegue el webhook.
+
     const ordenPendiente = await prisma.ordenCompraCreditos.create({
       data: {
         empresaId,
         cantidadCreditos,
         montoClp,
         estado: 'PENDIENTE',
-        // flowToken: ordenFlow.token, // una vez tengas el SDK real
+        // flowToken: ordenFlow.token, // reemplazar una vez tengas el SDK real
       },
     });
 
@@ -117,12 +107,13 @@ router.post('/comprar', verificarToken, requireRole(['ADMIN']), async (req, res)
 // ------------------------------------------------------------
 router.post('/flow-webhook', async (req, res) => {
   try {
-    // AJUSTAR: Flow envía un `token` en el body; hay que consultar el estado real
-    // de la orden contra la API de Flow (nunca confiar ciegamente en el webhook sin verificar).
+    // AJUSTAR: Flow envía un `token` en el body de la notificación
+    // (application/x-www-form-urlencoded). Nunca confiar ciegamente en el
+    // webhook sin verificar contra la API de Flow primero.
     const { token } = req.body;
 
-    // const estadoFlow = await flowClient.consultarEstado(token);
-    // if (estadoFlow.status !== 'PAGADO') {
+    // const estadoFlow = await flowClient.consultarEstado(token); // GET /payment/getStatus?token=...
+    // if (estadoFlow.status !== 2) { // 2 = pagado, según los códigos de estado de Flow
     //   return res.status(200).send('Estado no es pago confirmado, ignorado');
     // }
 
@@ -131,8 +122,6 @@ router.post('/flow-webhook', async (req, res) => {
     });
 
     if (!orden) {
-      // No debería pasar si el token se guardó bien al crear la orden — pero si pasa,
-      // es mejor loguearlo fuerte que fallar en silencio (es dinero real de por medio).
       console.error('Webhook de Flow recibido sin orden correspondiente. Token:', token);
       return res.status(404).send('Orden no encontrada');
     }
@@ -142,8 +131,8 @@ router.post('/flow-webhook', async (req, res) => {
       return res.status(200).send('Orden ya procesada, ignorado');
     }
 
-    // Transacción: acreditar el saldo + registrar el movimiento + marcar la orden como pagada,
-    // todo o nada, para que nunca quede una compra pagada sin créditos (o viceversa).
+    // Transacción: acreditar el saldo + registrar el movimiento + marcar la
+    // orden como pagada, todo o nada.
     await prisma.$transaction(async (tx) => {
       let billetera = await tx.billeteraCreditos.findUnique({ where: { empresaId: orden.empresaId } });
       if (!billetera) {

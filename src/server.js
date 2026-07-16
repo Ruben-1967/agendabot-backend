@@ -9,6 +9,8 @@ const authRouter = require('./routes/auth');
 const campanasRouter = require('./routes/campanas');
 const productosRouter = require('./routes/productos');
 const pedidosRouter = require('./routes/pedidos');
+const clientesRouter = require('./routes/clientes');
+const billeteraRouter = require('./routes/billetera');
 const { procesarMensajeCatalogoRotativo } = require('./services/pedidosEngine');
 
 const app = express();
@@ -28,6 +30,9 @@ app.use('/auth', authRouter);
 app.use('/campanas', campanasRouter);
 app.use('/productos', productosRouter);
 app.use('/pedidos', pedidosRouter);
+app.use('/clientes', clientesRouter);
+app.use('/billetera', billeteraRouter);
+
 
 app.get('/', (req, res) => {
   res.json({ status: 'ok', app: 'AgendaBot backend' });

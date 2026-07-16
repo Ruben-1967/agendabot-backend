@@ -1,13 +1,8 @@
-// routes/clientes.js
-//
-// AJUSTAR AL INTEGRAR:
-// - La ruta de importación de tu Prisma client (ej. '../lib/prisma' o donde lo tengas)
-// - El middleware de auth/rol: acá asumo `verificarToken` y `requireRole(['ADMIN','RECEPCION'])`
-//   siguiendo el mismo patrón que ya usas en productos.js / campanas.js — cambia el nombre si es distinto.
+// src/routes/clientes.js
 //
 // GET /clientes/segmentacion
 // Devuelve, por cada cliente de la empresa, sus métricas de compra en un período,
-// ya filtradas según los query params. Pensado para alimentar el panel de segmentación.
+// ya filtradas según los query params. Alimenta el panel de segmentación.
 //
 // Query params (todos opcionales):
 //   dias              -> tamaño del período a analizar, en días (default 30)
@@ -19,16 +14,16 @@
 
 const express = require('express');
 const router = express.Router();
-const prisma = require('../lib/prisma'); // AJUSTAR: ruta real de tu Prisma client
-const { verificarToken, requireRole } = require('../middleware/auth'); // AJUSTAR: ruta real de tu middleware
+const prisma = require('../lib/prisma');
+const { requireAuth, requireRole } = require('../middleware/auth');
 
 router.get(
   '/segmentacion',
-  verificarToken,
-  requireRole(['ADMIN', 'RECEPCION']),
+  requireAuth,
+  requireRole('ADMIN', 'RECEPCION'),
   async (req, res) => {
     try {
-      const empresaId = req.usuario.empresaId; // AJUSTAR: como sea que guardes la empresa en el token/sesión
+      const empresaId = req.usuario.empresaId;
 
       const dias = parseInt(req.query.dias) || 30;
       const montoMinimo = req.query.montoMinimo ? parseFloat(req.query.montoMinimo) : null;
@@ -39,15 +34,17 @@ router.get(
       const fechaInicioPeriodo = new Date();
       fechaInicioPeriodo.setDate(fechaInicioPeriodo.getDate() - dias);
 
-      // Traemos clientes + sus pedidos dentro del período, con los items y el producto de cada uno.
-      // Nota de escala: para carteras grandes (varios miles de clientes) esto conviene migrarlo
-      // a una query agregada en SQL (prisma.$queryRaw con GROUP BY). Para el volumen actual
-      // (decenas/cientos de clientes por empresa) esto es simple y suficientemente rápido.
+      // Nota de escala: para carteras grandes conviene migrar esto a una
+      // query agregada en SQL. Para el volumen actual, esto es simple y
+      // suficientemente rápido.
       const clientes = await prisma.cliente.findMany({
         where: { empresaId },
         include: {
           pedidos: {
-            where: { fecha: { gte: fechaInicioPeriodo } },
+            where: {
+              creadoEn: { gte: fechaInicioPeriodo },
+              estado: { not: 'CANCELADO' },
+            },
             include: {
               items: {
                 include: { producto: true },
@@ -57,15 +54,18 @@ router.get(
         },
       });
 
-      // También necesitamos la última compra de SIEMPRE (no solo dentro del período),
-      // para poder calcular "días sin comprar" incluso si el cliente no compró nada reciente.
+      // Última compra de SIEMPRE (no solo del período), para poder calcular
+      // "días sin comprar" incluso si el cliente no compró nada reciente.
       const ultimasCompras = await prisma.pedido.groupBy({
         by: ['clienteId'],
-        where: { clienteId: { in: clientes.map((c) => c.id) } },
-        _max: { fecha: true },
+        where: {
+          clienteId: { in: clientes.map((c) => c.id) },
+          estado: { not: 'CANCELADO' },
+        },
+        _max: { creadoEn: true },
       });
       const mapaUltimaCompra = new Map(
-        ultimasCompras.map((u) => [u.clienteId, u._max.fecha])
+        ultimasCompras.map((u) => [u.clienteId, u._max.creadoEn])
       );
 
       const hoy = new Date();
@@ -113,7 +113,7 @@ router.get(
           productoTopId,
           productoTopNombre,
           ultimaCompraFecha,
-          diasDesdeUltimaCompra, // null significa "nunca ha comprado"
+          diasDesdeUltimaCompra,
           _comproProductoFiltrado: comproProductoFiltrado,
         };
       });
@@ -134,7 +134,6 @@ router.get(
         );
       }
 
-      // Limpiar campo interno antes de responder
       segmentados = segmentados.map(({ _comproProductoFiltrado, ...resto }) => resto);
 
       res.json({

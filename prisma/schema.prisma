@@ -43,6 +43,7 @@ model RubroTemplate {
 // EMPRESAS (TENANTS)
 // Cada cliente de AgendaBot es una Empresa (Ahorróptica, etc.)
 // ------------------------------------------------------------
+
 model Empresa {
   id              String   @id @default(uuid())
   nombre          String   // "Ahorróptica"
@@ -80,6 +81,10 @@ model Empresa {
   productos       Producto[]
   campanasEnvio   CampanaEnvio[]
   pedidos         Pedido[]
+
+  // Créditos prepagados de campaña
+  billeteraCreditos      BilleteraCreditos?
+  ordenesCompraCreditos  OrdenCompraCreditos[]
 
   @@index([rubroTemplateId])
 }
@@ -482,6 +487,7 @@ enum EstadoEnvioRealizado {
 
 // Snapshot de CADA disparo real de una campaña — permite trazabilidad
 // (qué se ofreció y a cuántos) y agrupar los pedidos de ese envío.
+
 model EnvioRealizado {
   id          String   @id @default(uuid())
   campana     CampanaEnvio @relation(fields: [campanaId], references: [id])
@@ -501,6 +507,8 @@ model EnvioRealizado {
   // Meta vigente al momento de enviar). Se guarda al enviar para llevar
   // historial de gasto, aunque la tarifa de Meta cambie más adelante.
   costoEstimadoClp Int?
+
+  mensajeDelDia String? @db.VarChar(80)
 
   creadoEn    DateTime @default(now())
 
