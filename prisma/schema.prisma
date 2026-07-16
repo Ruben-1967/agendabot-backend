@@ -584,3 +584,109 @@ model ContratoAceptado {
 
   @@index([empresaId])
 }
+// ============================================================
+// AGREGAR a schema.prisma
+// ============================================================
+//
+// Sistema de créditos prepagados para envíos de campaña (catálogo rotativo).
+// Cada crédito = 1 mensaje de categoría Marketing enviado a 1 cliente.
+// Precio de venta: $149 CLP/crédito (cubre costo real Meta $78,49 + IVA + margen).
+//
+// Regla central: una empresa NO puede disparar una campaña si no tiene
+// créditos suficientes para cubrir a todos los destinatarios seleccionados.
+// Esto se valida en el propio endpoint de envío (ver nota al final).
+
+// ============================================================
+// AGREGAR a schema.prisma — campo nuevo en el modelo CampanaEnvio existente
+// ============================================================
+//
+// mensajeDelDia: texto corto y opcional que el negocio escribe cada día
+// (ej. "¡Hoy tenemos algo especial para el Día del Café!"). Se envía como
+// el valor de la variable {{1}} del template ya aprobado por Meta — NO es
+// texto libre en el sentido de WhatsApp, es un valor acotado dentro de una
+// estructura fija. Por eso el límite de largo: mientras más corto, menos
+// riesgo de que rompa el layout del template o se vea cortado en el celular.
+//
+// model CampanaEnvio {
+//   ... (tus campos existentes: día, hora, productos, empresaId, etc.)
+//   mensajeDelDia String? @db.VarChar(80)
+// }
+//
+// Nota: 80 caracteres es un límite de la app, no de Meta — lo elegí porque
+// es aprox. una línea y media en la pantalla de WhatsApp antes del botón
+// "Ver menú", y evita que un mensaje largo empuje visualmente el catálogo
+// más abajo. Si tu template aprobado permite más, se puede subir el límite,
+// pero conviene probarlo primero con el número de prueba para ver cómo se
+// ve realmente en el teléfono.
+
+model BilleteraCreditos {
+  id            String   @id @default(cuid())
+  empresaId     String   @unique
+  empresa       Empresa  @relation(fields: [empresaId], references: [id])
+  saldoActual   Int      @default(0) // en créditos, no en CLP
+  creadoEn      DateTime @default(now())
+  actualizadoEn DateTime @updatedAt
+
+  movimientos   MovimientoCredito[]
+}
+
+model MovimientoCredito {
+  id            String              @id @default(cuid())
+  billeteraId   String
+  billetera     BilleteraCreditos   @relation(fields: [billeteraId], references: [id])
+  tipo          TipoMovimientoCredito
+  cantidad      Int                 // positivo en COMPRA, negativo en CONSUMO/AJUSTE_NEGATIVO
+  saldoResultante Int               // saldo de la billetera justo después de este movimiento (auditoría)
+  montoClp      Int?                // solo aplica a COMPRA — cuánto pagó realmente en CLP
+  campanaEnvioId String?            // referencia opcional al EnvioRealizado que gatilló el consumo
+  nota          String?             // ej. "Compra paquete 500 créditos", "Envío campaña Roll de canela 14/07"
+  creadoEn      DateTime            @default(now())
+}
+
+enum TipoMovimientoCredito {
+  COMPRA           // el cliente compró créditos (vía Flow.cl u otro medio)
+  CONSUMO          // se descontaron créditos por un envío real de campaña
+  AJUSTE_MANUAL    // corrección manual (ej. reembolso por error nuestro), positivo o negativo
+}
+
+// Registro de cada intento de compra de créditos, desde que el cliente ingresa
+// la cantidad hasta que Flow.cl confirma (o no) el pago. Sirve para conciliar
+// el webhook y para no perder rastro de compras que quedan a medias.
+model OrdenCompraCreditos {
+  id              String    @id @default(cuid())
+  empresaId       String
+  empresa         Empresa   @relation(fields: [empresaId], references: [id])
+  cantidadCreditos Int      // ingresada libremente por el cliente, mínimo 50
+  montoClp        Int
+  estado          EstadoOrdenCredito @default(PENDIENTE)
+  flowToken       String?   @unique // token de Flow.cl, una vez integrado el SDK real
+  creadoEn        DateTime  @default(now())
+  actualizadoEn   DateTime  @updatedAt
+}
+
+enum EstadoOrdenCredito {
+  PENDIENTE
+  PAGADA
+  RECHAZADA
+  EXPIRADA
+}
+
+// ============================================================
+// Nota de integración con lo ya existente
+// ============================================================
+//
+// En el endpoint POST /campanas/:id/enviar (ver patch-campanas.js de la sesión anterior),
+// ANTES de disparar los mensajes hay que:
+//
+//   1. Contar destinatarios (ya lo hace hoy)
+//   2. Leer BilleteraCreditos.saldoActual de la empresa
+//   3. Si saldoActual < destinatarios.length -> rechazar con 402 (Payment Required)
+//      y devolver cuántos créditos le faltan, para que el panel lo muestre claro
+//   4. Si alcanza -> ejecutar el envío, y en la misma transacción:
+//        - descontar saldoActual
+//        - crear un MovimientoCredito tipo CONSUMO
+//        - crear el EnvioRealizado como ya se hace hoy
+//
+// Todo esto debe ir en una sola transacción de Prisma ($transaction) para evitar
+// una condición de carrera si el dueño aprieta "enviar" dos veces rápido y el saldo
+// alcanza para una sola de las dos.
