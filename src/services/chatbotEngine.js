@@ -36,7 +36,7 @@ async function procesarMensajeEntrante({ empresa, telefonoCliente, textoEntrante
     where: { empresaId: empresa.id, telefono: telefonoCliente },
   });
 
-  const historialPrevio = conversacion?.mensajes || [];
+const historialPrevio = Array.isArray(conversacion?.mensajes) ? conversacion.mensajes : [];
 
   // 3. Generar la respuesta con Claude (puede usar herramientas de agenda)
   const respuestaTexto = await generarRespuestaChatbot({
