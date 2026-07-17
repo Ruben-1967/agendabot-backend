@@ -106,7 +106,7 @@ app.post('/webhook/whatsapp', async (req, res) => {
       }
 
       const { respuestaTexto } = await procesarMensajeDemo({
-        empresaDemo: demoAsignada.empresaDemo,
+        demoAsignada,
         telefonoCliente,
         mensaje,
         nombreContacto,

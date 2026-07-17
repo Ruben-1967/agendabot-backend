@@ -43,7 +43,6 @@ model RubroTemplate {
 // EMPRESAS (TENANTS)
 // Cada cliente de AgendaBot es una Empresa (Ahorróptica, etc.)
 // ------------------------------------------------------------
-
 model Empresa {
   id              String   @id @default(uuid())
   nombre          String   // "Ahorróptica"
@@ -86,7 +85,8 @@ model Empresa {
   billeteraCreditos      BilleteraCreditos?
   ordenesCompraCreditos  OrdenCompraCreditos[]
 
-esDemo         Boolean @default(false)
+  // Demos comerciales
+  esDemo         Boolean @default(false)
   demosAsignadas DemoAsignada[]
 
   @@index([rubroTemplateId])
@@ -490,7 +490,6 @@ enum EstadoEnvioRealizado {
 
 // Snapshot de CADA disparo real de una campaña — permite trazabilidad
 // (qué se ofreció y a cuántos) y agrupar los pedidos de ese envío.
-
 model EnvioRealizado {
   id          String   @id @default(uuid())
   campana     CampanaEnvio @relation(fields: [campanaId], references: [id])
@@ -595,41 +594,12 @@ model ContratoAceptado {
 
   @@index([empresaId])
 }
-// ============================================================
-// AGREGAR a schema.prisma
-// ============================================================
-//
-// Sistema de créditos prepagados para envíos de campaña (catálogo rotativo).
+
+// ------------------------------------------------------------
+// CRÉDITOS PREPAGADOS DE CAMPAÑA (catálogo rotativo)
 // Cada crédito = 1 mensaje de categoría Marketing enviado a 1 cliente.
 // Precio de venta: $149 CLP/crédito (cubre costo real Meta $78,49 + IVA + margen).
-//
-// Regla central: una empresa NO puede disparar una campaña si no tiene
-// créditos suficientes para cubrir a todos los destinatarios seleccionados.
-// Esto se valida en el propio endpoint de envío (ver nota al final).
-
-// ============================================================
-// AGREGAR a schema.prisma — campo nuevo en el modelo CampanaEnvio existente
-// ============================================================
-//
-// mensajeDelDia: texto corto y opcional que el negocio escribe cada día
-// (ej. "¡Hoy tenemos algo especial para el Día del Café!"). Se envía como
-// el valor de la variable {{1}} del template ya aprobado por Meta — NO es
-// texto libre en el sentido de WhatsApp, es un valor acotado dentro de una
-// estructura fija. Por eso el límite de largo: mientras más corto, menos
-// riesgo de que rompa el layout del template o se vea cortado en el celular.
-//
-// model CampanaEnvio {
-//   ... (tus campos existentes: día, hora, productos, empresaId, etc.)
-//   mensajeDelDia String? @db.VarChar(80)
-// }
-//
-// Nota: 80 caracteres es un límite de la app, no de Meta — lo elegí porque
-// es aprox. una línea y media en la pantalla de WhatsApp antes del botón
-// "Ver menú", y evita que un mensaje largo empuje visualmente el catálogo
-// más abajo. Si tu template aprobado permite más, se puede subir el límite,
-// pero conviene probarlo primero con el número de prueba para ver cómo se
-// ve realmente en el teléfono.
-
+// ------------------------------------------------------------
 model BilleteraCreditos {
   id            String   @id @default(cuid())
   empresaId     String   @unique
@@ -682,36 +652,23 @@ enum EstadoOrdenCredito {
   EXPIRADA
 }
 
+// ------------------------------------------------------------
+// DEMOS COMERCIALES
+// Vincula el teléfono de un prospecto con la Empresa de demo que debe
+// simular el bot, cuando el mensaje llega al número dedicado a demos
+// (no a un número real de cliente). El estado de la conversación de
+// demo (en qué paso va, historial de la simulación) vive acá mismo,
+// separado por completo del modelo Conversacion que usa el motor real.
+// ------------------------------------------------------------
 model DemoAsignada {
   id              String   @id @default(cuid())
-  telefono        String   @unique
+  telefono        String   @unique // formato E.164 sin '+', ej. "56912345678"
   empresaDemoId   String
   empresaDemo     Empresa  @relation(fields: [empresaDemoId], references: [id])
-  nombreProspecto String?
+  nombreProspecto String?  // solo para que tú identifiques quién es en tu panel/logs
   creadoEn        DateTime @default(now())
   actualizadoEn   DateTime @updatedAt
+
+  paso                Int   @default(0)
+  historialSimulacion Json?
 }
-
-
-// ============================================================
-// Nota de integración con lo ya existente
-// ============================================================
-//
-// En el endpoint POST /campanas/:id/enviar (ver patch-campanas.js de la sesión anterior),
-// ANTES de disparar los mensajes hay que:
-//
-//   1. Contar destinatarios (ya lo hace hoy)
-//   2. Leer BilleteraCreditos.saldoActual de la empresa
-//   3. Si saldoActual < destinatarios.length -> rechazar con 402 (Payment Required)
-//      y devolver cuántos créditos le faltan, para que el panel lo muestre claro
-//   4. Si alcanza -> ejecutar el envío, y en la misma transacción:
-//        - descontar saldoActual
-//        - crear un MovimientoCredito tipo CONSUMO
-//        - crear el EnvioRealizado como ya se hace hoy
-//
-// Todo esto debe ir en una sola transacción de Prisma ($transaction) para evitar
-// una condición de carrera si el dueño aprieta "enviar" dos veces rápido y el saldo
-// alcanza para una sola de las dos.
-
-
-
