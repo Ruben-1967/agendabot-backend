@@ -86,6 +86,9 @@ model Empresa {
   billeteraCreditos      BilleteraCreditos?
   ordenesCompraCreditos  OrdenCompraCreditos[]
 
+esDemo         Boolean @default(false)
+  demosAsignadas DemoAsignada[]
+
   @@index([rubroTemplateId])
 }
 
@@ -679,6 +682,17 @@ enum EstadoOrdenCredito {
   EXPIRADA
 }
 
+model DemoAsignada {
+  id              String   @id @default(cuid())
+  telefono        String   @unique
+  empresaDemoId   String
+  empresaDemo     Empresa  @relation(fields: [empresaDemoId], references: [id])
+  nombreProspecto String?
+  creadoEn        DateTime @default(now())
+  actualizadoEn   DateTime @updatedAt
+}
+
+
 // ============================================================
 // Nota de integración con lo ya existente
 // ============================================================
@@ -698,3 +712,6 @@ enum EstadoOrdenCredito {
 // Todo esto debe ir en una sola transacción de Prisma ($transaction) para evitar
 // una condición de carrera si el dueño aprieta "enviar" dos veces rápido y el saldo
 // alcanza para una sola de las dos.
+
+
+

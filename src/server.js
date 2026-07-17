@@ -12,6 +12,7 @@ const pedidosRouter = require('./routes/pedidos');
 const clientesRouter = require('./routes/clientes');
 const billeteraRouter = require('./routes/billetera');
 const { procesarMensajeCatalogoRotativo } = require('./services/pedidosEngine');
+const { procesarMensajeDemo } = require('./services/demoEngine');
 
 const app = express();
 
@@ -79,6 +80,49 @@ app.post('/webhook/whatsapp', async (req, res) => {
     const phoneNumberId = value.metadata?.phone_number_id;
     const telefonoCliente = mensaje.from; // ej. "56912345678"
     const nombreContacto = value.contacts?.[0]?.profile?.name || null;
+
+    // ------------------------------------------------------------
+    // NUEVO: detección de modo demo. Si el mensaje llegó al número
+    // dedicado a demos (no a un número real de cliente), se enruta
+    // al motor de demo en vez del flujo normal de Empresa real.
+    // ------------------------------------------------------------
+    if (phoneNumberId === process.env.DEMO_PHONE_NUMBER_ID) {
+      const demoAsignada = await prisma.demoAsignada.findUnique({
+        where: { telefono: telefonoCliente },
+        include: { empresaDemo: { include: { rubroTemplate: true } } },
+      });
+
+      const accessTokenDemo = process.env.DEMO_WHATSAPP_ACCESS_TOKEN;
+
+      if (!demoAsignada) {
+        // Nadie asignó este teléfono a ninguna demo todavía
+        await sendWhatsAppTextMessage({
+          phoneNumberId,
+          to: telefonoCliente,
+          text: 'Este número es para demos coordinadas con nuestro equipo. Escríbenos a contacto@multidigital.cl para agendar tu demo personalizada 🙌',
+          accessToken: accessTokenDemo,
+        });
+        return;
+      }
+
+      const { respuestaTexto } = await procesarMensajeDemo({
+        empresaDemo: demoAsignada.empresaDemo,
+        telefonoCliente,
+        mensaje,
+        nombreContacto,
+      });
+
+      await sendWhatsAppTextMessage({
+        phoneNumberId,
+        to: telefonoCliente,
+        text: respuestaTexto,
+        accessToken: accessTokenDemo,
+      });
+
+      console.log(`[DEMO] Respondido a ${telefonoCliente} como "${demoAsignada.empresaDemo.nombre}"`);
+      return; // IMPORTANTE: no seguir al flujo normal de Empresa real
+    }
+    // ---- fin bloque de demo ----
 
     // Identificar a qué empresa (tenant) pertenece este número de WhatsApp
     const empresa = await prisma.empresa.findFirst({
