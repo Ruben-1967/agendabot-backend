@@ -30,9 +30,8 @@ const PASOS = {
   PREGUNTAS_ABIERTAS: 3,
 };
 
-// Mínimo de turnos de simulación antes de pasar a pedir productos reales.
-// Subido de 2 a 3 para que no se sienta apurado.
-const MIN_TURNOS_SIMULACION = 3;
+// (Ya no hay un mínimo de turnos fijo: la simulación libre dura hasta que
+// el negocio pregunta por precio/planes/contratar — ver PASOS.SIMULACION_LIBRE.)
 
 function textoPrecios(modoOperacion) {
   if (modoOperacion === 'CATALOGO_ROTATIVO') {
@@ -120,10 +119,25 @@ async function procesarMensajeDemo({ demoAsignada, telefonoCliente, mensaje, nom
     }
 
     // ------------------------------------------------------------
-    // PASO 1: delega al motor real. Tras MIN_TURNOS_SIMULACION turnos,
-    // transición corta hacia personalización.
+    // PASO 1: delega al motor real para que el prospecto pruebe el
+    // agendamiento de verdad. Sigue así indefinidamente — solo salta a
+    // personalización/precios cuando el negocio lo pide explícitamente
+    // (no por cantidad de turnos, para no sentirse apurado).
     // ------------------------------------------------------------
     case PASOS.SIMULACION_LIBRE: {
+      // Si el prospecto pregunta por precio, planes, costo o contratar,
+      // saltamos directo a pedirle sus productos para cotizar — sin gastar
+      // una llamada al motor de agendamiento con una pregunta que no le
+      // corresponde responder a él.
+      const pareceQuererPrecio = /precio|cuesta|cu[aá]nto (sale|vale|cobra|es)|tarifa|\bcosto\b|planes?\b|contratar|comprar|cotiza/i.test(textoEntrante);
+
+      if (pareceQuererPrecio) {
+        respuestaTexto = `¡Con gusto! Para darte un ejemplo con tu negocio real: dime 2 o 3 productos o servicios que ofreces, separados por coma.`;
+        nuevoHistorial = [...historial, { rol: 'prospecto', texto: textoEntrante }];
+        nuevoPaso = PASOS.ESPERANDO_PRODUCTOS;
+        break;
+      }
+
       let respuestaMotorReal = null;
       let interactivoMotorReal = null;
 
@@ -146,34 +160,17 @@ async function procesarMensajeDemo({ demoAsignada, telefonoCliente, mensaje, nom
       }
 
       nuevoHistorial = [...historial, { rol: 'prospecto', texto: textoEntrante }];
-      const turnosDeSimulacion = nuevoHistorial.length;
 
       // Detecta si Claude está pidiendo confirmar antes de agendar (ej. tras
       // elegir una hora). Es una detección por texto — no perfecta, pero
       // cubre el patrón real que usa el system prompt de claude.js.
       const pareceEsperandoConfirmacion = /¿confirmas|\(sí\/no\)|¿confirmo/i.test(respuestaMotorReal || '');
 
-      if (interactivoMotorReal || pareceEsperandoConfirmacion) {
-        // El motor real justo mostró una lista de horarios tocable, o le
-        // está pidiendo al prospecto que confirme antes de agendar — en
-        // ambos casos lo dejamos pasar tal cual, sin mezclarlo con el texto
-        // de transición a precios ni avanzar de paso todavía. El prospecto
-        // necesita este turno (y probablemente el siguiente) libre para
-        // completar el agendamiento de verdad.
-        respuestaTexto = pareceEsperandoConfirmacion
-          ? `${respuestaMotorReal}\n\n_(en tu negocio real, el nombre y teléfono del cliente se registran automáticamente desde WhatsApp — no hace falta pedirlos aparte)_`
-          : respuestaMotorReal;
-        interactivo = interactivoMotorReal;
-        nuevoPaso = PASOS.SIMULACION_LIBRE;
-      } else if (turnosDeSimulacion >= MIN_TURNOS_SIMULACION) {
-        respuestaTexto =
-          `${respuestaMotorReal ? respuestaMotorReal + '\n\n' : ''}` +
-          `Así, sin que nadie de tu equipo tocara el celular. Ahora con tu negocio real: ` +
-          `dime 2 o 3 productos o servicios que ofreces, separados por coma.`;
-        nuevoPaso = PASOS.ESPERANDO_PRODUCTOS;
-      } else {
-        respuestaTexto = respuestaMotorReal || 'Cuéntame más — ¿qué te gustaría hacer?';
-      }
+      respuestaTexto = pareceEsperandoConfirmacion
+        ? `${respuestaMotorReal}\n\n_(en tu negocio real, el nombre y teléfono del cliente se registran automáticamente desde WhatsApp — no hace falta pedirlos aparte)_`
+        : (respuestaMotorReal || 'Cuéntame más — ¿qué te gustaría hacer?');
+      interactivo = interactivoMotorReal;
+      nuevoPaso = PASOS.SIMULACION_LIBRE;
       break;
     }
 
