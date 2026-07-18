@@ -192,3 +192,11 @@ Instrucciones:
         interactivo: { tipo: 'lista_horarios', fecha: horariosParaMostrar.fecha, horas: horariosParaMostrar.horas },
       };
     }
+
+    messages.push({ role: 'user', content: toolResults });
+  }
+
+  return { texto: 'Disculpa, tuve un problema procesando tu solicitud. ¿Puedes intentar de nuevo?', interactivo: null };
+}
+
+module.exports = { generarRespuestaChatbot };
