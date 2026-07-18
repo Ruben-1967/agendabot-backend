@@ -92,7 +92,7 @@ async function ejecutarHerramienta(nombre, input, contexto) {
  * @param {Object} params.cliente - Cliente asociado a esta conversación.
  * @param {Array}  params.historial - Mensajes previos [{rol, contenido}].
  * @param {string} params.mensajeEntrante - Texto del cliente.
- * @returns {Promise<string>} Respuesta final en texto para enviar por WhatsApp.
+ * @returns {Promise<{texto: string, interactivo: Object|null}>}
  */
 async function generarRespuestaChatbot({ empresa, cliente, historial, mensajeEntrante }) {
   const nombreEmpresa = empresa.sucursal ? `${empresa.nombre} (${empresa.sucursal})` : empresa.nombre;
@@ -141,7 +141,7 @@ Instrucciones:
 
     if (response.stop_reason !== 'tool_use') {
       const textBlock = response.content.find((b) => b.type === 'text');
-      return textBlock ? textBlock.text : 'Disculpa, ¿puedes repetir tu mensaje?';
+      return { texto: textBlock ? textBlock.text : 'Disculpa, ¿puedes repetir tu mensaje?', interactivo: null };
     }
 
     // Guardamos el turno del asistente (incluye los tool_use blocks) y
@@ -149,6 +149,8 @@ Instrucciones:
     messages.push({ role: 'assistant', content: response.content });
 
     const toolResults = [];
+    let horariosParaMostrar = null;
+
     for (const block of response.content) {
       if (block.type === 'tool_use') {
         const resultado = await ejecutarHerramienta(block.name, block.input, contexto);
@@ -157,13 +159,35 @@ Instrucciones:
           tool_use_id: block.id,
           content: JSON.stringify(resultado),
         });
+
+        // Si Claude consultó disponibilidad y SÍ hay horas libres, cortamos
+        // el ciclo acá: en vez de que Claude las escriba en texto plano, el
+        // backend arma una lista interactiva de WhatsApp con las horas
+        // reales. Si no hay horas (arreglo vacío), dejamos que el ciclo siga
+        // normal para que Claude ofrezca otro día en texto.
+        if (block.name === 'consultar_disponibilidad' && resultado.horasDisponibles?.length > 0) {
+          horariosParaMostrar = { fecha: resultado.fecha, horas: resultado.horasDisponibles };
+        }
       }
+    }
+
+    if (horariosParaMostrar) {
+      const fechaLegible = new Date(`${horariosParaMostrar.fecha}T00:00:00`).toLocaleDateString('es-CL', {
+        weekday: 'long',
+        day: 'numeric',
+        month: 'long',
+        timeZone: 'America/Santiago',
+      });
+      return {
+        texto: `Estos son los horarios disponibles para el ${fechaLegible}: ${horariosParaMostrar.horas.join(', ')}. Elige el que más te acomode 👇`,
+        interactivo: { tipo: 'lista_horarios', fecha: horariosParaMostrar.fecha, horas: horariosParaMostrar.horas },
+      };
     }
 
     messages.push({ role: 'user', content: toolResults });
   }
 
-  return 'Disculpa, tuve un problema procesando tu solicitud. ¿Puedes intentar de nuevo?';
+  return { texto: 'Disculpa, tuve un problema procesando tu solicitud. ¿Puedes intentar de nuevo?', interactivo: null };
 }
 
 module.exports = { generarRespuestaChatbot };

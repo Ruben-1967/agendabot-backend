@@ -2,7 +2,12 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const prisma = require('./lib/prisma');
-const { sendWhatsAppTextMessage } = require('./services/whatsapp');
+const {
+  sendWhatsAppTextMessage,
+  sendWhatsAppInteractiveList,
+  decodificarFilaHorario,
+  codificarFilaHorario,
+} = require('./services/whatsapp');
 const { procesarMensajeEntrante } = require('./services/chatbotEngine');
 const { renderFormulario, PLANES } = require('./services/contratoHtml');
 const authRouter = require('./routes/auth');
@@ -143,16 +148,26 @@ app.post('/webhook/whatsapp', async (req, res) => {
       return;
     }
 
-    // A partir de aquí, flujo normal de agendamiento (solo texto y botones)
+    // A partir de aquí, flujo normal de agendamiento (texto, botones, y la
+    // lista interactiva de horarios que el propio bot ofrece).
+    let textoEntrante;
     if (mensaje.type === 'interactive') {
-      return; // el chatbot de agendamiento no maneja listas interactivas
+      // Único tipo interactivo que este flujo entiende: el cliente tocó un
+      // horario de la lista que le mostramos (ver claude.js). Cualquier otro
+      // id (ej. de una lista de otro flujo) se ignora silenciosamente.
+      const listReplyId = mensaje.interactive?.list_reply?.id;
+      const horarioElegido = decodificarFilaHorario(listReplyId);
+      if (!horarioElegido) {
+        return;
+      }
+      textoEntrante = `Confirmo que quiero agendar para el ${horarioElegido.fecha} a las ${horarioElegido.hora}.`;
+    } else {
+      textoEntrante = mensaje.type === 'button'
+        ? (mensaje.button?.text || '')
+        : (mensaje.text?.body || '');
     }
 
-    const textoEntrante = mensaje.type === 'button'
-      ? (mensaje.button?.text || '')
-      : (mensaje.text?.body || '');
-
-    const { respuestaTexto } = await procesarMensajeEntrante({
+    const { respuestaTexto, interactivo } = await procesarMensajeEntrante({
       empresa,
       telefonoCliente,
       textoEntrante,
@@ -167,12 +182,26 @@ app.post('/webhook/whatsapp', async (req, res) => {
       return;
     }
 
-    await sendWhatsAppTextMessage({
-      phoneNumberId,
-      to: telefonoCliente,
-      text: respuestaTexto,
-      accessToken,
-    });
+    if (interactivo?.tipo === 'lista_horarios') {
+      await sendWhatsAppInteractiveList({
+        phoneNumberId,
+        to: telefonoCliente,
+        accessToken,
+        textoCuerpo: respuestaTexto,
+        textoBoton: 'Ver horarios',
+        filas: interactivo.horas.map((hora) => ({
+          id: codificarFilaHorario(interactivo.fecha, hora),
+          titulo: hora,
+        })),
+      });
+    } else {
+      await sendWhatsAppTextMessage({
+        phoneNumberId,
+        to: telefonoCliente,
+        text: respuestaTexto,
+        accessToken,
+      });
+    }
 
     console.log(`Respondido a ${telefonoCliente} (${empresa.nombre}): "${respuestaTexto}"`);
   } catch (error) {
@@ -284,14 +313,14 @@ app.post('/test/chat', async (req, res) => {
       return res.status(404).json({ error: `Empresa ${empresaId} no existe` });
     }
 
-    const { respuestaTexto } = await procesarMensajeEntrante({
+    const { respuestaTexto, interactivo } = await procesarMensajeEntrante({
       empresa,
       telefonoCliente: telefono,
       textoEntrante: mensaje,
       nombreContacto: 'Cliente de prueba',
     });
 
-    res.json({ respuesta: respuestaTexto });
+    res.json({ respuesta: respuestaTexto, interactivo });
   } catch (error) {
     console.error('Error en /test/chat:', error);
     res.status(500).json({ error: error.message });

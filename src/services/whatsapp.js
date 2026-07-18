@@ -145,4 +145,32 @@ async function sendWhatsAppInteractiveList({ phoneNumberId, to, accessToken, tex
   return data;
 }
 
-module.exports = { sendWhatsAppTextMessage, sendWhatsAppTemplateMessage, sendWhatsAppInteractiveList };
+/**
+ * Codifica una fecha+hora en el id de fila que WhatsApp devuelve cuando el
+ * cliente toca una opción de la lista interactiva de horarios de agendamiento.
+ * Formato: "horario|YYYY-MM-DD|HH:MM"
+ */
+function codificarFilaHorario(fecha, hora) {
+  return `horario|${fecha}|${hora}`;
+}
+
+/**
+ * Inverso de codificarFilaHorario. Devuelve null si el id no tiene el
+ * formato esperado (ej. viene de otro tipo de lista interactiva, como el
+ * catálogo rotativo).
+ */
+function decodificarFilaHorario(id) {
+  if (typeof id !== 'string') return null;
+  const partes = id.split('|');
+  if (partes.length !== 3 || partes[0] !== 'horario') return null;
+  const [, fecha, hora] = partes;
+  return { fecha, hora };
+}
+
+module.exports = {
+  sendWhatsAppTextMessage,
+  sendWhatsAppTemplateMessage,
+  sendWhatsAppInteractiveList,
+  codificarFilaHorario,
+  decodificarFilaHorario,
+};

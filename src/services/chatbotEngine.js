@@ -13,7 +13,7 @@ const { generarRespuestaChatbot } = require('./claude');
  * @param {string} params.telefonoCliente
  * @param {string} params.textoEntrante
  * @param {string|null} params.nombreContacto
- * @returns {Promise<{respuestaTexto: string, cliente: Object}>}
+ * @returns {Promise<{respuestaTexto: string, interactivo: Object|null, cliente: Object}>}
  */
 async function procesarMensajeEntrante({ empresa, telefonoCliente, textoEntrante, nombreContacto }) {
   // 1. Buscar o crear el Cliente por teléfono dentro de esa empresa
@@ -38,15 +38,19 @@ async function procesarMensajeEntrante({ empresa, telefonoCliente, textoEntrante
 
 const historialPrevio = Array.isArray(conversacion?.mensajes) ? conversacion.mensajes : [];
 
-  // 3. Generar la respuesta con Claude (puede usar herramientas de agenda)
-  const respuestaTexto = await generarRespuestaChatbot({
+  // 3. Generar la respuesta con Claude (puede usar herramientas de agenda).
+  // Puede venir acompañada de "interactivo" cuando hay horarios reales para
+  // mostrar como lista tocable de WhatsApp, en vez de solo texto.
+  const { texto: respuestaTexto, interactivo } = await generarRespuestaChatbot({
     empresa,
     cliente,
     historial: historialPrevio,
     mensajeEntrante: textoEntrante,
   });
 
-  // 4. Guardar el intercambio en la Conversacion
+  // 4. Guardar el intercambio en la Conversacion. Guardamos siempre la
+  // versión en texto (incluso cuando se mostró como lista interactiva) para
+  // que el siguiente turno de Claude tenga el contexto completo.
   const mensajesActualizados = [
     ...historialPrevio,
     { rol: 'usuario', contenido: textoEntrante, timestamp: new Date().toISOString() },
@@ -64,7 +68,7 @@ const historialPrevio = Array.isArray(conversacion?.mensajes) ? conversacion.men
     },
   });
 
-  return { respuestaTexto, cliente };
+  return { respuestaTexto, interactivo, cliente };
 }
 
 module.exports = { procesarMensajeEntrante };
