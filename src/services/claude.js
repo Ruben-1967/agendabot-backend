@@ -130,7 +130,18 @@ async function ejecutarHerramienta(nombre, input, contexto) {
  */
 async function generarRespuestaChatbot({ empresa, cliente, historial, mensajeEntrante }) {
   const nombreEmpresa = empresa.sucursal ? `${empresa.nombre} (${empresa.sucursal})` : empresa.nombre;
-  const serviciosBase = empresa.rubroTemplate?.serviciosBase || [];
+
+  // Preferimos los Servicio reales que la empresa cargó en el panel de
+  // Configuración de agenda. Si todavía no cargó ninguno (empresa nueva sin
+  // configurar), caemos al listado genérico sugerido por el rubro, para no
+  // dejar al bot sin nada que ofrecer mientras tanto.
+  const serviciosReales = await prisma.servicio.findMany({
+    where: { empresaId: empresa.id, activo: true },
+    orderBy: { nombre: 'asc' },
+  });
+  const serviciosBase = serviciosReales.length > 0
+    ? serviciosReales.map((s) => s.nombre)
+    : (empresa.rubroTemplate?.serviciosBase || []);
 
   // Por ahora asumimos un solo RecursoAgendable por empresa (el primero activo).
   // Cuando una empresa tenga varios profesionales, esto deberá preguntarle al
