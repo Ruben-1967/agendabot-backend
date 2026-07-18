@@ -148,13 +148,21 @@ async function procesarMensajeDemo({ demoAsignada, telefonoCliente, mensaje, nom
       nuevoHistorial = [...historial, { rol: 'prospecto', texto: textoEntrante }];
       const turnosDeSimulacion = nuevoHistorial.length;
 
-      if (interactivoMotorReal) {
-        // El motor real justo mostró una lista de horarios tocable — la
-        // dejamos pasar tal cual, sin mezclarla con el texto de transición
-        // a precios ni avanzar de paso todavía. El prospecto necesita este
-        // turno (y probablemente el siguiente, al tocar una hora) libre
-        // para completar el agendamiento de verdad.
-        respuestaTexto = respuestaMotorReal;
+      // Detecta si Claude está pidiendo confirmar antes de agendar (ej. tras
+      // elegir una hora). Es una detección por texto — no perfecta, pero
+      // cubre el patrón real que usa el system prompt de claude.js.
+      const pareceEsperandoConfirmacion = /¿confirmas|\(sí\/no\)|¿confirmo/i.test(respuestaMotorReal || '');
+
+      if (interactivoMotorReal || pareceEsperandoConfirmacion) {
+        // El motor real justo mostró una lista de horarios tocable, o le
+        // está pidiendo al prospecto que confirme antes de agendar — en
+        // ambos casos lo dejamos pasar tal cual, sin mezclarlo con el texto
+        // de transición a precios ni avanzar de paso todavía. El prospecto
+        // necesita este turno (y probablemente el siguiente) libre para
+        // completar el agendamiento de verdad.
+        respuestaTexto = pareceEsperandoConfirmacion
+          ? `${respuestaMotorReal}\n\n_(en tu negocio real, el nombre y teléfono del cliente se registran automáticamente desde WhatsApp — no hace falta pedirlos aparte)_`
+          : respuestaMotorReal;
         interactivo = interactivoMotorReal;
         nuevoPaso = PASOS.SIMULACION_LIBRE;
       } else if (turnosDeSimulacion >= MIN_TURNOS_SIMULACION) {
