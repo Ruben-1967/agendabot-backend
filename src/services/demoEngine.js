@@ -129,7 +129,7 @@ async function procesarMensajeDemo({ demoAsignada, telefonoCliente, mensaje, nom
       // saltamos directo a pedirle sus productos para cotizar — sin gastar
       // una llamada al motor de agendamiento con una pregunta que no le
       // corresponde responder a él.
-      const pareceQuererPrecio = /precio|cuesta|cu[aá]nto (sale|vale|cobra|es)|tarifa|\bcosto\b|planes?\b|contratar|comprar|cotiza/i.test(textoEntrante);
+      const pareceQuererPrecio = /precio|beneficios?|cuesta|cu[aá]nto (sale|vale|cobra|es)|tarifa|\bcosto\b|plan(es)?\b|contrat(ar|o)|comprar|cotiza/i.test(textoEntrante);
 
       if (pareceQuererPrecio) {
         respuestaTexto = `¡Con gusto! Para darte un ejemplo con tu negocio real: dime 2 o 3 productos o servicios que ofreces, separados por coma.`;
