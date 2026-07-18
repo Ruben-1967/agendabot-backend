@@ -360,11 +360,37 @@ app.post('/contrato/:empresaId/aceptar', async (req, res) => {
 // Útil para probar disponibilidad/agendamiento con tenants (ej. LuxVision)
 // que todavía no tienen número de WhatsApp conectado a esta app.
 //
-// NOTA: este endpoint no tiene autenticación — es solo para pruebas
-// internas durante el desarrollo. Debe eliminarse o protegerse antes
-// de considerar el backend listo para producción real.
+// Protegido con un secreto compartido simple (no JWT de usuario), porque
+// esto no representa a NINGÚN usuario real del panel — es una herramienta
+// de pruebas interna que simula clientes de CUALQUIER empresa a la vez.
+// Si TEST_ENDPOINT_SECRET no está configurado, el endpoint queda cerrado
+// por completo (fail-closed) en vez de quedar abierto por accidente.
 // ------------------------------------------------------------
-app.post('/test/chat', async (req, res) => {
+const crypto = require('crypto');
+
+function requireTestSecret(req, res, next) {
+  const secretoEsperado = process.env.TEST_ENDPOINT_SECRET;
+  if (!secretoEsperado) {
+    return res.status(503).json({ error: '/test/chat está deshabilitado (falta configurar TEST_ENDPOINT_SECRET)' });
+  }
+
+  const secretoRecibido = req.header('x-test-secret') || '';
+  const bufEsperado = Buffer.from(secretoEsperado);
+  const bufRecibido = Buffer.from(secretoRecibido);
+
+  // timingSafeEqual exige buffers del mismo largo — si no calzan, ya sabemos
+  // que no son iguales, sin arriesgarnos a comparar buffers de largo distinto.
+  const coincide =
+    bufEsperado.length === bufRecibido.length && crypto.timingSafeEqual(bufEsperado, bufRecibido);
+
+  if (!coincide) {
+    return res.status(401).json({ error: 'Secreto de prueba inválido o faltante (header x-test-secret)' });
+  }
+
+  next();
+}
+
+app.post('/test/chat', requireTestSecret, async (req, res) => {
   try {
     const { empresaId, telefono, mensaje } = req.body;
 
