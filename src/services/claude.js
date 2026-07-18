@@ -172,22 +172,23 @@ Instrucciones:
     }
 
     if (horariosParaMostrar) {
-      const fechaLegible = new Date(`${horariosParaMostrar.fecha}T00:00:00`).toLocaleDateString('es-CL', {
+      // Ojo con la zona horaria: horariosParaMostrar.fecha ya es el día
+      // correcto en Chile (viene de consultar_disponibilidad). Si la
+      // convirtiéramos con new Date('YYYY-MM-DDT00:00:00') y luego
+      // formateáramos con timeZone America/Santiago, el servidor (que corre
+      // en UTC en Render) le resta horas y el día "se cae" al anterior. Para
+      // evitarlo, construimos la fecha en UTC con los mismos números y la
+      // formateamos también en UTC, sin conversión de por medio.
+      const [anio, mes, dia] = horariosParaMostrar.fecha.split('-').map(Number);
+      const fechaComoUTC = new Date(Date.UTC(anio, mes - 1, dia));
+      const fechaLegible = fechaComoUTC.toLocaleDateString('es-CL', {
         weekday: 'long',
         day: 'numeric',
         month: 'long',
-        timeZone: 'America/Santiago',
+        timeZone: 'UTC',
       });
       return {
         texto: `Estos son los horarios disponibles para el ${fechaLegible}: ${horariosParaMostrar.horas.join(', ')}. Elige el que más te acomode 👇`,
         interactivo: { tipo: 'lista_horarios', fecha: horariosParaMostrar.fecha, horas: horariosParaMostrar.horas },
       };
     }
-
-    messages.push({ role: 'user', content: toolResults });
-  }
-
-  return { texto: 'Disculpa, tuve un problema procesando tu solicitud. ¿Puedes intentar de nuevo?', interactivo: null };
-}
-
-module.exports = { generarRespuestaChatbot };
