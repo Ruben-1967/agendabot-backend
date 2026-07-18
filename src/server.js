@@ -110,19 +110,33 @@ app.post('/webhook/whatsapp', async (req, res) => {
         return;
       }
 
-      const { respuestaTexto } = await procesarMensajeDemo({
+      const { respuestaTexto, interactivo } = await procesarMensajeDemo({
         demoAsignada,
         telefonoCliente,
         mensaje,
         nombreContacto,
       });
 
-      await sendWhatsAppTextMessage({
-        phoneNumberId,
-        to: telefonoCliente,
-        text: respuestaTexto,
-        accessToken: accessTokenDemo,
-      });
+      if (interactivo?.tipo === 'lista_horarios') {
+        await sendWhatsAppInteractiveList({
+          phoneNumberId,
+          to: telefonoCliente,
+          accessToken: accessTokenDemo,
+          textoCuerpo: respuestaTexto,
+          textoBoton: 'Ver horarios',
+          filas: interactivo.horas.map((hora) => ({
+            id: codificarFilaHorario(interactivo.fecha, hora),
+            titulo: hora,
+          })),
+        });
+      } else {
+        await sendWhatsAppTextMessage({
+          phoneNumberId,
+          to: telefonoCliente,
+          text: respuestaTexto,
+          accessToken: accessTokenDemo,
+        });
+      }
 
       console.log(`[DEMO] Respondido a ${telefonoCliente} como "${demoAsignada.empresaDemo.nombre}"`);
       return; // IMPORTANTE: no seguir al flujo normal de Empresa real

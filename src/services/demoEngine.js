@@ -16,6 +16,7 @@ const Anthropic = require('@anthropic-ai/sdk');
 const prisma = require('../lib/prisma');
 const { procesarMensajeEntrante } = require('./chatbotEngine');
 const { procesarMensajeCatalogoRotativo } = require('./pedidosEngine');
+const { decodificarFilaHorario } = require('./whatsapp');
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
@@ -82,13 +83,25 @@ async function procesarMensajeDemo({ demoAsignada, telefonoCliente, mensaje, nom
   const paso = demoAsignada.paso || PASOS.INICIO;
   const historial = Array.isArray(demoAsignada.historialSimulacion) ? demoAsignada.historialSimulacion : [];
 
-  const textoEntrante = mensaje.type === 'button'
-    ? (mensaje.button?.text || '')
-    : (mensaje.type === 'interactive'
-      ? (mensaje.interactive?.list_reply?.title || mensaje.interactive?.button_reply?.title || '')
-      : (mensaje.text?.body || ''));
+  // Si el prospecto tocó una hora de la lista interactiva que le mostramos
+  // (ver más abajo, PASOS.SIMULACION_LIBRE), el id de la fila trae la fecha
+  // codificada — lo traducimos al mismo texto de confirmación que usa el
+  // flujo real, para que Claude tenga fecha+hora exactas y no solo el título
+  // visible ("10:00", sin fecha).
+  const horarioElegido = mensaje.type === 'interactive'
+    ? decodificarFilaHorario(mensaje.interactive?.list_reply?.id)
+    : null;
+
+  const textoEntrante = horarioElegido
+    ? `Confirmo que quiero agendar para el ${horarioElegido.fecha} a las ${horarioElegido.hora}.`
+    : mensaje.type === 'button'
+      ? (mensaje.button?.text || '')
+      : (mensaje.type === 'interactive'
+        ? (mensaje.interactive?.list_reply?.title || mensaje.interactive?.button_reply?.title || '')
+        : (mensaje.text?.body || ''));
 
   let respuestaTexto;
+  let interactivo = null;
   let nuevoPaso = paso;
   let nuevoHistorial = historial;
 
@@ -112,6 +125,7 @@ async function procesarMensajeDemo({ demoAsignada, telefonoCliente, mensaje, nom
     // ------------------------------------------------------------
     case PASOS.SIMULACION_LIBRE: {
       let respuestaMotorReal = null;
+      let interactivoMotorReal = null;
 
       try {
         if (modoOperacion === 'CATALOGO_ROTATIVO') {
@@ -124,6 +138,7 @@ async function procesarMensajeDemo({ demoAsignada, telefonoCliente, mensaje, nom
             empresa: empresaDemo, telefonoCliente, textoEntrante, nombreContacto,
           });
           respuestaMotorReal = resultado?.respuestaTexto || null;
+          interactivoMotorReal = resultado?.interactivo || null;
         }
       } catch (error) {
         console.error('[DEMO] Error delegando al motor real, se usa fallback:', error.message);
@@ -133,7 +148,16 @@ async function procesarMensajeDemo({ demoAsignada, telefonoCliente, mensaje, nom
       nuevoHistorial = [...historial, { rol: 'prospecto', texto: textoEntrante }];
       const turnosDeSimulacion = nuevoHistorial.length;
 
-      if (turnosDeSimulacion >= MIN_TURNOS_SIMULACION) {
+      if (interactivoMotorReal) {
+        // El motor real justo mostró una lista de horarios tocable — la
+        // dejamos pasar tal cual, sin mezclarla con el texto de transición
+        // a precios ni avanzar de paso todavía. El prospecto necesita este
+        // turno (y probablemente el siguiente, al tocar una hora) libre
+        // para completar el agendamiento de verdad.
+        respuestaTexto = respuestaMotorReal;
+        interactivo = interactivoMotorReal;
+        nuevoPaso = PASOS.SIMULACION_LIBRE;
+      } else if (turnosDeSimulacion >= MIN_TURNOS_SIMULACION) {
         respuestaTexto =
           `${respuestaMotorReal ? respuestaMotorReal + '\n\n' : ''}` +
           `Así, sin que nadie de tu equipo tocara el celular. Ahora con tu negocio real: ` +
@@ -201,7 +225,7 @@ async function procesarMensajeDemo({ demoAsignada, telefonoCliente, mensaje, nom
     data: { paso: nuevoPaso, historialSimulacion: nuevoHistorial },
   });
 
-  return { respuestaTexto };
+  return { respuestaTexto, interactivo };
 }
 
 module.exports = { procesarMensajeDemo };
