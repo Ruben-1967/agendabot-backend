@@ -55,6 +55,14 @@ model Empresa {
 
   logoUrl         String? // URL del logo del negocio (para el panel, el chatbot, y la futura landing page)
 
+  // Personalización del negocio — pensado para que cada empresa lo cargue
+  // ella misma vía el panel de "Información del negocio" (pendiente de UI),
+  // en vez de que MultiDigital lo cargue a mano por script.
+  direccion         String? // dirección real, usada en confirmaciones/recordatorios del bot
+  notaAgendamiento  String? // texto libre que el bot puede citar sobre políticas de agendamiento (ej. "cupos limitados, avisar con anticipación si no puede asistir")
+  informacionAdicional String? @db.Text // FAQ/precios/promociones que el bot puede citar TAL CUAL — nunca debe inventar nada fuera de esto
+  requiereRut       Boolean @default(false) // si true, agendar_cita exige RUT del cliente antes de crear la cita
+
   // WhatsApp Business propio del cliente (no de MultiDigital)
   whatsappNumeroId String? // phone_number_id de Meta
   whatsappWabaId   String? // ID de la WhatsApp Business Account

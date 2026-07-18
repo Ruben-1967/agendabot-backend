@@ -8,37 +8,57 @@ const anthropic = new Anthropic({
 
 const MODEL = 'claude-haiku-4-5-20251001';
 
-const TOOLS = [
-  {
-    name: 'consultar_disponibilidad',
-    description:
-      'Consulta los horarios disponibles para agendar una cita en una fecha específica. Devuelve una lista de horas de inicio disponibles (formato HH:MM), o una lista vacía si no hay disponibilidad ese día.',
-    input_schema: {
-      type: 'object',
-      properties: {
-        fecha: {
-          type: 'string',
-          description: "Fecha a consultar, en formato YYYY-MM-DD (ej. '2026-07-15').",
+/**
+ * Arma la lista de herramientas para una empresa específica. Hoy la única
+ * variación es que agendar_cita exige el campo "rut" cuando
+ * empresa.requiereRut está activo (ej. Ahorróptica) — el resto de las
+ * empresas no ven ese campo para nada.
+ */
+function construirTools(empresa) {
+  const agendarCitaProperties = {
+    fecha: { type: 'string', description: 'Fecha de la cita, formato YYYY-MM-DD.' },
+    hora: { type: 'string', description: "Hora de inicio, formato HH:MM (ej. '10:30')." },
+    servicio: { type: 'string', description: 'Nombre del servicio solicitado, ej. "Examen de la vista".' },
+  };
+  const agendarCitaRequired = ['fecha', 'hora', 'servicio'];
+
+  if (empresa.requiereRut) {
+    agendarCitaProperties.rut = {
+      type: 'string',
+      description: "RUT del cliente (con guión, ej. '12345678-9'). Este negocio exige RUT para agendar.",
+    };
+    agendarCitaRequired.push('rut');
+  }
+
+  return [
+    {
+      name: 'consultar_disponibilidad',
+      description:
+        'Consulta los horarios disponibles para agendar una cita en una fecha específica. Devuelve una lista de horas de inicio disponibles (formato HH:MM), o una lista vacía si no hay disponibilidad ese día.',
+      input_schema: {
+        type: 'object',
+        properties: {
+          fecha: {
+            type: 'string',
+            description: "Fecha a consultar, en formato YYYY-MM-DD (ej. '2026-07-15').",
+          },
         },
+        required: ['fecha'],
       },
-      required: ['fecha'],
     },
-  },
-  {
-    name: 'agendar_cita',
-    description:
-      'Crea una cita real en el sistema para el cliente actual, en una fecha y hora específicas que ya se confirmó que están disponibles. Solo usar después de que el cliente haya confirmado explícitamente fecha, hora y servicio.',
-    input_schema: {
-      type: 'object',
-      properties: {
-        fecha: { type: 'string', description: 'Fecha de la cita, formato YYYY-MM-DD.' },
-        hora: { type: 'string', description: "Hora de inicio, formato HH:MM (ej. '10:30')." },
-        servicio: { type: 'string', description: 'Nombre del servicio solicitado, ej. "Examen de la vista".' },
+    {
+      name: 'agendar_cita',
+      description: empresa.requiereRut
+        ? 'Crea una cita real en el sistema para el cliente actual, en una fecha y hora específicas que ya se confirmó que están disponibles. Solo usar después de que el cliente haya confirmado explícitamente fecha, hora, servicio Y RUT — este negocio exige RUT para agendar.'
+        : 'Crea una cita real en el sistema para el cliente actual, en una fecha y hora específicas que ya se confirmó que están disponibles. Solo usar después de que el cliente haya confirmado explícitamente fecha, hora y servicio.',
+      input_schema: {
+        type: 'object',
+        properties: agendarCitaProperties,
+        required: agendarCitaRequired,
       },
-      required: ['fecha', 'hora', 'servicio'],
     },
-  },
-];
+  ];
+}
 
 /**
  * Ejecuta la herramienta pedida por Claude y devuelve el resultado como texto/JSON.
@@ -58,6 +78,20 @@ async function ejecutarHerramienta(nombre, input, contexto) {
     if (!recurso) {
       return { error: 'Esta empresa no tiene un recurso agendable configurado todavía.' };
     }
+
+    // Si la empresa exige RUT, el schema de la herramienta ya lo marca como
+    // required — esto es un resguardo extra por si Claude igual la llama sin
+    // el campo. Si viene un RUT, lo guardamos en el Cliente (se sobreescribe
+    // solo si venía vacío o distinto, así queda actualizado a futuro).
+    if (empresa.requiereRut) {
+      if (!input.rut) {
+        return { error: 'Este negocio exige RUT para agendar. Pide el RUT del cliente antes de reintentar.' };
+      }
+      if (cliente.rut !== input.rut) {
+        await prisma.cliente.update({ where: { id: cliente.id }, data: { rut: input.rut } });
+      }
+    }
+
     const servicioDb = await prisma.servicio.findFirst({
       where: { empresaId: empresa.id, nombre: { equals: input.servicio, mode: 'insensitive' } },
     });
@@ -105,16 +139,32 @@ async function generarRespuestaChatbot({ empresa, cliente, historial, mensajeEnt
 
   const fechaHoyChile = new Date().toLocaleDateString('es-CL', { timeZone: 'America/Santiago' });
 
+  const tools = construirTools(empresa);
+
+  const bloquesPersonalizacion = [];
+  if (empresa.direccion) {
+    bloquesPersonalizacion.push(`Dirección del negocio: ${empresa.direccion}`);
+  }
+  if (empresa.notaAgendamiento) {
+    bloquesPersonalizacion.push(`Nota sobre agendamiento (tono/política a transmitir cuando corresponda): ${empresa.notaAgendamiento}`);
+  }
+  if (empresa.informacionAdicional) {
+    bloquesPersonalizacion.push(
+      `Información adicional que puedes citar TAL CUAL si el cliente pregunta (precios, promociones, qué incluye cada servicio, etc.) — no agregues ni inventes nada que no esté aquí:\n${empresa.informacionAdicional}`
+    );
+  }
+
   const systemPrompt = `Eres el asistente de agendamiento de "${nombreEmpresa}", vía WhatsApp.
 Hoy es ${fechaHoyChile} (zona horaria de Chile).
 
 Servicios disponibles: ${serviciosBase.length ? serviciosBase.join(', ') : 'consultar con el negocio'}.
-
+${bloquesPersonalizacion.length ? '\n' + bloquesPersonalizacion.join('\n\n') + '\n' : ''}
 Instrucciones:
 - Sé breve, cordial y directo — estás en un chat de WhatsApp, no escribas párrafos largos.
 - Si el cliente quiere agendar, usa la herramienta consultar_disponibilidad para ver horas REALES antes de ofrecer cualquier horario. NUNCA inventes horas disponibles.
-- Una vez que el cliente confirme fecha, hora y servicio específicos, usa agendar_cita para crear la cita de verdad.
+${empresa.requiereRut ? '- Este negocio EXIGE RUT para agendar. Antes de llamar a agendar_cita, además de fecha/hora/servicio, pide el RUT del cliente si aún no lo tienes en la conversación.\n' : ''}- Una vez que el cliente confirme fecha, hora${empresa.requiereRut ? ', servicio y RUT' : ' y servicio'} específicos, usa agendar_cita para crear la cita de verdad.
 - Si agendar_cita falla porque el horario ya no está disponible, discúlpate y ofrece consultar otra hora.
+- Si el cliente pregunta algo que no está cubierto en la información de este mensaje (precios, condiciones, detalles clínicos), no inventes: dile que lo puede confirmar directamente con el negocio.
 - No des información médica ni de salud como si fueras un profesional — solo agenda.`;
 
   const messages = [
@@ -135,7 +185,7 @@ Instrucciones:
       model: MODEL,
       max_tokens: 500,
       system: systemPrompt,
-      tools: TOOLS,
+      tools,
       messages,
     });
 
