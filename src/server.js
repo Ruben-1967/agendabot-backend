@@ -164,6 +164,7 @@ app.post('/webhook/whatsapp', async (req, res) => {
 
     // A partir de aquí, flujo normal de agendamiento (texto, botones, y la
     // lista interactiva de horarios que el propio bot ofrece).
+    
     let textoEntrante;
     if (mensaje.type === 'interactive') {
       // Único tipo interactivo que este flujo entiende: el cliente tocó un
@@ -180,6 +181,53 @@ app.post('/webhook/whatsapp', async (req, res) => {
         ? (mensaje.button?.text || '')
         : (mensaje.text?.body || '');
     }
+
+    // ------------------------------------------------------------
+    // NUEVO: si el cliente tiene una cita PENDIENTE esperando confirmación
+    // (ver src/jobs/confirmarCitasProximas.js), interpretamos un "sí"/"no"
+    // corto como respuesta a esa confirmación, antes que nada — sin pasar
+    // por Claude. Si el mensaje no calza con ninguno de los dos patrones,
+    // seguimos al flujo normal (puede ser otra cosa, ej. "puedo cambiar la
+    // hora?").
+    if (mensaje.type === 'text' || mensaje.type === 'button') {
+      const pareceConfirmar = /^\s*(s[ií]|confirmo|confirmar|dale|ok|listo|correcto)\s*[.!]?\s*$/i.test(textoEntrante);
+      const pareceCancelar = /^\s*no(\s+puedo|\s+podr[eé])?\s*[.!]?\s*$|^\s*(cancelar|anular)\s*[.!]?\s*$/i.test(textoEntrante);
+
+      if (pareceConfirmar || pareceCancelar) {
+        const clienteExistente = await prisma.cliente.findFirst({
+          where: { empresaId: empresa.id, telefono: telefonoCliente },
+        });
+
+        const citaPendiente = clienteExistente
+          ? await prisma.cita.findFirst({
+              where: { empresaId: empresa.id, clienteId: clienteExistente.id, estado: 'PENDIENTE', confirmacionIntentos: { gt: 0 } },
+              orderBy: { fechaHoraInicio: 'asc' },
+            })
+          : null;
+
+        if (citaPendiente) {
+          const accessTokenCita = empresa.whatsappToken || process.env.WHATSAPP_ACCESS_TOKEN;
+
+          if (pareceConfirmar) {
+            await prisma.cita.update({ where: { id: citaPendiente.id }, data: { estado: 'CONFIRMADA' } });
+            await sendWhatsAppTextMessage({
+              phoneNumberId, to: telefonoCliente, accessToken: accessTokenCita,
+              text: '¡Gracias por confirmar! Tu cita queda lista ✅',
+            });
+          } else {
+            await prisma.cita.update({ where: { id: citaPendiente.id }, data: { estado: 'CANCELADA', canceladaPorNoConfirmar: false } });
+            await sendWhatsAppTextMessage({
+              phoneNumberId, to: telefonoCliente, accessToken: accessTokenCita,
+              text: 'Entendido, cancelamos tu cita. Escríbenos cuando quieras agendar otra 🙌',
+            });
+          }
+
+          console.log(`Cita ${citaPendiente.id} ${pareceConfirmar ? 'confirmada' : 'cancelada'} por respuesta de texto (${empresa.nombre}).`);
+          return; // ya respondimos, no seguir al flujo normal de Claude
+        }
+      }
+    }
+    // ---- fin bloque de confirmación de citas ----
 
     const { respuestaTexto, interactivo } = await procesarMensajeEntrante({
       empresa,

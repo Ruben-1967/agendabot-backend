@@ -257,6 +257,14 @@ model Cita {
   fechaHoraFin    DateTime
   estado    EstadoCita @default(PENDIENTE)
 
+  // Control del recordatorio de confirmación (24h antes, luego cada 1h,
+  // hasta 3 intentos — ver src/jobs/confirmarCitasProximas.js). No confundir
+  // con recordatorioControlAnualEnviadoEn en Cliente, que es un recordatorio
+  // anual distinto (control de la vista), no de una cita puntual.
+  confirmacionIntentos      Int      @default(0)
+  confirmacionUltimoEnvioEn DateTime?
+  canceladaPorNoConfirmar   Boolean  @default(false)
+
   googleEventId String? // id del evento creado en Google Calendar
 
   origenCanal String @default("whatsapp") // "whatsapp" | "panel" | "widget"

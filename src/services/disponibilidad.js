@@ -1,4 +1,5 @@
 const prisma = require('../lib/prisma');
+const { horaChileAFechaUTC } = require('../lib/horaChile');
 
 /**
  * Convierte "HH:MM" a minutos desde medianoche.
@@ -30,12 +31,16 @@ async function obtenerHorariosDisponibles(recursoAgendableId, fechaISO) {
     throw new Error(`RecursoAgendable ${recursoAgendableId} no existe`);
   }
 
-  const fecha = new Date(`${fechaISO}T00:00:00`);
-  const diaSemana = fecha.getDay(); // 0=domingo ... 6=sábado
+  // Día de la semana a partir del calendario puro (año/mes/día), sin pasar
+  // por ninguna zona horaria — evita cualquier ambigüedad de a qué hora
+  // "empieza" el día.
+  const [anio, mes, dia] = fechaISO.split('-').map(Number);
+  const diaSemana = new Date(Date.UTC(anio, mes - 1, dia)).getUTCDay(); // 0=domingo ... 6=sábado
 
   // 1. Respetar el horizonte de agenda (no agendar demasiado lejos en el futuro)
   const hoy = new Date();
-  const diasDeDiferencia = Math.floor((fecha - hoy) / (1000 * 60 * 60 * 24));
+  const inicioDiaChile = horaChileAFechaUTC(fechaISO, '00:00');
+  const diasDeDiferencia = Math.floor((inicioDiaChile - hoy) / (1000 * 60 * 60 * 24));
   if (diasDeDiferencia > recurso.horizonteAgendaDias) {
     return [];
   }
@@ -50,8 +55,8 @@ async function obtenerHorariosDisponibles(recursoAgendableId, fechaISO) {
   }
 
   // 3. Traer bloqueos (vacaciones, feriados puntuales) que se crucen con ese día
-  const inicioDia = new Date(`${fechaISO}T00:00:00`);
-  const finDia = new Date(`${fechaISO}T23:59:59`);
+  const inicioDia = horaChileAFechaUTC(fechaISO, '00:00');
+  const finDia = horaChileAFechaUTC(fechaISO, '23:59');
 
   const bloqueos = await prisma.bloqueo.findMany({
     where: {
@@ -78,10 +83,9 @@ async function obtenerHorariosDisponibles(recursoAgendableId, fechaISO) {
     const finBloque = horaAMinutos(bloque.horaFin);
 
     while (cursor + duracion <= finBloque) {
-      const inicioSlot = new Date(fecha);
-      inicioSlot.setMinutes(inicioSlot.getMinutes() + cursor);
-      const finSlot = new Date(inicioSlot);
-      finSlot.setMinutes(finSlot.getMinutes() + duracion);
+      const horaSlot = minutosAHora(cursor);
+      const inicioSlot = horaChileAFechaUTC(fechaISO, horaSlot);
+      const finSlot = new Date(inicioSlot.getTime() + duracion * 60000);
 
       // Respetar anticipación mínima (no ofrecer horas demasiado cercanas a "ahora")
       const minutosHastaSlot = (inicioSlot - hoy) / (1000 * 60);
@@ -98,7 +102,7 @@ async function obtenerHorariosDisponibles(recursoAgendableId, fechaISO) {
       );
 
       if (cumpleAnticipacion && !chocaConBloqueo && !chocaConCita) {
-        slotsDisponibles.push(minutosAHora(cursor));
+        slotsDisponibles.push(horaSlot);
       }
 
       cursor += duracion;
@@ -115,9 +119,8 @@ async function crearCita({ empresaId, clienteId, recursoAgendableId, servicioId,
   const recurso = await prisma.recursoAgendable.findUnique({ where: { id: recursoAgendableId } });
   if (!recurso) throw new Error('Recurso no encontrado');
 
-  const fechaHoraInicio = new Date(`${fechaISO}T${horaInicio}:00`);
-  const fechaHoraFin = new Date(fechaHoraInicio);
-  fechaHoraFin.setMinutes(fechaHoraFin.getMinutes() + recurso.duracionCitaMinutos);
+  const fechaHoraInicio = horaChileAFechaUTC(fechaISO, horaInicio);
+  const fechaHoraFin = new Date(fechaHoraInicio.getTime() + recurso.duracionCitaMinutos * 60000);
 
   // Revalidamos disponibilidad justo antes de crear, para evitar condiciones de carrera
   // (dos clientes pidiendo el mismo horario casi al mismo tiempo).
