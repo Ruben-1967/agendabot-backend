@@ -1,6 +1,7 @@
 const Anthropic = require('@anthropic-ai/sdk');
 const prisma = require('../lib/prisma');
-const { obtenerHorariosDisponibles, crearCita } = require('./disponibilidad');
+const { obtenerHorariosDisponibles, crearCita, obtenerProximosDiasConDisponibilidad } = require('./disponibilidad');
+const { fechaLegibleDesdeISO } = require('../lib/formatoFechas');
 
 const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY,
@@ -34,7 +35,7 @@ function construirTools(empresa) {
     {
       name: 'consultar_disponibilidad',
       description:
-        'Consulta los horarios disponibles para agendar una cita en una fecha específica. Devuelve una lista de horas de inicio disponibles (formato HH:MM), o una lista vacía si no hay disponibilidad ese día.',
+        'Consulta los horarios disponibles para agendar una cita en una fecha específica. Devuelve una lista de horas de inicio disponibles (formato HH:MM), o una lista vacía si no hay disponibilidad ese día. Usar cuando el cliente SÍ menciona un día puntual (ej. "el jueves", "mañana", una fecha concreta).',
       input_schema: {
         type: 'object',
         properties: {
@@ -44,6 +45,16 @@ function construirTools(empresa) {
           },
         },
         required: ['fecha'],
+      },
+    },
+    {
+      name: 'consultar_proximos_dias_disponibles',
+      description:
+        'Consulta los próximos días que tienen al menos un horario disponible, para cuando el cliente quiere agendar pero NO especificó ningún día. Devuelve una lista de días con cupo, cada uno con su hora más temprana disponible. Úsala en vez de consultar_disponibilidad solo cuando el cliente no mencionó fecha.',
+      input_schema: {
+        type: 'object',
+        properties: {},
+        required: [],
       },
     },
     {
@@ -72,6 +83,14 @@ async function ejecutarHerramienta(nombre, input, contexto) {
     }
     const horas = await obtenerHorariosDisponibles(recurso.id, input.fecha);
     return { fecha: input.fecha, horasDisponibles: horas };
+  }
+
+  if (nombre === 'consultar_proximos_dias_disponibles') {
+    if (!recurso) {
+      return { error: 'Esta empresa no tiene un recurso agendable configurado todavía.' };
+    }
+    const dias = await obtenerProximosDiasConDisponibilidad(recurso.id, 4);
+    return { dias: dias.map((d) => ({ fecha: d.fecha, primeraHora: d.horas[0] })) };
   }
 
   if (nombre === 'agendar_cita') {
@@ -175,7 +194,7 @@ Instrucciones:
 - Sé breve, cordial y directo — estás en un chat de WhatsApp, no escribas párrafos largos.
 - Cuando te pregunten qué servicios ofrecen, respondes ÚNICAMENTE con los nombres de la lista "SERVICIOS AGENDABLES" de arriba, tal cual están escritos — nunca los desgloses en sub-procedimientos ni los reemplaces por detalles clínicos.
 - La "información adicional" (si existe) es solo para responder preguntas puntuales que el cliente haga (precios, qué incluye un servicio, etc.) — nunca la uses para construir o ampliar la lista de servicios ofrecidos.
-- Si el cliente quiere agendar, usa la herramienta consultar_disponibilidad para ver horas REALES antes de ofrecer cualquier horario. NUNCA inventes horas disponibles.
+- Si el cliente quiere agendar, primero determina si mencionó un día específico. Si NO mencionó día, usa consultar_proximos_dias_disponibles. Si SÍ mencionó un día puntual (ej. "el jueves", "mañana", una fecha), usa consultar_disponibilidad con esa fecha. NUNCA inventes horas ni días disponibles.
 ${empresa.requiereRut ? '- Este negocio EXIGE RUT para agendar. Antes de llamar a agendar_cita, además de fecha/hora/servicio, pide el RUT del cliente si aún no lo tienes en la conversación.\n' : ''}- Una vez que el cliente confirme fecha, hora${empresa.requiereRut ? ', servicio y RUT' : ' y servicio'} específicos, usa agendar_cita para crear la cita de verdad. El campo "servicio" debe ser exactamente uno de los nombres de la lista SERVICIOS AGENDABLES.
 - Si agendar_cita falla porque el horario ya no está disponible, discúlpate y ofrece consultar otra hora.
 - Si el cliente pregunta algo que no está cubierto en la información de este mensaje (precios, condiciones, detalles clínicos), no inventes: dile que lo puede confirmar directamente con el negocio.
@@ -214,6 +233,7 @@ ${empresa.requiereRut ? '- Este negocio EXIGE RUT para agendar. Antes de llamar 
 
     const toolResults = [];
     let horariosParaMostrar = null;
+    let diasParaMostrar = null;
 
     for (const block of response.content) {
       if (block.type === 'tool_use') {
@@ -224,36 +244,35 @@ ${empresa.requiereRut ? '- Este negocio EXIGE RUT para agendar. Antes de llamar 
           content: JSON.stringify(resultado),
         });
 
-        // Si Claude consultó disponibilidad y SÍ hay horas libres, cortamos
-        // el ciclo acá: en vez de que Claude las escriba en texto plano, el
-        // backend arma una lista interactiva de WhatsApp con las horas
-        // reales. Si no hay horas (arreglo vacío), dejamos que el ciclo siga
-        // normal para que Claude ofrezca otro día en texto.
+        // Si Claude consultó disponibilidad de UN día y SÍ hay horas libres,
+        // cortamos el ciclo acá: en vez de que Claude las escriba en texto
+        // plano, el backend arma una lista interactiva de WhatsApp con las
+        // horas reales. Si no hay horas (arreglo vacío), dejamos que el
+        // ciclo siga normal para que Claude ofrezca otro día en texto.
         if (block.name === 'consultar_disponibilidad' && resultado.horasDisponibles?.length > 0) {
           horariosParaMostrar = { fecha: resultado.fecha, horas: resultado.horasDisponibles };
+        }
+
+        // Mismo mecanismo, pero para la lista de PRÓXIMOS DÍAS (cuando el
+        // cliente no especificó fecha).
+        if (block.name === 'consultar_proximos_dias_disponibles' && resultado.dias?.length > 0) {
+          diasParaMostrar = resultado.dias;
         }
       }
     }
 
     if (horariosParaMostrar) {
-      // Ojo con la zona horaria: horariosParaMostrar.fecha ya es el día
-      // correcto en Chile (viene de consultar_disponibilidad). Si la
-      // convirtiéramos con new Date('YYYY-MM-DDT00:00:00') y luego
-      // formateáramos con timeZone America/Santiago, el servidor (que corre
-      // en UTC en Render) le resta horas y el día "se cae" al anterior. Para
-      // evitarlo, construimos la fecha en UTC con los mismos números y la
-      // formateamos también en UTC, sin conversión de por medio.
-      const [anio, mes, dia] = horariosParaMostrar.fecha.split('-').map(Number);
-      const fechaComoUTC = new Date(Date.UTC(anio, mes - 1, dia));
-      const fechaLegible = fechaComoUTC.toLocaleDateString('es-CL', {
-        weekday: 'long',
-        day: 'numeric',
-        month: 'long',
-        timeZone: 'UTC',
-      });
+      const fechaLegible = fechaLegibleDesdeISO(horariosParaMostrar.fecha);
       return {
         texto: `Estos son los horarios disponibles para el ${fechaLegible}: ${horariosParaMostrar.horas.join(', ')}. Elige el que más te acomode 👇`,
         interactivo: { tipo: 'lista_horarios', fecha: horariosParaMostrar.fecha, horas: horariosParaMostrar.horas },
+      };
+    }
+
+    if (diasParaMostrar) {
+      return {
+        texto: 'Estos son los próximos días con horas disponibles. Elige el que más te acomode 👇',
+        interactivo: { tipo: 'lista_dias', dias: diasParaMostrar },
       };
     }
 

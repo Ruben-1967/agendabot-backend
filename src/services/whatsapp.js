@@ -89,21 +89,74 @@ async function sendWhatsAppTemplateMessage({ phoneNumberId, to, accessToken, tem
 }
 
 /**
- * Envía un mensaje INTERACTIVO de lista (botón "Ver opciones" que despliega
- * hasta 10 filas seleccionables). Solo se puede enviar dentro de la ventana
- * de servicio de 24h (es decir, después de que el cliente respondió algo,
- * como el botón de una plantilla) — no sirve para iniciar una conversación.
+ * Envía un mensaje INTERACTIVO de lista (botón que despliega hasta 10 filas
+ * seleccionables, repartidas en hasta 10 secciones). Solo se puede enviar
+ * dentro de la ventana de servicio de 24h (es decir, después de que el
+ * cliente respondió algo) — no sirve para iniciar una conversación.
+ *
+ * Soporta dos formas de pasar las filas:
+ *  - `secciones`: agrupadas con título propio (ej. "Mañana"/"Tarde", o
+ *    "Próximos días con hora") — usar para listas nuevas con mejor formato.
+ *  - `filas`: forma antigua, lista plana sin agrupar — se sigue soportando
+ *    tal cual para no romper integraciones existentes (ej. catálogo rotativo).
  *
  * @param {Object} params
  * @param {string} params.phoneNumberId
  * @param {string} params.to
  * @param {string} params.accessToken
- * @param {string} params.textoCuerpo - Texto que acompaña el botón (ej. "Elige tu pan de hoy 👇")
- * @param {string} params.textoBoton - Texto del botón que despliega la lista (ej. "Ver menú")
- * @param {{id: string, titulo: string, descripcion?: string}[]} params.filas - Hasta 10 opciones.
+ * @param {string} params.textoCuerpo - Mensaje principal.
+ * @param {string} params.textoBoton - Texto del botón que despliega la lista.
+ * @param {{titulo: string, filas: {id: string, titulo: string, descripcion?: string}[]}[]} [params.secciones]
+ * @param {{id: string, titulo: string, descripcion?: string}[]} [params.filas]
+ * @param {string} [params.textoHeader] - Texto corto en negrita arriba del cuerpo (ej. nombre del negocio). Máx. 60 caracteres.
+ * @param {string} [params.textoFooter] - Texto pequeño abajo del cuerpo. Máx. 60 caracteres.
  */
-async function sendWhatsAppInteractiveList({ phoneNumberId, to, accessToken, textoCuerpo, textoBoton, filas }) {
+async function sendWhatsAppInteractiveList({
+  phoneNumberId,
+  to,
+  accessToken,
+  textoCuerpo,
+  textoBoton,
+  secciones,
+  filas,
+  textoHeader,
+  textoFooter,
+}) {
   const url = `https://graph.facebook.com/${GRAPH_API_VERSION}/${phoneNumberId}/messages`;
+
+  const seccionesFinales = secciones && secciones.length > 0
+    ? secciones.slice(0, 10).map((seccion) => ({
+        title: seccion.titulo.slice(0, 24),
+        rows: seccion.filas.slice(0, 10).map((fila) => ({
+          id: fila.id,
+          title: fila.titulo.slice(0, 24),
+          description: fila.descripcion ? fila.descripcion.slice(0, 72) : undefined,
+        })),
+      }))
+    : [{
+        title: 'Disponible hoy',
+        rows: (filas || []).slice(0, 10).map((fila) => ({
+          id: fila.id,
+          title: fila.titulo.slice(0, 24),
+          description: fila.descripcion ? fila.descripcion.slice(0, 72) : undefined,
+        })),
+      }];
+
+  const interactive = {
+    type: 'list',
+    body: { text: textoCuerpo },
+    action: {
+      button: textoBoton,
+      sections: seccionesFinales,
+    },
+  };
+
+  if (textoHeader) {
+    interactive.header = { type: 'text', text: textoHeader.slice(0, 60) };
+  }
+  if (textoFooter) {
+    interactive.footer = { text: textoFooter.slice(0, 60) };
+  }
 
   const response = await fetch(url, {
     method: 'POST',
@@ -115,23 +168,7 @@ async function sendWhatsAppInteractiveList({ phoneNumberId, to, accessToken, tex
       messaging_product: 'whatsapp',
       to,
       type: 'interactive',
-      interactive: {
-        type: 'list',
-        body: { text: textoCuerpo },
-        action: {
-          button: textoBoton,
-          sections: [
-            {
-              title: 'Disponible hoy',
-              rows: filas.slice(0, 10).map((fila) => ({
-                id: fila.id,
-                title: fila.titulo.slice(0, 24), // límite de WhatsApp para el título de fila
-                description: fila.descripcion ? fila.descripcion.slice(0, 72) : undefined,
-              })),
-            },
-          ],
-        },
-      },
+      interactive,
     }),
   });
 
@@ -167,10 +204,32 @@ function decodificarFilaHorario(id) {
   return { fecha, hora };
 }
 
+/**
+ * Codifica una fecha en el id de fila que WhatsApp devuelve cuando el
+ * cliente toca un DÍA de la lista interactiva de "próximos días con hora".
+ * Formato: "dia|YYYY-MM-DD"
+ */
+function codificarFilaDia(fecha) {
+  return `dia|${fecha}`;
+}
+
+/**
+ * Inverso de codificarFilaDia. Devuelve null si el id no tiene el formato
+ * esperado.
+ */
+function decodificarFilaDia(id) {
+  if (typeof id !== 'string') return null;
+  const partes = id.split('|');
+  if (partes.length !== 2 || partes[0] !== 'dia') return null;
+  return { fecha: partes[1] };
+}
+
 module.exports = {
   sendWhatsAppTextMessage,
   sendWhatsAppTemplateMessage,
   sendWhatsAppInteractiveList,
   codificarFilaHorario,
   decodificarFilaHorario,
+  codificarFilaDia,
+  decodificarFilaDia,
 };

@@ -7,7 +7,11 @@ const {
   sendWhatsAppInteractiveList,
   decodificarFilaHorario,
   codificarFilaHorario,
+  decodificarFilaDia,
+  codificarFilaDia,
 } = require('./services/whatsapp');
+const { obtenerHorariosDisponibles } = require('./services/disponibilidad');
+const { fechaLegibleDesdeISO } = require('./lib/formatoFechas');
 const { procesarMensajeEntrante } = require('./services/chatbotEngine');
 const { renderFormulario, PLANES } = require('./services/contratoHtml');
 const authRouter = require('./routes/auth');
@@ -116,6 +120,38 @@ app.post('/webhook/whatsapp', async (req, res) => {
         return;
       }
 
+      // NUEVO: si el mensaje entrante es la selección de un DÍA en la demo,
+      // lo interceptamos igual que en el flujo real, sin pasar por el motor
+      // de demo — respondemos directo con las horas de ese día.
+      if (mensaje.type === 'interactive') {
+        const listReplyIdDemo = mensaje.interactive?.list_reply?.id;
+        const diaElegidoDemo = decodificarFilaDia(listReplyIdDemo);
+        if (diaElegidoDemo) {
+          const recursoDemo = await prisma.recursoAgendable.findFirst({
+            where: { empresaId: demoAsignada.empresaDemo.id },
+          });
+          if (recursoDemo) {
+            const horasDemo = await obtenerHorariosDisponibles(recursoDemo.id, diaElegidoDemo.fecha);
+            if (horasDemo.length === 0) {
+              await sendWhatsAppTextMessage({
+                phoneNumberId, to: telefonoCliente, accessToken: accessTokenDemo,
+                text: 'Ese día ya no tiene cupo disponible, ¿quieres que te muestre otro?',
+              });
+              return;
+            }
+            const fechaLegibleDemo = fechaLegibleDesdeISO(diaElegidoDemo.fecha);
+            await sendWhatsAppInteractiveList({
+              phoneNumberId, to: telefonoCliente, accessToken: accessTokenDemo,
+              textoCuerpo: `Estos son los horarios disponibles para el ${fechaLegibleDemo}. Elige el que más te acomode 👇`,
+              textoBoton: 'Ver horarios',
+              textoHeader: demoAsignada.empresaDemo.nombre?.slice(0, 60),
+              filas: horasDemo.map((hora) => ({ id: codificarFilaHorario(diaElegidoDemo.fecha, hora), titulo: hora })),
+            });
+            return;
+          }
+        }
+      }
+
       const { respuestaTexto, interactivo } = await procesarMensajeDemo({
         demoAsignada,
         telefonoCliente,
@@ -123,13 +159,31 @@ app.post('/webhook/whatsapp', async (req, res) => {
         nombreContacto,
       });
 
-      if (interactivo?.tipo === 'lista_horarios') {
+      if (interactivo?.tipo === 'lista_dias') {
+        await sendWhatsAppInteractiveList({
+          phoneNumberId,
+          to: telefonoCliente,
+          accessToken: accessTokenDemo,
+          textoCuerpo: respuestaTexto,
+          textoBoton: 'Ver días',
+          textoHeader: demoAsignada.empresaDemo.nombre?.slice(0, 60),
+          secciones: [{
+            titulo: 'Próximos días con hora',
+            filas: interactivo.dias.map((d) => ({
+              id: codificarFilaDia(d.fecha),
+              titulo: fechaLegibleDesdeISO(d.fecha),
+              descripcion: `Desde las ${d.primeraHora}`,
+            })),
+          }],
+        });
+      } else if (interactivo?.tipo === 'lista_horarios') {
         await sendWhatsAppInteractiveList({
           phoneNumberId,
           to: telefonoCliente,
           accessToken: accessTokenDemo,
           textoCuerpo: respuestaTexto,
           textoBoton: 'Ver horarios',
+          textoHeader: demoAsignada.empresaDemo.nombre?.slice(0, 60),
           filas: interactivo.horas.map((hora) => ({
             id: codificarFilaHorario(interactivo.fecha, hora),
             titulo: hora,
@@ -168,15 +222,54 @@ app.post('/webhook/whatsapp', async (req, res) => {
       return;
     }
 
-    // A partir de aquí, flujo normal de agendamiento (texto, botones, y la
-    // lista interactiva de horarios que el propio bot ofrece).
-    
+    // A partir de aquí, flujo normal de agendamiento (texto, botones, y las
+    // listas interactivas que el propio bot ofrece: días y horarios).
+
     let textoEntrante;
     if (mensaje.type === 'interactive') {
-      // Único tipo interactivo que este flujo entiende: el cliente tocó un
-      // horario de la lista que le mostramos (ver claude.js). Cualquier otro
-      // id (ej. de una lista de otro flujo) se ignora silenciosamente.
       const listReplyId = mensaje.interactive?.list_reply?.id;
+
+      // NUEVO: el cliente tocó un DÍA de la lista de "próximos días con
+      // hora". Se resuelve sin pasar por Claude, igual que ya se hace con
+      // la selección de una hora puntual — más rápido y determinístico.
+      const diaElegido = decodificarFilaDia(listReplyId);
+      if (diaElegido) {
+        const recurso = await prisma.recursoAgendable.findFirst({ where: { empresaId: empresa.id } });
+        if (!recurso) {
+          return;
+        }
+
+        const horas = await obtenerHorariosDisponibles(recurso.id, diaElegido.fecha);
+        const accessTokenDia = empresa.whatsappToken || process.env.WHATSAPP_ACCESS_TOKEN;
+
+        if (!accessTokenDia) {
+          console.error(`Empresa ${empresa.nombre} no tiene whatsappToken configurado y no hay WHATSAPP_ACCESS_TOKEN de respaldo.`);
+          return;
+        }
+
+        if (horas.length === 0) {
+          await sendWhatsAppTextMessage({
+            phoneNumberId, to: telefonoCliente, accessToken: accessTokenDia,
+            text: 'Ese día ya no tiene cupo disponible, ¿quieres que te muestre otro?',
+          });
+          return;
+        }
+
+        const fechaLegible = fechaLegibleDesdeISO(diaElegido.fecha);
+        await sendWhatsAppInteractiveList({
+          phoneNumberId, to: telefonoCliente, accessToken: accessTokenDia,
+          textoCuerpo: `Estos son los horarios disponibles para el ${fechaLegible}. Elige el que más te acomode 👇`,
+          textoBoton: 'Ver horarios',
+          textoHeader: empresa.nombre?.slice(0, 60),
+          filas: horas.map((hora) => ({ id: codificarFilaHorario(diaElegido.fecha, hora), titulo: hora })),
+        });
+        return;
+      }
+
+      // Único otro tipo interactivo que este flujo entiende: el cliente
+      // tocó un horario de la lista que le mostramos (ver claude.js).
+      // Cualquier otro id (ej. de una lista de otro flujo) se ignora
+      // silenciosamente.
       const horarioElegido = decodificarFilaHorario(listReplyId);
       if (!horarioElegido) {
         return;
@@ -189,7 +282,7 @@ app.post('/webhook/whatsapp', async (req, res) => {
     }
 
     // ------------------------------------------------------------
-    // NUEVO: si el cliente tiene una cita PENDIENTE esperando confirmación
+    // Si el cliente tiene una cita PENDIENTE esperando confirmación
     // (ver src/jobs/confirmarCitasProximas.js), interpretamos un "sí"/"no"
     // corto como respuesta a esa confirmación, antes que nada — sin pasar
     // por Claude. Si el mensaje no calza con ninguno de los dos patrones,
@@ -250,13 +343,31 @@ app.post('/webhook/whatsapp', async (req, res) => {
       return;
     }
 
-    if (interactivo?.tipo === 'lista_horarios') {
+    if (interactivo?.tipo === 'lista_dias') {
+      await sendWhatsAppInteractiveList({
+        phoneNumberId,
+        to: telefonoCliente,
+        accessToken,
+        textoCuerpo: respuestaTexto,
+        textoBoton: 'Ver días',
+        textoHeader: empresa.nombre?.slice(0, 60),
+        secciones: [{
+          titulo: 'Próximos días con hora',
+          filas: interactivo.dias.map((d) => ({
+            id: codificarFilaDia(d.fecha),
+            titulo: fechaLegibleDesdeISO(d.fecha),
+            descripcion: `Desde las ${d.primeraHora}`,
+          })),
+        }],
+      });
+    } else if (interactivo?.tipo === 'lista_horarios') {
       await sendWhatsAppInteractiveList({
         phoneNumberId,
         to: telefonoCliente,
         accessToken,
         textoCuerpo: respuestaTexto,
         textoBoton: 'Ver horarios',
+        textoHeader: empresa.nombre?.slice(0, 60),
         filas: interactivo.horas.map((hora) => ({
           id: codificarFilaHorario(interactivo.fecha, hora),
           titulo: hora,

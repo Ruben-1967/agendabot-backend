@@ -113,6 +113,42 @@ async function obtenerHorariosDisponibles(recursoAgendableId, fechaISO) {
 }
 
 /**
+ * Suma N días a una fecha ISO ('YYYY-MM-DD') de forma segura, sin pasar por
+ * ninguna zona horaria del servidor — pura aritmética de calendario en UTC.
+ */
+function sumarDiasISO(fechaISO, n) {
+  const [anio, mes, dia] = fechaISO.split('-').map(Number);
+  const fecha = new Date(Date.UTC(anio, mes - 1, dia));
+  fecha.setUTCDate(fecha.getUTCDate() + n);
+  return fecha.toISOString().split('T')[0];
+}
+
+/**
+ * Devuelve los próximos días (a partir de hoy, hora Chile) que tengan al
+ * menos un horario disponible, hasta juntar `cantidadDias`. Explora como
+ * máximo `maxDiasAExplorar` días hacia adelante para no hacer un loop
+ * gigante si el negocio tiene muy poca disponibilidad.
+ *
+ * @returns {Promise<{fecha: string, horas: string[]}[]>}
+ */
+async function obtenerProximosDiasConDisponibilidad(recursoAgendableId, cantidadDias = 4, maxDiasAExplorar = 30) {
+  // 'en-CA' da formato YYYY-MM-DD directo, ya en zona horaria de Chile.
+  const hoyChileISO = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Santiago' });
+
+  const diasConCupo = [];
+
+  for (let i = 0; i < maxDiasAExplorar && diasConCupo.length < cantidadDias; i++) {
+    const fechaISO = sumarDiasISO(hoyChileISO, i);
+    const horas = await obtenerHorariosDisponibles(recursoAgendableId, fechaISO);
+    if (horas.length > 0) {
+      diasConCupo.push({ fecha: fechaISO, horas });
+    }
+  }
+
+  return diasConCupo;
+}
+
+/**
  * Crea una Cita real en la base de datos.
  */
 async function crearCita({ empresaId, clienteId, recursoAgendableId, servicioId, fechaISO, horaInicio }) {
@@ -143,4 +179,8 @@ async function crearCita({ empresaId, clienteId, recursoAgendableId, servicioId,
   });
 }
 
-module.exports = { obtenerHorariosDisponibles, crearCita };
+module.exports = {
+  obtenerHorariosDisponibles,
+  crearCita,
+  obtenerProximosDiasConDisponibilidad,
+};
