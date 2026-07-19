@@ -1,34 +1,52 @@
 const express = require('express');
+const { parsePhoneNumberFromString } = require('libphonenumber-js');
 const prisma = require('../lib/prisma');
 const { requireAuth, requireRole } = require('../middleware/auth');
 const { extraerInfoSitioWeb } = require('../services/extraccionSitioWeb');
 
 const router = express.Router();
 
-// Mapea la opción que el vendedor elige en el formulario a la "clave"
-// real de RubroTemplate. Confirmado contra la base real de producción.
 const CLAVE_RUBRO_POR_OPCION = {
   OPTICA: 'optica',
   ESTETICA: 'centro_estetico',
   SALUD: 'salud_independiente',
   MANTENCION: 'mantencion_tecnica',
-  PROACTIVO: 'catalogo_rotativo', // venta proactiva: panadería, rotisería, taller, etc.
+  PROACTIVO: 'catalogo_rotativo',
   OTRO: 'otro',
 };
 
+/**
+ * Normaliza un teléfono al formato E.164 sin '+' que usa WhatsApp
+ * (ej. "56912345678"). Requiere el código de país ISO (CL, MX, AR, PE,
+ * CO, ES) para interpretar correctamente números en formato local, sin
+ * que el vendedor tenga que escribir el código de país a mano.
+ * Devuelve null si el número no es válido para ese país.
+ */
+function normalizarTelefono(numeroIngresado, paisIso) {
+  const numero = parsePhoneNumberFromString(numeroIngresado, paisIso);
+  if (!numero || !numero.isValid()) {
+    return null;
+  }
+  return numero.number.replace('+', '');
+}
+
 // ------------------------------------------------------------
 // POST /demos/prospectos
-// body: { nombreNegocio, telefono, nombreEncargado, rubro, sitioWeb? }
-// Crea (o actualiza, si el teléfono ya existía) la Empresa demo y su
-// DemoAsignada. Si viene sitioWeb, intenta extraer información real
-// antes de guardar.
+// body: { nombreNegocio, telefono, paisTelefono, nombreEncargado, rubro, sitioWeb? }
 // ------------------------------------------------------------
 router.post('/prospectos', requireAuth, requireRole('VENDEDOR'), async (req, res) => {
   try {
-    const { nombreNegocio, telefono, nombreEncargado, rubro, sitioWeb } = req.body;
+    const { nombreNegocio, telefono, paisTelefono, nombreEncargado, rubro, sitioWeb } = req.body;
 
-    if (!nombreNegocio || !telefono || !nombreEncargado || !rubro) {
-      return res.status(400).json({ error: 'Faltan campos: nombreNegocio, telefono, nombreEncargado, rubro' });
+    if (!nombreNegocio || !telefono || !paisTelefono || !nombreEncargado || !rubro) {
+      return res.status(400).json({
+        error: 'Faltan campos: nombreNegocio, telefono, paisTelefono, nombreEncargado, rubro',
+      });
+    }
+
+    const telefonoNormalizado = normalizarTelefono(telefono, paisTelefono);
+    if (!telefonoNormalizado) {
+      return res.status(400).json({ error: 'El teléfono ingresado no es válido para el país seleccionado' });
     }
 
     const claveRubro = CLAVE_RUBRO_POR_OPCION[rubro];
@@ -41,9 +59,7 @@ router.post('/prospectos', requireAuth, requireRole('VENDEDOR'), async (req, res
       return res.status(500).json({ error: `No existe RubroTemplate con clave "${claveRubro}"` });
     }
 
-    // Si el teléfono ya estaba cargado, reutilizamos el registro (permite
-    // que un vendedor reconfigure una demo existente) en vez de fallar.
-    const demoExistente = await prisma.demoAsignada.findUnique({ where: { telefono } });
+    const demoExistente = await prisma.demoAsignada.findUnique({ where: { telefono: telefonoNormalizado } });
 
     let infoExtraida = null;
     if (sitioWeb) {
@@ -66,7 +82,7 @@ router.post('/prospectos', requireAuth, requireRole('VENDEDOR'), async (req, res
         data: datosEmpresa,
       });
       await prisma.demoAsignada.update({
-        where: { telefono },
+        where: { telefono: telefonoNormalizado },
         data: {
           nombreProspecto: nombreEncargado,
           vendedorId: req.usuario.vendedorId,
@@ -78,7 +94,7 @@ router.post('/prospectos', requireAuth, requireRole('VENDEDOR'), async (req, res
       empresaDemo = await prisma.empresa.create({ data: datosEmpresa });
       await prisma.demoAsignada.create({
         data: {
-          telefono,
+          telefono: telefonoNormalizado,
           empresaDemoId: empresaDemo.id,
           nombreProspecto: nombreEncargado,
           vendedorId: req.usuario.vendedorId,
@@ -89,6 +105,7 @@ router.post('/prospectos', requireAuth, requireRole('VENDEDOR'), async (req, res
     res.json({
       ok: true,
       empresaDemoId: empresaDemo.id,
+      telefonoNormalizado,
       infoExtraida: infoExtraida?.exito ? infoExtraida : null,
       mensaje: demoExistente ? 'Demo actualizada' : 'Demo creada',
     });
@@ -99,8 +116,7 @@ router.post('/prospectos', requireAuth, requireRole('VENDEDOR'), async (req, res
 });
 
 // ------------------------------------------------------------
-// GET /demos/prospectos — lista los prospectos cargados por el
-// vendedor autenticado, con estado "ya probó la demo".
+// GET /demos/prospectos
 // ------------------------------------------------------------
 router.get('/prospectos', requireAuth, requireRole('VENDEDOR'), async (req, res) => {
   try {
@@ -121,9 +137,6 @@ router.get('/prospectos', requireAuth, requireRole('VENDEDOR'), async (req, res)
         rubro: d.empresaDemo.rubroTemplate.nombre,
         creadoEn: d.creadoEn,
         yaProbo,
-        // Aproximado: el historial no guarda timestamp por mensaje todavía,
-        // así que usamos la última actualización del registro completo
-        // como referencia de "última actividad" cuando ya hubo contacto.
         ultimaActividadEn: yaProbo ? d.actualizadoEn : null,
       };
     });
