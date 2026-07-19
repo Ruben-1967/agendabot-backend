@@ -224,6 +224,17 @@ function decodificarFilaDia(id) {
   return { fecha: partes[1] };
 }
 
+function codificarFilaProductoDemo(productoId) {
+  return `demoproducto|${productoId}`;
+}
+
+function decodificarFilaProductoDemo(id) {
+  if (typeof id !== 'string') return null;
+  const partes = id.split('|');
+  if (partes.length !== 2 || partes[0] !== 'demoproducto') return null;
+  return partes[1];
+}
+
 module.exports = {
   sendWhatsAppTextMessage,
   sendWhatsAppTemplateMessage,

@@ -54,9 +54,6 @@ router.post('/prospectos', requireAuth, requireRole('VENDEDOR'), async (req, res
 
     let infoExtraida = null;
     if (sitioWeb) {
-      // Para rubro PROACTIVO probamos también rutas típicas de catálogo,
-      // ya que muchos negocios (ej. Qroll) tienen el menú en una subpágina
-      // distinta a la home, no en /contacto.
       const rutas = claveRubro === 'catalogo_rotativo' ? RUTAS_CATALOGO_TIPICAS : undefined;
       infoExtraida = await extraerInfoSitioWeb(sitioWeb, rutas);
     }
@@ -83,6 +80,7 @@ router.post('/prospectos', requireAuth, requireRole('VENDEDOR'), async (req, res
           vendedorId: req.usuario.vendedorId,
           paso: 0,
           historialSimulacion: [],
+          carritoDemoJson: [],
         },
       });
       // Si estamos reconfigurando una demo existente, limpiamos productos

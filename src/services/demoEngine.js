@@ -7,17 +7,8 @@
 // para que la experiencia se sienta auténtica.
 //
 // IMPORTANTE: el estado propio de la demo (en qué paso va, historial de la
-// simulación) se guarda en el modelo DemoAsignada, NO en Conversacion. El
-// motor real de chatbot (chatbotEngine.js / claude.js) usa Conversacion.mensajes
-// con su propia forma de datos — si el motor de demo escribiera ahí también,
-// ambos se pisarían entre sí.
-//
-// Para el modo CATALOGO_ROTATIVO, la simulación NO usa pedidosEngine.js (el
-// motor real), porque ese depende de CampanaEnvio/EnvioRealizado y envía
-// WhatsApp directamente con credenciales de negocio real, que una empresa
-// demo no tiene. En su lugar usa catalogoDemoEngine.js, una versión
-// simplificada que lee Producto directo y retorna {respuestaTexto,
-// interactivo} como el resto de este archivo.
+// simulación, carrito de la demo de catálogo) se guarda en el modelo
+// DemoAsignada, NO en Conversacion.
 
 const Anthropic = require('@anthropic-ai/sdk');
 const prisma = require('../lib/prisma');
@@ -28,7 +19,7 @@ const { decodificarFilaHorario } = require('./whatsapp');
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 const LINK_LANDING = 'https://multidigital.cl/totemsystem';
-const LINK_CONTRATACION = 'https://multidigital.cl/totemsystem#contratar'; // AJUSTAR cuando exista el link real
+const LINK_CONTRATACION = 'https://multidigital.cl/totemsystem#contratar';
 
 const PASOS = {
   INICIO: 0,
@@ -37,9 +28,6 @@ const PASOS = {
   PREGUNTAS_ABIERTAS: 3,
 };
 
-// (Ya no hay un mínimo de turnos fijo: la simulación libre dura hasta que
-// el negocio pregunta por precio/planes/contratar — ver PASOS.SIMULACION_LIBRE.)
-
 function textoPrecios(modoOperacion) {
   if (modoOperacion === 'CATALOGO_ROTATIVO') {
     return `💳 Créditos prepagados: $149 CLP por mensaje enviado, mínimo 50 por compra. Pagas solo lo que usas.`;
@@ -47,12 +35,6 @@ function textoPrecios(modoOperacion) {
   return `💰 Planes desde $9.900 hasta $49.900 CLP/mes según volumen de citas, + 1 UF de hosting al año.`;
 }
 
-/**
- * Responde preguntas abiertas después del cierre (objeciones, dudas de precio,
- * condiciones, etc.) usando Claude. Instrucción clave: nunca inventar
- * compromisos contractuales que Ruben no ha confirmado — ante eso, ser
- * honesto y ofrecer conectar con el equipo real.
- */
 async function responderPreguntaAbierta({ pregunta, empresaDemo, modoOperacion }) {
   const systemPrompt = `Eres el mismo asistente de venta de Totemsystem que ya estuvo mostrando una demo.
 Ahora el prospecto está haciendo preguntas de cierre (precio, condiciones, dudas). Responde en 2-4 líneas,
@@ -64,9 +46,8 @@ Datos reales que puedes usar:
 - El producto responde WhatsApp 24/7, agenda o toma pedidos automáticamente, y se personaliza al rubro del negocio.
 
 Regla estricta: NUNCA inventes políticas de cancelación, reembolso, garantías, plazos de prueba, ni
-condiciones contractuales que no aparezcan arriba. Si preguntan algo así (ej. "qué pasa si no me sirve",
-"puedo cancelar cuando quiera"), sé honesto: di que esas condiciones las confirma el equipo comercial
-directamente, y ofrece seguir la conversación con ellos. No prometas nada que no esté en los datos de arriba.`;
+condiciones contractuales que no aparezcan arriba. Si preguntan algo así, sé honesto: di que esas
+condiciones las confirma el equipo comercial directamente. No prometas nada que no esté en los datos de arriba.`;
 
   const response = await anthropic.messages.create({
     model: 'claude-haiku-4-5-20251001',
@@ -79,21 +60,12 @@ directamente, y ofrece seguir la conversación con ellos. No prometas nada que n
   return textBlock ? textBlock.text : 'Buena pregunta — te conecto con el equipo para que te lo confirmen bien.';
 }
 
-/**
- * Punto de entrada del motor de demo. Se llama en vez de procesarMensajeEntrante /
- * procesarMensajeCatalogoRotativo cuando el mensaje llega al número de pruebas.
- */
 async function procesarMensajeDemo({ demoAsignada, telefonoCliente, mensaje, nombreContacto }) {
   const empresaDemo = demoAsignada.empresaDemo;
   const modoOperacion = empresaDemo.rubroTemplate.modoOperacion;
   const paso = demoAsignada.paso || PASOS.INICIO;
   const historial = Array.isArray(demoAsignada.historialSimulacion) ? demoAsignada.historialSimulacion : [];
 
-  // Si el prospecto tocó una hora de la lista interactiva que le mostramos
-  // (ver más abajo, PASOS.SIMULACION_LIBRE), el id de la fila trae la fecha
-  // codificada — lo traducimos al mismo texto de confirmación que usa el
-  // flujo real, para que Claude tenga fecha+hora exactas y no solo el título
-  // visible ("10:00", sin fecha).
   const horarioElegido = mensaje.type === 'interactive'
     ? decodificarFilaHorario(mensaje.interactive?.list_reply?.id)
     : null;
@@ -113,11 +85,15 @@ async function procesarMensajeDemo({ demoAsignada, telefonoCliente, mensaje, nom
 
   switch (paso) {
     // ------------------------------------------------------------
-    // PASO 0: identidad + gancho, corto y directo al dolor real.
+    // PASO 0: identidad + gancho. Usa el nombre del ENCARGADO cargado por
+    // el vendedor (nombreProspecto), no el nombre de perfil de WhatsApp
+    // del que escribe — son casi siempre distintos (el vendedor probando
+    // desde su propio celular, por ejemplo).
     // ------------------------------------------------------------
     case PASOS.INICIO: {
+      const nombreParaSaludo = demoAsignada.nombreProspecto || nombreContacto;
       respuestaTexto =
-        `¡Hola${nombreContacto ? ` ${nombreContacto}` : ''}! 👋 Soy el asistente de *Totemsystem*.\n\n` +
+        `¡Hola${nombreParaSaludo ? ` ${nombreParaSaludo}` : ''}! 👋 Soy el asistente de *Totemsystem*.\n\n` +
         `Te voy a responder como si fuera *"${empresaDemo.nombre}"* — solo para esta prueba, no uso tu marca para nada más.\n\n` +
         `¿Cuántos clientes se te escapan por no alcanzar a responder a tiempo? Pruébalo tú mismo — ` +
         `escríbeme algo, como si fueras un cliente tuyo 👇`;
@@ -127,17 +103,16 @@ async function procesarMensajeDemo({ demoAsignada, telefonoCliente, mensaje, nom
 
     // ------------------------------------------------------------
     // PASO 1: delega al motor real (agendamiento) o al motor simplificado
-    // de catálogo (demo) para que el prospecto pruebe algo auténtico.
-    // Sigue así indefinidamente — solo salta a personalización/precios
-    // cuando el negocio lo pide explícitamente (no por cantidad de turnos,
-    // para no sentirse apurado).
+    // de catálogo (demo, con carrito) para que el prospecto pruebe algo
+    // auténtico. Solo salta a personalización/precios cuando el negocio
+    // pregunta explícitamente por el SERVICIO de Totemsystem — no por
+    // preguntas sobre cómo opera el negocio simulado (ej. "qué medios de
+    // pago tienen" no debe activar el pitch de precios).
     // ------------------------------------------------------------
     case PASOS.SIMULACION_LIBRE: {
-      // Si el prospecto pregunta por precio, planes, costo o contratar,
-      // saltamos directo a pedirle sus productos para cotizar — sin gastar
-      // una llamada al motor de agendamiento/catálogo con una pregunta que
-      // no le corresponde responder a él.
-      const pareceQuererPrecio = /precio|beneficios?|cuesta|cu[aá]nto (sale|vale|cobra|es)|tarifa|\bcosto\b|plan(es)?\b|contrat(ar|o)|comprar|cotiza/i.test(textoEntrante);
+      const hablaDePagoDelNegocio = /medios?\s+de\s+pago|formas?\s+de\s+pago|plan(es)?\s+de\s+pago/i.test(textoEntrante);
+      const pareceQuererPrecio = !hablaDePagoDelNegocio &&
+        /precio|beneficios?|cu[aá]nto (sale|vale|cobra|cuesta|es)|tarifa|\bcosto\b|\bplan(es)?\b|contrat(ar|o)|cotiza|totemsystem/i.test(textoEntrante);
 
       if (pareceQuererPrecio) {
         respuestaTexto = `¡Con gusto! Para darte un ejemplo con tu negocio real: dime 2 o 3 productos o servicios que ofreces, separados por coma.`;
@@ -152,7 +127,7 @@ async function procesarMensajeDemo({ demoAsignada, telefonoCliente, mensaje, nom
       try {
         if (modoOperacion === 'CATALOGO_ROTATIVO') {
           const resultado = await procesarMensajeCatalogoDemo({
-            empresaDemo, textoEntrante,
+            demoAsignada, textoEntrante, mensaje,
           });
           respuestaMotorReal = resultado?.respuestaTexto || null;
           interactivoMotorReal = resultado?.interactivo || null;
@@ -170,10 +145,6 @@ async function procesarMensajeDemo({ demoAsignada, telefonoCliente, mensaje, nom
 
       nuevoHistorial = [...historial, { rol: 'prospecto', texto: textoEntrante }];
 
-      // Detecta si Claude está pidiendo confirmar antes de agendar (ej. tras
-      // elegir una hora). Es una detección por texto — no perfecta, pero
-      // cubre el patrón real que usa el system prompt de claude.js. No
-      // aplica al modo catálogo, pero no hace daño evaluarla igual.
       const pareceEsperandoConfirmacion = /¿confirmas|\(sí\/no\)|¿confirmo/i.test(respuestaMotorReal || '');
 
       respuestaTexto = pareceEsperandoConfirmacion
@@ -215,8 +186,7 @@ async function procesarMensajeDemo({ demoAsignada, telefonoCliente, mensaje, nom
     }
 
     // ------------------------------------------------------------
-    // PASO 3: preguntas abiertas post-cierre, respondidas por Claude
-    // en vez de un mensaje fijo — sin inventar condiciones contractuales.
+    // PASO 3: preguntas abiertas post-cierre.
     // ------------------------------------------------------------
     case PASOS.PREGUNTAS_ABIERTAS:
     default: {
@@ -230,7 +200,6 @@ async function procesarMensajeDemo({ demoAsignada, telefonoCliente, mensaje, nom
         console.error('[DEMO] Error respondiendo pregunta abierta:', error.message);
         respuestaTexto = `Buena pregunta — te conecto con el equipo para confirmártelo bien. Mientras, puedes ver más acá: ${LINK_LANDING}`;
       }
-      // nuevoPaso se queda en PREGUNTAS_ABIERTAS — se puede seguir preguntando indefinidamente
       break;
     }
   }

@@ -9,6 +9,7 @@ const {
   codificarFilaHorario,
   decodificarFilaDia,
   codificarFilaDia,
+  codificarFilaProductoDemo,
 } = require('./services/whatsapp');
 const { obtenerHorariosDisponibles } = require('./services/disponibilidad');
 const { fechaLegibleDesdeISO } = require('./lib/formatoFechas');
@@ -202,7 +203,7 @@ app.post('/webhook/whatsapp', async (req, res) => {
           textoBoton: 'Ver menú',
           textoHeader: demoAsignada.empresaDemo.nombre?.slice(0, 60),
           filas: interactivo.productos.map((p) => ({
-            id: `demo-producto:${p.id}`,
+            id: codificarFilaProductoDemo(p.id),
             titulo: p.nombre,
             descripcion: `$${p.precio}`,
           })),

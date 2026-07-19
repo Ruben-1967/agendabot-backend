@@ -680,17 +680,18 @@ enum EstadoOrdenCredito {
 // ------------------------------------------------------------
 model DemoAsignada {
   id              String   @id @default(cuid())
-  telefono        String   @unique // formato E.164 sin '+', ej. "56912345678"
+  telefono        String   @unique
   empresaDemoId   String
   empresaDemo     Empresa  @relation(fields: [empresaDemoId], references: [id])
-  nombreProspecto String?  // solo para que tú identifiques quién es en tu panel/logs
+  nombreProspecto String?
   creadoEn        DateTime @default(now())
   actualizadoEn   DateTime @updatedAt
-   vendedor        Vendedor? @relation(fields: [vendedorId], references: [id])
+  vendedor        Vendedor? @relation(fields: [vendedorId], references: [id])
   vendedorId      String?
 
   paso                Int   @default(0)
   historialSimulacion Json?
+  carritoDemoJson     Json? // productos seleccionados en la simulación de catálogo: [{productoId, nombre, precio, cantidad}]
 }
 
 model Vendedor {
@@ -703,3 +704,4 @@ model Vendedor {
 
   demosCreadas DemoAsignada[]
 }
+
