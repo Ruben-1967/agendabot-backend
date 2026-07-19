@@ -3,19 +3,26 @@
 // Orquesta la conversación de demo completa para prospectos. A diferencia
 // de procesarMensajeEntrante (agendamiento real) y procesarMensajeCatalogoRotativo
 // (catálogo real), este motor no ejecuta acciones reales — narra un guion de
-// venta, y en el paso de simulación SÍ delega a los motores reales para que
-// la experiencia se sienta auténtica.
+// venta, y en el paso de simulación SÍ delega a los motores reales/simplificados
+// para que la experiencia se sienta auténtica.
 //
 // IMPORTANTE: el estado propio de la demo (en qué paso va, historial de la
 // simulación) se guarda en el modelo DemoAsignada, NO en Conversacion. El
 // motor real de chatbot (chatbotEngine.js / claude.js) usa Conversacion.mensajes
 // con su propia forma de datos — si el motor de demo escribiera ahí también,
 // ambos se pisarían entre sí.
+//
+// Para el modo CATALOGO_ROTATIVO, la simulación NO usa pedidosEngine.js (el
+// motor real), porque ese depende de CampanaEnvio/EnvioRealizado y envía
+// WhatsApp directamente con credenciales de negocio real, que una empresa
+// demo no tiene. En su lugar usa catalogoDemoEngine.js, una versión
+// simplificada que lee Producto directo y retorna {respuestaTexto,
+// interactivo} como el resto de este archivo.
 
 const Anthropic = require('@anthropic-ai/sdk');
 const prisma = require('../lib/prisma');
 const { procesarMensajeEntrante } = require('./chatbotEngine');
-const { procesarMensajeCatalogoRotativo } = require('./pedidosEngine');
+const { procesarMensajeCatalogoDemo } = require('./catalogoDemoEngine');
 const { decodificarFilaHorario } = require('./whatsapp');
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
@@ -119,16 +126,17 @@ async function procesarMensajeDemo({ demoAsignada, telefonoCliente, mensaje, nom
     }
 
     // ------------------------------------------------------------
-    // PASO 1: delega al motor real para que el prospecto pruebe el
-    // agendamiento de verdad. Sigue así indefinidamente — solo salta a
-    // personalización/precios cuando el negocio lo pide explícitamente
-    // (no por cantidad de turnos, para no sentirse apurado).
+    // PASO 1: delega al motor real (agendamiento) o al motor simplificado
+    // de catálogo (demo) para que el prospecto pruebe algo auténtico.
+    // Sigue así indefinidamente — solo salta a personalización/precios
+    // cuando el negocio lo pide explícitamente (no por cantidad de turnos,
+    // para no sentirse apurado).
     // ------------------------------------------------------------
     case PASOS.SIMULACION_LIBRE: {
       // Si el prospecto pregunta por precio, planes, costo o contratar,
       // saltamos directo a pedirle sus productos para cotizar — sin gastar
-      // una llamada al motor de agendamiento con una pregunta que no le
-      // corresponde responder a él.
+      // una llamada al motor de agendamiento/catálogo con una pregunta que
+      // no le corresponde responder a él.
       const pareceQuererPrecio = /precio|beneficios?|cuesta|cu[aá]nto (sale|vale|cobra|es)|tarifa|\bcosto\b|plan(es)?\b|contrat(ar|o)|comprar|cotiza/i.test(textoEntrante);
 
       if (pareceQuererPrecio) {
@@ -143,10 +151,11 @@ async function procesarMensajeDemo({ demoAsignada, telefonoCliente, mensaje, nom
 
       try {
         if (modoOperacion === 'CATALOGO_ROTATIVO') {
-          const resultado = await procesarMensajeCatalogoRotativo({
-            empresa: empresaDemo, telefonoCliente, mensaje, nombreContacto,
+          const resultado = await procesarMensajeCatalogoDemo({
+            empresaDemo, textoEntrante,
           });
           respuestaMotorReal = resultado?.respuestaTexto || null;
+          interactivoMotorReal = resultado?.interactivo || null;
         } else {
           const resultado = await procesarMensajeEntrante({
             empresa: empresaDemo, telefonoCliente, textoEntrante, nombreContacto,
@@ -163,7 +172,8 @@ async function procesarMensajeDemo({ demoAsignada, telefonoCliente, mensaje, nom
 
       // Detecta si Claude está pidiendo confirmar antes de agendar (ej. tras
       // elegir una hora). Es una detección por texto — no perfecta, pero
-      // cubre el patrón real que usa el system prompt de claude.js.
+      // cubre el patrón real que usa el system prompt de claude.js. No
+      // aplica al modo catálogo, pero no hace daño evaluarla igual.
       const pareceEsperandoConfirmacion = /¿confirmas|\(sí\/no\)|¿confirmo/i.test(respuestaMotorReal || '');
 
       respuestaTexto = pareceEsperandoConfirmacion

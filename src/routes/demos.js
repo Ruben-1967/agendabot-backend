@@ -15,13 +15,8 @@ const CLAVE_RUBRO_POR_OPCION = {
   OTRO: 'otro',
 };
 
-/**
- * Normaliza un teléfono al formato E.164 sin '+' que usa WhatsApp
- * (ej. "56912345678"). Requiere el código de país ISO (CL, MX, AR, PE,
- * CO, ES) para interpretar correctamente números en formato local, sin
- * que el vendedor tenga que escribir el código de país a mano.
- * Devuelve null si el número no es válido para ese país.
- */
+const RUTAS_CATALOGO_TIPICAS = ['/pedir', '/menu', '/productos', '/tienda', '/catalogo'];
+
 function normalizarTelefono(numeroIngresado, paisIso) {
   const numero = parsePhoneNumberFromString(numeroIngresado, paisIso);
   if (!numero || !numero.isValid()) {
@@ -30,10 +25,6 @@ function normalizarTelefono(numeroIngresado, paisIso) {
   return numero.number.replace('+', '');
 }
 
-// ------------------------------------------------------------
-// POST /demos/prospectos
-// body: { nombreNegocio, telefono, paisTelefono, nombreEncargado, rubro, sitioWeb? }
-// ------------------------------------------------------------
 router.post('/prospectos', requireAuth, requireRole('VENDEDOR'), async (req, res) => {
   try {
     const { nombreNegocio, telefono, paisTelefono, nombreEncargado, rubro, sitioWeb } = req.body;
@@ -63,7 +54,11 @@ router.post('/prospectos', requireAuth, requireRole('VENDEDOR'), async (req, res
 
     let infoExtraida = null;
     if (sitioWeb) {
-      infoExtraida = await extraerInfoSitioWeb(sitioWeb);
+      // Para rubro PROACTIVO probamos también rutas típicas de catálogo,
+      // ya que muchos negocios (ej. Qroll) tienen el menú en una subpágina
+      // distinta a la home, no en /contacto.
+      const rutas = claveRubro === 'catalogo_rotativo' ? RUTAS_CATALOGO_TIPICAS : undefined;
+      infoExtraida = await extraerInfoSitioWeb(sitioWeb, rutas);
     }
 
     const datosEmpresa = {
@@ -90,6 +85,10 @@ router.post('/prospectos', requireAuth, requireRole('VENDEDOR'), async (req, res
           historialSimulacion: [],
         },
       });
+      // Si estamos reconfigurando una demo existente, limpiamos productos
+      // viejos antes de cargar los nuevos (si el sitio web cambió, o si
+      // antes no tenía sitio y ahora sí).
+      await prisma.producto.deleteMany({ where: { empresaId: empresaDemo.id } });
     } else {
       empresaDemo = await prisma.empresa.create({ data: datosEmpresa });
       await prisma.demoAsignada.create({
@@ -102,11 +101,34 @@ router.post('/prospectos', requireAuth, requireRole('VENDEDOR'), async (req, res
       });
     }
 
+    // Si es catálogo rotativo y la extracción trajo productos, los cargamos
+    // directo — esto es lo que hace que la demo pueda responder "menú" con
+    // algo real, en vez de quedar vacía.
+    let productosCreados = 0;
+    if (claveRubro === 'catalogo_rotativo' && infoExtraida?.exito && infoExtraida.productosSugeridos?.length > 0) {
+      const productosValidos = infoExtraida.productosSugeridos.filter(
+        (p) => p.nombre && Number.isFinite(p.precio) && p.precio > 0
+      );
+      if (productosValidos.length > 0) {
+        await prisma.producto.createMany({
+          data: productosValidos.map((p) => ({
+            empresaId: empresaDemo.id,
+            nombre: p.nombre,
+            descripcion: p.descripcion || null,
+            precio: Math.round(p.precio),
+            activo: true,
+          })),
+        });
+        productosCreados = productosValidos.length;
+      }
+    }
+
     res.json({
       ok: true,
       empresaDemoId: empresaDemo.id,
       telefonoNormalizado,
       infoExtraida: infoExtraida?.exito ? infoExtraida : null,
+      productosCreados,
       mensaje: demoExistente ? 'Demo actualizada' : 'Demo creada',
     });
   } catch (error) {
@@ -115,9 +137,6 @@ router.post('/prospectos', requireAuth, requireRole('VENDEDOR'), async (req, res
   }
 });
 
-// ------------------------------------------------------------
-// GET /demos/prospectos
-// ------------------------------------------------------------
 router.get('/prospectos', requireAuth, requireRole('VENDEDOR'), async (req, res) => {
   try {
     const demos = await prisma.demoAsignada.findMany({

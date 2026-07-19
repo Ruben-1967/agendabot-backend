@@ -1,13 +1,14 @@
 // Extrae información básica de un negocio a partir de su sitio web:
-// nombre, dirección, teléfono, servicios sugeridos e información
+// nombre, dirección, teléfono, servicios/productos sugeridos e información
 // adicional en borrador. Es best-effort — sitios muy dependientes de
 // JavaScript (SPA) pueden devolver poco o nada útil, ya que esto hace
 // un fetch simple del HTML, sin navegador headless.
 //
 // IMPORTANTE: esta función NUNCA escribe en la base de datos. Su
 // resultado siempre debe pasar por revisión humana antes de guardarse
-// (ya sea en el alta de una demo, o en el panel de "Información del
-// negocio" para clientes reales).
+// como información de un negocio real. Para demos comerciales, la carga
+// automática de productosSugeridos es aceptable sin revisión previa,
+// ya que no representa a un cliente real pagando.
 
 const Anthropic = require('@anthropic-ai/sdk');
 
@@ -42,15 +43,21 @@ async function obtenerTextoDePagina(url) {
 
 /**
  * @param {string} urlPrincipal
- * @returns {Promise<{exito: boolean, error?: string, nombreNegocio?: string|null, direccion?: string|null, telefono?: string|null, serviciosSugeridos?: string[], informacionAdicionalSugerida?: string}>}
+ * @param {string[]} rutasAdicionales - rutas a intentar además de la home,
+ *   ej. ['/pedir', '/menu', '/productos']. Útil para catálogos que viven
+ *   en una subpágina, como pasó con Qroll (/pedir).
+ * @returns {Promise<{exito: boolean, error?: string, nombreNegocio?: string|null, direccion?: string|null, telefono?: string|null, serviciosSugeridos?: string[], productosSugeridos?: {nombre: string, precio: number, descripcion?: string}[], informacionAdicionalSugerida?: string}>}
  */
-async function extraerInfoSitioWeb(urlPrincipal) {
+async function extraerInfoSitioWeb(urlPrincipal, rutasAdicionales = []) {
   const textoHome = await obtenerTextoDePagina(urlPrincipal);
   if (!textoHome) {
     return { exito: false, error: 'No se pudo acceder al sitio web.' };
   }
 
-  const rutasComunes = ['/contacto', '/nosotros', '/quienes-somos', '/local'];
+  const rutasComunes = rutasAdicionales.length > 0
+    ? rutasAdicionales
+    : ['/contacto', '/nosotros', '/quienes-somos', '/local'];
+
   const base = urlPrincipal.replace(/\/$/, '');
   const textosAdicionales = [];
 
@@ -67,14 +74,15 @@ async function extraerInfoSitioWeb(urlPrincipal) {
   "direccion": string o null,
   "telefono": string o null,
   "serviciosSugeridos": [string],
+  "productosSugeridos": [{"nombre": string, "precio": number, "descripcion": string o null}],
   "informacionAdicionalSugerida": string
 }
-Si no encuentras un dato, pon null (o arreglo vacío para servicios). NUNCA inventes información que no esté en el texto.`;
+"productosSugeridos" solo aplica si el sitio muestra un catálogo de productos individuales con precio (ej. tienda, panadería, restorán) — si el negocio ofrece servicios sin catálogo de productos (ej. óptica, clínica), deja "productosSugeridos" como arreglo vacío. El precio debe ser un número entero (sin símbolo de moneda ni puntos de miles). Extrae como máximo 15 productos representativos, no todos si hay muchos. Si no encuentras un dato, pon null (o arreglo vacío). NUNCA inventes información que no esté en el texto.`;
 
   try {
     const response = await anthropic.messages.create({
       model: 'claude-haiku-4-5-20251001',
-      max_tokens: 800,
+      max_tokens: 1500,
       system: systemPrompt,
       messages: [{ role: 'user', content: textoCompleto }],
     });
