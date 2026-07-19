@@ -25,6 +25,8 @@ const agendaRouter = require('./routes/agenda');
 const serviciosRouter = require('./routes/servicios');
 const { procesarMensajeCatalogoRotativo } = require('./services/pedidosEngine');
 const { procesarMensajeDemo } = require('./services/demoEngine');
+const authVendedorRouter = require('./routes/authVendedor');
+const demosRouter = require('./routes/demos');
 
 const app = express();
 
@@ -48,6 +50,8 @@ app.use('/billetera', billeteraRouter);
 app.use('/empresa', empresaRouter);
 app.use('/agenda', agendaRouter);
 app.use('/servicios', serviciosRouter);
+app.use('/auth-vendedor', authVendedorRouter);
+app.use('/demos', demosRouter);
 
 
 app.get('/', (req, res) => {
