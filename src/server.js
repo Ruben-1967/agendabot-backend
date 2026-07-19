@@ -193,6 +193,20 @@ app.post('/webhook/whatsapp', async (req, res) => {
             titulo: hora,
           })),
         });
+      } else if (interactivo?.tipo === 'lista_productos_demo') {
+        await sendWhatsAppInteractiveList({
+          phoneNumberId,
+          to: telefonoCliente,
+          accessToken: accessTokenDemo,
+          textoCuerpo: respuestaTexto,
+          textoBoton: 'Ver menú',
+          textoHeader: demoAsignada.empresaDemo.nombre?.slice(0, 60),
+          filas: interactivo.productos.map((p) => ({
+            id: `demo-producto:${p.id}`,
+            titulo: p.nombre,
+            descripcion: `$${p.precio}`,
+          })),
+        });
       } else {
         await sendWhatsAppTextMessage({
           phoneNumberId,
@@ -377,23 +391,6 @@ app.post('/webhook/whatsapp', async (req, res) => {
           titulo: hora,
         })),
       });
-
-} else if (interactivo?.tipo === 'lista_productos_demo') {
-  await sendWhatsAppInteractiveList({
-    phoneNumberId,
-    to: telefonoCliente,
-    accessToken: accessTokenDemo,
-    textoCuerpo: respuestaTexto,
-    textoBoton: 'Ver menú',
-    textoHeader: demoAsignada.empresaDemo.nombre?.slice(0, 60),
-    filas: interactivo.productos.map((p) => ({
-      id: `demo-producto:${p.id}`,
-      titulo: p.nombre,
-      descripcion: `$${p.precio}`,
-    })),
-  });
-}
-
     } else {
       await sendWhatsAppTextMessage({
         phoneNumberId,
