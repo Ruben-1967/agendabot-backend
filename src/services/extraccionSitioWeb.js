@@ -80,20 +80,27 @@ async function extraerInfoSitioWeb(urlPrincipal, rutasAdicionales = []) {
 "productosSugeridos" solo aplica si el sitio muestra un catálogo de productos individuales con precio (ej. tienda, panadería, restorán) — si el negocio ofrece servicios sin catálogo de productos (ej. óptica, clínica), deja "productosSugeridos" como arreglo vacío. El precio debe ser un número entero (sin símbolo de moneda ni puntos de miles). Extrae como máximo 15 productos representativos, no todos si hay muchos. Si no encuentras un dato, pon null (o arreglo vacío). NUNCA inventes información que no esté en el texto.`;
 
   try {
-    const response = await anthropic.messages.create({
-      model: 'claude-haiku-4-5-20251001',
-      max_tokens: 1500,
-      system: systemPrompt,
-      messages: [{ role: 'user', content: textoCompleto }],
-    });
+  const response = await anthropic.messages.create({
+    model: 'claude-haiku-4-5-20251001',
+    max_tokens: 1500,
+    system: systemPrompt,
+    messages: [{ role: 'user', content: textoCompleto }],
+  });
 
-    const textBlock = response.content.find((b) => b.type === 'text');
-    const datos = JSON.parse(textBlock.text);
-    return { exito: true, ...datos };
-  } catch (err) {
-    console.error('Error extrayendo/parseando información del sitio web:', err.message);
-    return { exito: false, error: 'No se pudo interpretar la información extraída.' };
-  }
+  const textBlock = response.content.find((b) => b.type === 'text');
+  const textoLimpio = textBlock.text
+    .trim()
+    .replace(/^```json\s*/i, '')
+    .replace(/^```\s*/i, '')
+    .replace(/```\s*$/i, '')
+    .trim();
+
+  const datos = JSON.parse(textoLimpio);
+  return { exito: true, ...datos };
+} catch (err) {
+  console.error('Error extrayendo/parseando información del sitio web:', err.message);
+  return { exito: false, error: 'No se pudo interpretar la información extraída.' };
+}
 }
 
 module.exports = { extraerInfoSitioWeb };
