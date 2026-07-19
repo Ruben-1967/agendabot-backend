@@ -26,6 +26,7 @@ const PASOS = {
   SIMULACION_LIBRE: 1,
   ESPERANDO_PRODUCTOS: 2,
   PREGUNTAS_ABIERTAS: 3,
+  DESAMBIGUANDO_PRECIO: 4, // NUEVO — se agrega al final para no correr los valores ya guardados en demos existentes
 };
 
 function textoPrecios(modoOperacion) {
@@ -33,6 +34,33 @@ function textoPrecios(modoOperacion) {
     return `💳 Créditos prepagados: $149 CLP por mensaje enviado, mínimo 50 por compra. Pagas solo lo que usas.`;
   }
   return `💰 Planes desde $9.900 hasta $49.900 CLP/mes según volumen de citas, + 1 UF de hosting al año.`;
+}
+
+// NUEVO: arma el mockup de personalización + pitch de precio a partir de una
+// lista de items ya formateados (ej. ["Cinnamon roll clásico", "Golfeado"]).
+// Se usa tanto cuando el prospecto los escribe a mano (ESPERANDO_PRODUCTOS)
+// como cuando ya los eligió de verdad en el carrito real de la demo.
+function construirMockupYPitch({ items, empresaDemo, modoOperacion, origenCarritoReal }) {
+  const listaFormateada = items.length > 0
+    ? items.map((item) => `• ${item}`).join('\n')
+    : '• (así se vería con tus productos reales)';
+
+  const ejemploPersonalizado = modoOperacion === 'CATALOGO_ROTATIVO'
+    ? `🛍️ *${empresaDemo.nombre}*\n\n${listaFormateada}`
+    : `📅 *${empresaDemo.nombre}*\n\n${listaFormateada}`;
+
+  const intro = origenCarritoReal
+    ? `Justo con lo que ya probaste recién, así se vería con tu negocio 👇`
+    : `Así se vería con tu negocio 👇`;
+
+  return (
+    `${intro}\n\n${ejemploPersonalizado}\n\n` +
+    `Los negocios no suelen perder clientes por mal servicio — los pierden por no estar ahí ` +
+    `justo cuando alguien los necesitaba.\n\n` +
+    `${textoPrecios(modoOperacion)}\n\n` +
+    `Detalle completo: ${LINK_LANDING}\n¿Seguimos? 👉 ${LINK_CONTRATACION}\n\n` +
+    `_(¿tienes dudas de precio o condiciones? Pregúntame, sigo aquí)_`
+  );
 }
 
 async function responderPreguntaAbierta({ pregunta, empresaDemo, modoOperacion }) {
@@ -65,6 +93,7 @@ async function procesarMensajeDemo({ demoAsignada, telefonoCliente, mensaje, nom
   const modoOperacion = empresaDemo.rubroTemplate.modoOperacion;
   const paso = demoAsignada.paso || PASOS.INICIO;
   const historial = Array.isArray(demoAsignada.historialSimulacion) ? demoAsignada.historialSimulacion : [];
+  const carritoActual = Array.isArray(demoAsignada.carritoDemoJson) ? demoAsignada.carritoDemoJson : [];
 
   const horarioElegido = mensaje.type === 'interactive'
     ? decodificarFilaHorario(mensaje.interactive?.list_reply?.id)
@@ -78,6 +107,13 @@ async function procesarMensajeDemo({ demoAsignada, telefonoCliente, mensaje, nom
         ? (mensaje.interactive?.list_reply?.title || mensaje.interactive?.button_reply?.title || '')
         : (mensaje.text?.body || ''));
 
+  // id crudo de la fila elegida (si el mensaje es una selección de lista) —
+  // lo usamos directo para las opciones de desambiguación, que no necesitan
+  // un formato codificado especial como horarios/días.
+  const idFilaElegida = mensaje.type === 'interactive'
+    ? mensaje.interactive?.list_reply?.id
+    : null;
+
   let respuestaTexto;
   let interactivo = null;
   let nuevoPaso = paso;
@@ -85,17 +121,14 @@ async function procesarMensajeDemo({ demoAsignada, telefonoCliente, mensaje, nom
 
   switch (paso) {
     // ------------------------------------------------------------
-    // PASO 0: identidad + gancho. Usa el nombre del ENCARGADO cargado por
-    // el vendedor (nombreProspecto), no el nombre de perfil de WhatsApp
-    // del que escribe — son casi siempre distintos (el vendedor probando
-    // desde su propio celular, por ejemplo).
+    // PASO 0: identidad + gancho.
     // ------------------------------------------------------------
     case PASOS.INICIO: {
       const nombreParaSaludo = demoAsignada.nombreProspecto || nombreContacto;
       respuestaTexto =
         `¡Hola${nombreParaSaludo ? ` ${nombreParaSaludo}` : ''}! 👋 Soy el asistente de *Totemsystem*.\n\n` +
         `Te voy a responder como si fuera *"${empresaDemo.nombre}"* — solo para esta prueba, no uso tu marca para nada más.\n\n` +
-        `¿Cuántos clientes se te escapan por no alcanzar a responder a tiempo? Pruébalo tú mismo — ` +
+        `Pruébalo tú mismo — ` +
         `escríbeme algo, como si fueras un cliente tuyo 👇`;
       nuevoPaso = PASOS.SIMULACION_LIBRE;
       break;
@@ -103,11 +136,10 @@ async function procesarMensajeDemo({ demoAsignada, telefonoCliente, mensaje, nom
 
     // ------------------------------------------------------------
     // PASO 1: delega al motor real (agendamiento) o al motor simplificado
-    // de catálogo (demo, con carrito) para que el prospecto pruebe algo
-    // auténtico. Solo salta a personalización/precios cuando el negocio
-    // pregunta explícitamente por el SERVICIO de Totemsystem — no por
-    // preguntas sobre cómo opera el negocio simulado (ej. "qué medios de
-    // pago tienen" no debe activar el pitch de precios).
+    // de catálogo (demo, con carrito). Solo salta a personalización/precios
+    // cuando el negocio pregunta explícitamente por el SERVICIO de
+    // Totemsystem — y si es ambiguo (puede ser el precio de un producto del
+    // negocio simulado), pregunta antes de asumir.
     // ------------------------------------------------------------
     case PASOS.SIMULACION_LIBRE: {
       const hablaDePagoDelNegocio = /medios?\s+de\s+pago|formas?\s+de\s+pago|plan(es)?\s+de\s+pago/i.test(textoEntrante);
@@ -115,9 +147,45 @@ async function procesarMensajeDemo({ demoAsignada, telefonoCliente, mensaje, nom
         /precio|beneficios?|cu[aá]nto (sale|vale|cobra|cuesta|es)|tarifa|\bcosto\b|\bplan(es)?\b|contrat(ar|o)|cotiza|totemsystem/i.test(textoEntrante);
 
       if (pareceQuererPrecio) {
-        respuestaTexto = `¡Con gusto! Para darte un ejemplo con tu negocio real: dime 2 o 3 productos o servicios que ofreces, separados por coma.`;
         nuevoHistorial = [...historial, { rol: 'prospecto', texto: textoEntrante }];
-        nuevoPaso = PASOS.ESPERANDO_PRODUCTOS;
+
+        // Mención explícita de "totemsystem" ya es inequívoca — no hace
+        // falta preguntar, vamos directo al pitch (o al atajo con carrito,
+        // ver más abajo).
+        const esInequivoco = /totemsystem/i.test(textoEntrante);
+
+        if (esInequivoco) {
+          if (modoOperacion === 'CATALOGO_ROTATIVO' && carritoActual.length > 0) {
+            const items = carritoActual.map((it) => `${it.cantidad}x ${it.nombre}`);
+            respuestaTexto = construirMockupYPitch({ items, empresaDemo, modoOperacion, origenCarritoReal: true });
+            nuevoPaso = PASOS.PREGUNTAS_ABIERTAS;
+          } else {
+            respuestaTexto = `¡Con gusto! Para darte un ejemplo con tu negocio real: dime 2 o 3 productos o servicios que ofreces, separados por coma.`;
+            nuevoPaso = PASOS.ESPERANDO_PRODUCTOS;
+          }
+          break;
+        }
+
+        // Ambiguo — preguntamos en vez de asumir (ej. "cuánto cuesta" en una
+        // demo de catálogo casi siempre es sobre el producto que se está
+        // probando, no sobre Totemsystem).
+        respuestaTexto = '¿Tu pregunta es sobre...? 👇';
+        interactivo = {
+          tipo: 'lista_desambiguacion_precio',
+          opciones: [
+            {
+              id: 'precio_producto',
+              titulo: modoOperacion === 'CATALOGO_ROTATIVO' ? 'Precio de un producto' : 'Precio de un servicio',
+              descripcion: 'Sigo probando el negocio',
+            },
+            {
+              id: 'precio_totemsystem',
+              titulo: 'Precio de Totemsystem',
+              descripcion: 'El servicio de esta demo',
+            },
+          ],
+        };
+        nuevoPaso = PASOS.DESAMBIGUANDO_PRECIO;
         break;
       }
 
@@ -156,7 +224,51 @@ async function procesarMensajeDemo({ demoAsignada, telefonoCliente, mensaje, nom
     }
 
     // ------------------------------------------------------------
-    // PASO 2: personalización + cierre corto.
+    // NUEVO PASO: desambiguando si "precio" era sobre el negocio simulado
+    // o sobre Totemsystem.
+    // ------------------------------------------------------------
+    case PASOS.DESAMBIGUANDO_PRECIO: {
+      nuevoHistorial = [...historial, { rol: 'prospecto', texto: textoEntrante }];
+
+      if (idFilaElegida === 'precio_totemsystem') {
+        if (modoOperacion === 'CATALOGO_ROTATIVO' && carritoActual.length > 0) {
+          const items = carritoActual.map((it) => `${it.cantidad}x ${it.nombre}`);
+          respuestaTexto = construirMockupYPitch({ items, empresaDemo, modoOperacion, origenCarritoReal: true });
+          nuevoPaso = PASOS.PREGUNTAS_ABIERTAS;
+        } else {
+          respuestaTexto = `¡Con gusto! Para darte un ejemplo con tu negocio real: dime 2 o 3 productos o servicios que ofreces, separados por coma.`;
+          nuevoPaso = PASOS.ESPERANDO_PRODUCTOS;
+        }
+        break;
+      }
+
+      // "precio_producto" (tocó el botón), o cualquier otra cosa si
+      // contestó con texto libre en vez de tocar un botón — en ambos casos
+      // volvemos a la simulación normal y delegamos el mensaje al motor
+      // correspondiente, sin volver a activar la detección de precio.
+      nuevoPaso = PASOS.SIMULACION_LIBRE;
+      try {
+        if (modoOperacion === 'CATALOGO_ROTATIVO') {
+          const resultado = await procesarMensajeCatalogoDemo({ demoAsignada, textoEntrante, mensaje });
+          respuestaTexto = resultado?.respuestaTexto || 'Cuéntame más — ¿qué te gustaría hacer?';
+          interactivo = resultado?.interactivo || null;
+        } else {
+          const resultado = await procesarMensajeEntrante({
+            empresa: empresaDemo, telefonoCliente, textoEntrante, nombreContacto,
+          });
+          respuestaTexto = resultado?.respuestaTexto || 'Cuéntame más — ¿qué te gustaría hacer?';
+          interactivo = resultado?.interactivo || null;
+        }
+      } catch (error) {
+        console.error('[DEMO] Error delegando tras desambiguación, se usa fallback:', error.message);
+        respuestaTexto = 'Cuéntame más — ¿qué te gustaría hacer?';
+      }
+      break;
+    }
+
+    // ------------------------------------------------------------
+    // PASO 2: personalización + cierre corto (cuando el prospecto escribe
+    // sus productos/servicios a mano, en vez de venir de un carrito real).
     // ------------------------------------------------------------
     case PASOS.ESPERANDO_PRODUCTOS: {
       const itemsIngresados = textoEntrante
@@ -165,21 +277,12 @@ async function procesarMensajeDemo({ demoAsignada, telefonoCliente, mensaje, nom
         .filter(Boolean)
         .slice(0, 5);
 
-      const listaFormateada = itemsIngresados.length > 0
-        ? itemsIngresados.map((item) => `• ${item}`).join('\n')
-        : '• (así se vería con tus productos reales)';
-
-      const ejemploPersonalizado = modoOperacion === 'CATALOGO_ROTATIVO'
-        ? `🛍️ *${empresaDemo.nombre}*\n\n${listaFormateada}`
-        : `📅 *${empresaDemo.nombre}*\n\n${listaFormateada}`;
-
-      respuestaTexto =
-        `Así se vería con tu negocio 👇\n\n${ejemploPersonalizado}\n\n` +
-        `Los negocios no suelen perder clientes por mal servicio — los pierden por no estar ahí ` +
-        `justo cuando alguien los necesitaba.\n\n` +
-        `${textoPrecios(modoOperacion)}\n\n` +
-        `Detalle completo: ${LINK_LANDING}\n¿Seguimos? 👉 ${LINK_CONTRATACION}\n\n` +
-        `_(¿tienes dudas de precio o condiciones? Pregúntame, sigo aquí)_`;
+      respuestaTexto = construirMockupYPitch({
+        items: itemsIngresados,
+        empresaDemo,
+        modoOperacion,
+        origenCarritoReal: false,
+      });
 
       nuevoPaso = PASOS.PREGUNTAS_ABIERTAS;
       break;

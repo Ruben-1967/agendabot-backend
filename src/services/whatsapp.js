@@ -243,4 +243,6 @@ module.exports = {
   decodificarFilaHorario,
   codificarFilaDia,
   decodificarFilaDia,
+  codificarFilaProductoDemo,
+  decodificarFilaProductoDemo,
 };

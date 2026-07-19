@@ -208,6 +208,18 @@ app.post('/webhook/whatsapp', async (req, res) => {
             descripcion: `$${p.precio}`,
           })),
         });
+
+} else if (interactivo?.tipo === 'lista_desambiguacion_precio') {
+        await sendWhatsAppInteractiveList({
+          phoneNumberId,
+          to: telefonoCliente,
+          accessToken: accessTokenDemo,
+          textoCuerpo: respuestaTexto,
+          textoBoton: 'Elegir',
+          textoHeader: demoAsignada.empresaDemo.nombre?.slice(0, 60),
+          filas: interactivo.opciones.map((o) => ({ id: o.id, titulo: o.titulo, descripcion: o.descripcion })),
+        });
+
       } else {
         await sendWhatsAppTextMessage({
           phoneNumberId,
