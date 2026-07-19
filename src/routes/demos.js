@@ -6,14 +6,13 @@ const { extraerInfoSitioWeb } = require('../services/extraccionSitioWeb');
 const router = express.Router();
 
 // Mapea la opción que el vendedor elige en el formulario a la "clave"
-// real de RubroTemplate. AJUSTAR si las claves reales en la base son
-// distintas a estas (confirmar con el seed de RubroTemplate).
+// real de RubroTemplate. Confirmado contra la base real de producción.
 const CLAVE_RUBRO_POR_OPCION = {
   OPTICA: 'optica',
   ESTETICA: 'centro_estetico',
   SALUD: 'salud_independiente',
   MANTENCION: 'mantencion_tecnica',
-  PANADERIA: 'panaderia_gourmet',
+  PROACTIVO: 'catalogo_rotativo', // venta proactiva: panadería, rotisería, taller, etc.
   OTRO: 'otro',
 };
 
