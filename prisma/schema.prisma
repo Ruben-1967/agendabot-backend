@@ -693,6 +693,7 @@ model DemoAsignada {
   historialSimulacion Json?
   carritoDemoJson     Json? // productos seleccionados en la simulación de catálogo: [{productoId, nombre, precio, cantidad}]
   citaDemoJson        Json? // simulación de la cita elegida en la demo de agendamiento: {servicio, fecha, hora, nombre, edad}
+  checkoutDemoJson    Json? // estado del checkout simulado en la demo de catálogo: {paso, productoPendienteId, nombre, formaPago, tipoEntrega, direccion}
 }
 
 model Vendedor {

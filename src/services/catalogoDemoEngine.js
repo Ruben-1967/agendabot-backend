@@ -1,13 +1,32 @@
 // Motor de catálogo rotativo SIMPLIFICADO, exclusivo para demos
 // comerciales. A diferencia de pedidosEngine.js (el motor real), este lee
 // Producto directo, mantiene un "carrito" simple por demo
-// (DemoAsignada.carritoDemoJson) y retorna {respuestaTexto, interactivo}.
-// No se usa NUNCA para negocios reales.
+// (DemoAsignada.carritoDemoJson) y un checkout simulado propio
+// (DemoAsignada.checkoutDemoJson: nombre, forma de pago, retiro/domicilio,
+// validado contra una regla de despacho de EJEMPLO). No se usa NUNCA para
+// negocios reales — pedidosEngine.js no tiene hoy estos campos (forma de
+// pago, tipo de entrega, regla de despacho); esto es solo para la demo.
 
 const prisma = require('../lib/prisma');
 const { decodificarFilaProductoDemo } = require('./whatsapp');
 
-const MAX_PRODUCTOS_EN_LISTA = 10; // límite real de WhatsApp por lista interactiva
+const MAX_PRODUCTOS_EN_LISTA = 10;
+
+// Regla de despacho de EJEMPLO para la demo — no configurable todavía por
+// negocio real (eso requeriría campos nuevos en Empresa + panel).
+const REGLA_DESPACHO_MINIMO_CLP = 15000;
+const REGLA_DESPACHO_ZONA = 'la Región Metropolitana';
+
+const OPCIONES_FORMA_PAGO = [
+  { id: 'pago_efectivo', titulo: 'Efectivo', descripcion: 'Pagas al recibir/retirar' },
+  { id: 'pago_transferencia', titulo: 'Transferencia', descripcion: 'Te paso los datos al confirmar' },
+  { id: 'pago_tarjeta', titulo: 'Tarjeta', descripcion: 'Débito o crédito al recibir/retirar' },
+];
+
+const OPCIONES_TIPO_ENTREGA = [
+  { id: 'entrega_retiro', titulo: 'Retiro en tienda', descripcion: 'Sin costo adicional' },
+  { id: 'entrega_domicilio', titulo: 'Despacho a domicilio', descripcion: `Mín. $${REGLA_DESPACHO_MINIMO_CLP.toLocaleString('es-CL')}` },
+];
 
 function construirResumenCarrito(carrito) {
   const resumen = carrito
@@ -17,35 +36,191 @@ function construirResumenCarrito(carrito) {
   return { resumen, total };
 }
 
-function agregarOSumarItem(carrito, producto) {
+function agregarConCantidad(carrito, producto, cantidad) {
   const existente = carrito.find((it) => it.productoId === producto.id);
   if (existente) {
     return carrito.map((it) =>
-      it.productoId === producto.id ? { ...it, cantidad: it.cantidad + 1 } : it
+      it.productoId === producto.id ? { ...it, cantidad: it.cantidad + cantidad } : it
     );
   }
-  return [...carrito, { productoId: producto.id, nombre: producto.nombre, precio: producto.precio, cantidad: 1 }];
+  return [...carrito, { productoId: producto.id, nombre: producto.nombre, precio: producto.precio, cantidad }];
+}
+
+async function construirInteractivoCatalogo(empresaDemo) {
+  const productos = await prisma.producto.findMany({
+    where: { empresaId: empresaDemo.id, activo: true },
+    orderBy: { nombre: 'asc' },
+    take: MAX_PRODUCTOS_EN_LISTA,
+  });
+
+  if (productos.length === 0) {
+    return {
+      respuestaTexto: `Todavía no tenemos productos cargados para esta demo de "${empresaDemo.nombre}".`,
+      interactivo: null,
+    };
+  }
+
+  return {
+    respuestaTexto: `Esto es lo que tenemos disponible hoy en ${empresaDemo.nombre} 👇`,
+    interactivo: {
+      tipo: 'lista_productos_demo',
+      productos: productos.map((p) => ({ id: p.id, nombre: p.nombre, precio: p.precio })),
+    },
+  };
 }
 
 /**
  * @param {Object} params
- * @param {Object} params.demoAsignada - incluye empresaDemo y carritoDemoJson
+ * @param {Object} params.demoAsignada - incluye empresaDemo, carritoDemoJson, checkoutDemoJson
  * @param {string} params.textoEntrante
- * @param {Object} params.mensaje - mensaje crudo del webhook (para decodificar selección de lista)
+ * @param {Object} params.mensaje - mensaje crudo del webhook
  * @returns {Promise<{respuestaTexto: string, interactivo: Object|null}>}
  */
 async function procesarMensajeCatalogoDemo({ demoAsignada, textoEntrante, mensaje }) {
   const empresaDemo = demoAsignada.empresaDemo;
   const carritoActual = Array.isArray(demoAsignada.carritoDemoJson) ? demoAsignada.carritoDemoJson : [];
-  const nombreCompra = demoAsignada.nombreProspecto || 'el cliente';
+  const checkout = demoAsignada.checkoutDemoJson || {};
+  const paso = checkout.paso || null;
+  const idFilaElegida = mensaje?.type === 'interactive' ? mensaje.interactive?.list_reply?.id : null;
 
-  // 1) Selección de un producto desde la lista interactiva — se detecta por
-  // el id codificado, no por el título (WhatsApp lo trunca a 24 caracteres
-  // y podría no calzar exacto con el nombre real del producto).
+  // Cancelar el checkout en curso y volver al catálogo, en cualquier paso.
+  if (paso && /^\s*men[uú]\s*$/i.test(textoEntrante || '')) {
+    await prisma.demoAsignada.update({
+      where: { id: demoAsignada.id },
+      data: { checkoutDemoJson: null },
+    });
+    return construirInteractivoCatalogo(empresaDemo);
+  }
+
+  // ------------------------------------------------------------
+  // Esperando la CANTIDAD de un producto recién elegido.
+  // ------------------------------------------------------------
+  if (paso === 'ESPERANDO_CANTIDAD') {
+    const match = (textoEntrante || '').trim().match(/^\d{1,3}$/);
+    const cantidad = match ? parseInt(match[0], 10) : null;
+
+    if (!cantidad || cantidad < 1 || cantidad > 50) {
+      return {
+        respuestaTexto: '¿Cuántas unidades quieres? Escríbeme solo el número (ej. 2).',
+        interactivo: null,
+      };
+    }
+
+    const producto = await prisma.producto.findUnique({ where: { id: checkout.productoPendienteId } });
+    if (!producto) {
+      await prisma.demoAsignada.update({ where: { id: demoAsignada.id }, data: { checkoutDemoJson: null } });
+      return {
+        respuestaTexto: 'Ese producto ya no está disponible, disculpa. Escríbeme "menú" para ver las opciones actuales.',
+        interactivo: null,
+      };
+    }
+
+    const nuevoCarrito = agregarConCantidad(carritoActual, producto, cantidad);
+    await prisma.demoAsignada.update({
+      where: { id: demoAsignada.id },
+      data: { carritoDemoJson: nuevoCarrito, checkoutDemoJson: null },
+    });
+
+    const { resumen, total } = construirResumenCarrito(nuevoCarrito);
+    return {
+      respuestaTexto: `¡Agregado! ${cantidad}x ${producto.nombre} — $${producto.precio * cantidad}\n\nPedido hasta ahora:\n${resumen}\n\nTotal: $${total}\n\nEscribe "menú" para agregar algo más, o "listo" para cerrar el pedido.`,
+      interactivo: null,
+    };
+  }
+
+  // ------------------------------------------------------------
+  // Checkout: nombre → forma de pago → retiro/domicilio → (dirección) → resumen.
+  // ------------------------------------------------------------
+  if (paso === 'ESPERANDO_NOMBRE') {
+    const nombre = (textoEntrante || '').trim();
+    if (nombre.length < 2) {
+      return { respuestaTexto: 'No alcancé a leer bien tu nombre — ¿me lo repites?', interactivo: null };
+    }
+
+    await prisma.demoAsignada.update({
+      where: { id: demoAsignada.id },
+      data: { checkoutDemoJson: { ...checkout, paso: 'ESPERANDO_FORMA_PAGO', nombre } },
+    });
+
+    return {
+      respuestaTexto: `Gracias, ${nombre} 👍 ¿Cómo prefieres pagar?\n\n_(Hoy te muestro estas opciones — Totemsystem también puede integrar un link de pago online, ej. Flow o Webpay, para cobrar directo desde este chat)_`,
+      interactivo: { tipo: 'lista_forma_pago', opciones: OPCIONES_FORMA_PAGO },
+    };
+  }
+
+  if (paso === 'ESPERANDO_FORMA_PAGO') {
+    const opcion = OPCIONES_FORMA_PAGO.find((o) => o.id === idFilaElegida)
+      || OPCIONES_FORMA_PAGO.find((o) => new RegExp(o.titulo, 'i').test(textoEntrante || ''));
+
+    if (!opcion) {
+      return {
+        respuestaTexto: '¿Me eliges una de estas opciones para el pago? 👇',
+        interactivo: { tipo: 'lista_forma_pago', opciones: OPCIONES_FORMA_PAGO },
+      };
+    }
+
+    await prisma.demoAsignada.update({
+      where: { id: demoAsignada.id },
+      data: { checkoutDemoJson: { ...checkout, paso: 'ESPERANDO_TIPO_ENTREGA', formaPago: opcion.titulo } },
+    });
+
+    return {
+      respuestaTexto: '¿Retiras en tienda o prefieres despacho a domicilio?',
+      interactivo: { tipo: 'lista_tipo_entrega', opciones: OPCIONES_TIPO_ENTREGA },
+    };
+  }
+
+  if (paso === 'ESPERANDO_TIPO_ENTREGA') {
+    const opcion = OPCIONES_TIPO_ENTREGA.find((o) => o.id === idFilaElegida)
+      || OPCIONES_TIPO_ENTREGA.find((o) => new RegExp(o.titulo.split(' ')[0], 'i').test(textoEntrante || ''));
+
+    if (!opcion) {
+      return {
+        respuestaTexto: '¿Retiro en tienda o despacho a domicilio? Elige una opción 👇',
+        interactivo: { tipo: 'lista_tipo_entrega', opciones: OPCIONES_TIPO_ENTREGA },
+      };
+    }
+
+    if (opcion.id === 'entrega_domicilio') {
+      const { total } = construirResumenCarrito(carritoActual);
+      if (total < REGLA_DESPACHO_MINIMO_CLP) {
+        return {
+          respuestaTexto:
+            `El despacho a domicilio requiere un mínimo de $${REGLA_DESPACHO_MINIMO_CLP.toLocaleString('es-CL')} ` +
+            `(tu pedido va en $${total.toLocaleString('es-CL')}). Escribe "menú" para agregar más productos, ` +
+            `o elige retiro en tienda 👇`,
+          interactivo: { tipo: 'lista_tipo_entrega', opciones: OPCIONES_TIPO_ENTREGA },
+        };
+      }
+
+      await prisma.demoAsignada.update({
+        where: { id: demoAsignada.id },
+        data: { checkoutDemoJson: { ...checkout, paso: 'ESPERANDO_DIRECCION', tipoEntrega: opcion.titulo } },
+      });
+
+      return {
+        respuestaTexto: `Hacemos despacho solo dentro de ${REGLA_DESPACHO_ZONA} por ahora. ¿A qué dirección lo enviamos?`,
+        interactivo: null,
+      };
+    }
+
+    // Retiro en tienda — sin dirección, va directo al resumen.
+    return finalizarPedido({ demoAsignada, empresaDemo, carritoActual, checkout: { ...checkout, tipoEntrega: opcion.titulo } });
+  }
+
+  if (paso === 'ESPERANDO_DIRECCION') {
+    const direccion = (textoEntrante || '').trim();
+    if (direccion.length < 5) {
+      return { respuestaTexto: '¿Me confirmas la dirección completa (calle, número, comuna)?', interactivo: null };
+    }
+    return finalizarPedido({ demoAsignada, empresaDemo, carritoActual, checkout: { ...checkout, direccion } });
+  }
+
+  // ------------------------------------------------------------
+  // Sin checkout en curso: selección de producto, "listo", o catálogo.
+  // ------------------------------------------------------------
   if (mensaje?.type === 'interactive') {
-    const listReplyId = mensaje.interactive?.list_reply?.id;
-    const productoId = decodificarFilaProductoDemo(listReplyId);
-
+    const productoId = decodificarFilaProductoDemo(idFilaElegida);
     if (productoId) {
       const producto = await prisma.producto.findUnique({ where: { id: productoId } });
       if (!producto) {
@@ -55,21 +230,18 @@ async function procesarMensajeCatalogoDemo({ demoAsignada, textoEntrante, mensaj
         };
       }
 
-      const nuevoCarrito = agregarOSumarItem(carritoActual, producto);
       await prisma.demoAsignada.update({
         where: { id: demoAsignada.id },
-        data: { carritoDemoJson: nuevoCarrito },
+        data: { checkoutDemoJson: { paso: 'ESPERANDO_CANTIDAD', productoPendienteId: producto.id } },
       });
 
-      const { resumen, total } = construirResumenCarrito(nuevoCarrito);
       return {
-        respuestaTexto: `¡Agregado! ${producto.nombre} — $${producto.precio}\n\nPedido de *${nombreCompra}* hasta ahora:\n${resumen}\n\nTotal: $${total}\n\nEscribe "menú" para agregar algo más, o "listo" para ver el resumen final.`,
+        respuestaTexto: `¿Cuántas unidades de *${producto.nombre}* quieres? Escríbeme solo el número (ej. 2).`,
         interactivo: null,
       };
     }
   }
 
-  // 2) "listo" — muestra el resumen final del carrito acumulado
   if (/^\s*listo\s*$/i.test(textoEntrante || '')) {
     if (carritoActual.length === 0) {
       return {
@@ -77,47 +249,47 @@ async function procesarMensajeCatalogoDemo({ demoAsignada, textoEntrante, mensaj
         interactivo: null,
       };
     }
-    const { resumen, total } = construirResumenCarrito(carritoActual);
+
+    await prisma.demoAsignada.update({
+      where: { id: demoAsignada.id },
+      data: { checkoutDemoJson: { paso: 'ESPERANDO_NOMBRE' } },
+    });
+
     return {
-      respuestaTexto: `📋 Resumen del pedido de *${nombreCompra}*:\n\n${resumen}\n\nTotal: $${total}\n\n¡Así de simple se vería un pedido real por WhatsApp! 🙌`,
+      respuestaTexto: 'Perfecto, para completar tu pedido dime tu *nombre completo*.',
       interactivo: null,
     };
   }
 
-  // 3) Reconocimiento amplio de intención de ver el catálogo. En este modo
-  // de demo no hay otra funcionalidad real más que mostrar productos, así
-  // que cualquier mensaje que no sea un simple agradecimiento cae por
-  // defecto en mostrar el menú — mejor mostrar de más que dejar sin
-  // respuesta útil (soluciona que "Tienen pasteles?" no activara nada).
   const esSoloAgradecimiento = /^\s*(ok|okey|gracias|dale|bien|listo|perfecto)\s*[.!]?\s*$/i.test(textoEntrante || '');
-
   if (!esSoloAgradecimiento) {
-    const productos = await prisma.producto.findMany({
-      where: { empresaId: empresaDemo.id, activo: true },
-      orderBy: { nombre: 'asc' },
-      take: MAX_PRODUCTOS_EN_LISTA,
-    });
-
-    if (productos.length === 0) {
-      return {
-        respuestaTexto: `Todavía no tenemos productos cargados para esta demo de "${empresaDemo.nombre}".`,
-        interactivo: null,
-      };
-    }
-
-    return {
-      respuestaTexto: `Esto es lo que tenemos disponible hoy en ${empresaDemo.nombre} 👇`,
-      interactivo: {
-        tipo: 'lista_productos_demo',
-        productos: productos.map((p) => ({ id: p.id, nombre: p.nombre, precio: p.precio })),
-      },
-    };
+    return construirInteractivoCatalogo(empresaDemo);
   }
 
   return {
     respuestaTexto: '¡De nada! Escríbeme "menú" cuando quieras ver el catálogo de nuevo.',
     interactivo: null,
   };
+}
+
+async function finalizarPedido({ demoAsignada, empresaDemo, carritoActual, checkout }) {
+  const { resumen, total } = construirResumenCarrito(carritoActual);
+
+  const respuestaTexto =
+    `📋 *Resumen de tu pedido en ${empresaDemo.nombre}*\n\n${resumen}\n\nTotal: $${total.toLocaleString('es-CL')}\n\n` +
+    `• Nombre: ${checkout.nombre}\n` +
+    `• Forma de pago: ${checkout.formaPago}\n` +
+    `• Entrega: ${checkout.tipoEntrega}${checkout.direccion ? `\n• Dirección: ${checkout.direccion}` : ''}\n\n` +
+    `✅ ¡Pedido confirmado!\n\n` +
+    `Y algo más que le encanta a los negocios: pueden mandar campañas segmentadas automáticamente por WhatsApp — ` +
+    `por ejemplo, solo a quienes ya compraron antes, o a quienes gastan sobre cierto monto — sin elegir cliente por cliente.`;
+
+  await prisma.demoAsignada.update({
+    where: { id: demoAsignada.id },
+    data: { carritoDemoJson: [], checkoutDemoJson: null },
+  });
+
+  return { respuestaTexto, interactivo: null };
 }
 
 module.exports = { procesarMensajeCatalogoDemo };

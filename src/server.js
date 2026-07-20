@@ -216,6 +216,31 @@ app.post('/webhook/whatsapp', async (req, res) => {
           filas: interactivo.opciones.map((o) => ({ id: o.id, titulo: o.titulo, descripcion: o.descripcion })),
         });
 
+} else if (interactivo?.tipo === 'lista_forma_pago') {
+        await sendWhatsAppInteractiveList({
+          phoneNumberId,
+          to: telefonoCliente,
+          accessToken: accessTokenDemo,
+          textoCuerpo: respuestaTexto,
+          textoBoton: 'Elegir',
+          textoHeader: demoAsignada.empresaDemo.nombre?.slice(0, 60),
+          filas: interactivo.opciones.map((o) => ({ id: o.id, titulo: o.titulo, descripcion: o.descripcion })),
+        });
+
+      } else if (interactivo?.tipo === 'lista_tipo_entrega') {
+        await sendWhatsAppInteractiveList({
+          phoneNumberId,
+          to: telefonoCliente,
+          accessToken: accessTokenDemo,
+          textoCuerpo: respuestaTexto,
+          textoBoton: 'Elegir',
+          textoHeader: demoAsignada.empresaDemo.nombre?.slice(0, 60),
+          filas: interactivo.opciones.map((o) => ({ id: o.id, titulo: o.titulo, descripcion: o.descripcion })),
+        });
+
+      } else {
+
+
       } else {
         await sendWhatsAppTextMessage({
           phoneNumberId,
