@@ -28,7 +28,7 @@ const { procesarMensajeCatalogoRotativo } = require('./services/pedidosEngine');
 const { procesarMensajeDemo } = require('./services/demoEngine');
 const authVendedorRouter = require('./routes/authVendedor');
 const demosRouter = require('./routes/demos');
-
+const { generarHorasSimuladasParaDia } = require('./lib/agendaDemoSimulada');
 const app = express();
 
 // En desarrollo, si PANEL_FRONTEND_URL no está definida, se permite cualquier
@@ -128,32 +128,28 @@ app.post('/webhook/whatsapp', async (req, res) => {
       // NUEVO: si el mensaje entrante es la selección de un DÍA en la demo,
       // lo interceptamos igual que en el flujo real, sin pasar por el motor
       // de demo — respondemos directo con las horas de ese día.
+     
       if (mensaje.type === 'interactive') {
         const listReplyIdDemo = mensaje.interactive?.list_reply?.id;
         const diaElegidoDemo = decodificarFilaDia(listReplyIdDemo);
         if (diaElegidoDemo) {
-          const recursoDemo = await prisma.recursoAgendable.findFirst({
-            where: { empresaId: demoAsignada.empresaDemo.id },
-          });
-          if (recursoDemo) {
-            const horasDemo = await obtenerHorariosDisponibles(recursoDemo.id, diaElegidoDemo.fecha);
-            if (horasDemo.length === 0) {
-              await sendWhatsAppTextMessage({
-                phoneNumberId, to: telefonoCliente, accessToken: accessTokenDemo,
-                text: 'Ese día ya no tiene cupo disponible, ¿quieres que te muestre otro?',
-              });
-              return;
-            }
-            const fechaLegibleDemo = fechaLegibleDesdeISO(diaElegidoDemo.fecha);
-            await sendWhatsAppInteractiveList({
+          const horasDemo = generarHorasSimuladasParaDia(diaElegidoDemo.fecha);
+          if (horasDemo.length === 0) {
+            await sendWhatsAppTextMessage({
               phoneNumberId, to: telefonoCliente, accessToken: accessTokenDemo,
-              textoCuerpo: `Estos son los horarios disponibles para el ${fechaLegibleDemo}. Elige el que más te acomode 👇`,
-              textoBoton: 'Ver horarios',
-              textoHeader: demoAsignada.empresaDemo.nombre?.slice(0, 60),
-              filas: horasDemo.map((hora) => ({ id: codificarFilaHorario(diaElegidoDemo.fecha, hora), titulo: hora })),
+              text: 'Ese día ya no tiene cupo disponible, ¿quieres que te muestre otro?',
             });
             return;
           }
+          const fechaLegibleDemo = fechaLegibleDesdeISO(diaElegidoDemo.fecha);
+          await sendWhatsAppInteractiveList({
+            phoneNumberId, to: telefonoCliente, accessToken: accessTokenDemo,
+            textoCuerpo: `Estos son los horarios disponibles para el ${fechaLegibleDemo}. Elige el que más te acomode 👇`,
+            textoBoton: 'Ver horarios',
+            textoHeader: demoAsignada.empresaDemo.nombre?.slice(0, 60),
+            filas: horasDemo.map((hora) => ({ id: codificarFilaHorario(diaElegidoDemo.fecha, hora), titulo: hora })),
+          });
+          return;
         }
       }
 

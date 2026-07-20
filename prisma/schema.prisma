@@ -692,6 +692,7 @@ model DemoAsignada {
   paso                Int   @default(0)
   historialSimulacion Json?
   carritoDemoJson     Json? // productos seleccionados en la simulación de catálogo: [{productoId, nombre, precio, cantidad}]
+  citaDemoJson        Json? // simulación de la cita elegida en la demo de agendamiento: {servicio, fecha, hora, nombre, edad}
 }
 
 model Vendedor {
