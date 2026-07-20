@@ -10,6 +10,7 @@ const {
   decodificarFilaDia,
   codificarFilaDia,
   codificarFilaProductoDemo,
+  codificarFilaCantidadDemo,
   codificarFilaRubroGenerico,
   decodificarFilaRubroGenerico,
 } = require('./services/whatsapp');
@@ -32,6 +33,7 @@ const authVendedorRouter = require('./routes/authVendedor');
 const demosRouter = require('./routes/demos');
 const { generarHorasSimuladasParaDia } = require('./lib/agendaDemoSimulada');
 const { RUBROS_MENU_GENERICO } = require('./lib/rubrosMenuGenerico');
+
 const app = express();
 
 // En desarrollo, si PANEL_FRONTEND_URL no está definida, se permite cualquier
@@ -110,8 +112,7 @@ app.post('/webhook/whatsapp', async (req, res) => {
     // al motor de demo en vez del flujo normal de Empresa real.
     // ------------------------------------------------------------
     if (phoneNumberId === process.env.DEMO_PHONE_NUMBER_ID) {
-      
-let demoAsignada = await prisma.demoAsignada.findUnique({
+      let demoAsignada = await prisma.demoAsignada.findUnique({
         where: { telefono: telefonoCliente },
         include: { empresaDemo: { include: { rubroTemplate: true } } },
       });
@@ -191,11 +192,9 @@ let demoAsignada = await prisma.demoAsignada.findUnique({
         // Sigue abajo con el flujo normal de demo (INICIO) — no hay return aquí.
       }
 
-
       // NUEVO: si el mensaje entrante es la selección de un DÍA en la demo,
       // lo interceptamos igual que en el flujo real, sin pasar por el motor
       // de demo — respondemos directo con las horas de ese día.
-     
       if (mensaje.type === 'interactive') {
         const listReplyIdDemo = mensaje.interactive?.list_reply?.id;
         const diaElegidoDemo = decodificarFilaDia(listReplyIdDemo);
@@ -271,8 +270,7 @@ let demoAsignada = await prisma.demoAsignada.findUnique({
             descripcion: `$${p.precio}`,
           })),
         });
-
-} else if (interactivo?.tipo === 'lista_desambiguacion_precio') {
+      } else if (interactivo?.tipo === 'lista_desambiguacion_precio') {
         await sendWhatsAppInteractiveList({
           phoneNumberId,
           to: telefonoCliente,
@@ -282,8 +280,7 @@ let demoAsignada = await prisma.demoAsignada.findUnique({
           textoHeader: demoAsignada.empresaDemo.nombre?.slice(0, 60),
           filas: interactivo.opciones.map((o) => ({ id: o.id, titulo: o.titulo, descripcion: o.descripcion })),
         });
-
-} else if (interactivo?.tipo === 'lista_forma_pago') {
+      } else if (interactivo?.tipo === 'lista_forma_pago') {
         await sendWhatsAppInteractiveList({
           phoneNumberId,
           to: telefonoCliente,
@@ -293,7 +290,6 @@ let demoAsignada = await prisma.demoAsignada.findUnique({
           textoHeader: demoAsignada.empresaDemo.nombre?.slice(0, 60),
           filas: interactivo.opciones.map((o) => ({ id: o.id, titulo: o.titulo, descripcion: o.descripcion })),
         });
-
       } else if (interactivo?.tipo === 'lista_tipo_entrega') {
         await sendWhatsAppInteractiveList({
           phoneNumberId,
@@ -304,8 +300,7 @@ let demoAsignada = await prisma.demoAsignada.findUnique({
           textoHeader: demoAsignada.empresaDemo.nombre?.slice(0, 60),
           filas: interactivo.opciones.map((o) => ({ id: o.id, titulo: o.titulo, descripcion: o.descripcion })),
         });
-
-} else if (interactivo?.tipo === 'lista_cantidad_demo') {
+      } else if (interactivo?.tipo === 'lista_cantidad_demo') {
         await sendWhatsAppInteractiveList({
           phoneNumberId,
           to: telefonoCliente,
@@ -314,17 +309,11 @@ let demoAsignada = await prisma.demoAsignada.findUnique({
           textoBoton: 'Elegir',
           textoHeader: interactivo.nombreProducto?.slice(0, 60),
           filas: interactivo.opciones.map((o) => ({
-            id: require('./services/whatsapp').codificarFilaCantidadDemo(interactivo.productoId, o.cantidad),
+            id: codificarFilaCantidadDemo(interactivo.productoId, o.cantidad),
             titulo: o.titulo,
             descripcion: o.descripcion,
           })),
         });
-
-      } else if (interactivo?.tipo === 'lista_forma_pago') {
-
-      } else {
-
-
       } else {
         await sendWhatsAppTextMessage({
           phoneNumberId,
