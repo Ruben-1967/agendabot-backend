@@ -9,10 +9,10 @@
 //
 // IMPORTANTE: el estado propio de la demo (en qué paso va, historial de la
 // simulación, carrito o cita simulada) se guarda en el modelo DemoAsignada,
-// NO en Conversacion. El historial registra AMBOS lados de la conversación
-// (prospecto y asistente), y tanto el servicio elegido como el nombre/edad
-// se VALIDAN antes de aceptarlos — nunca se guarda texto libre sin más como
-// si fuera un dato estructurado.
+// NO en Conversacion. El historial registra ambos lados de la conversación,
+// el servicio y el nombre/edad se VALIDAN antes de aceptarlos, y el mismo
+// teléfono puede pedir "reiniciar" la demo en cualquier momento — útil
+// cuando alguien ya la vio y quiere mostrársela de nuevo a su equipo.
 
 const Anthropic = require('@anthropic-ai/sdk');
 const prisma = require('../lib/prisma');
@@ -33,11 +33,9 @@ const PASOS = {
   PREGUNTAS_ABIERTAS: 3,
   DESAMBIGUANDO_PRECIO: 4,
   AGENDA_ESPERANDO_DATOS: 5,
-  AGENDA_ESPERANDO_SERVICIO: 6, // NUEVO — cuando el prospecto quiere agendar pero no mencionó un servicio real
+  AGENDA_ESPERANDO_SERVICIO: 6,
 };
 
-// Grilla real de planes — usada tal cual en los prompts para que Claude
-// nunca invente cifras (ver bug del "plan $19.900 incluye 200 citas").
 const GRILLA_PLANES_TEXTO = `- Plan A: $9.900 CLP/mes — 100 citas incluidas, excedente $150 CLP/cita
 - Plan B: $19.900 CLP/mes — 300 citas incluidas, excedente $90 CLP/cita
 - Plan C: $49.900 CLP/mes — 700 citas incluidas, excedente $60 CLP/cita
@@ -45,6 +43,17 @@ const GRILLA_PLANES_TEXTO = `- Plan A: $9.900 CLP/mes — 100 citas incluidas, e
   confirmación (24h antes + reintentos) y promoción automática a la lista de espera cuando alguien cancela.
   WhatsApp no cobra por los mensajes de servicio dentro de la ventana de conversación del cliente, así que el
   costo real de operar es mínimo.`;
+
+// NUEVO: detecta si el prospecto quiere volver al inicio de la demo (ej.
+// para mostrársela a su equipo). Exige mencionar "demo" junto a una palabra
+// de reinicio, para no confundirlo con un pedido normal de "empezar de
+// nuevo con el pedido" dentro del catálogo.
+function detectaIntencionReiniciar(texto) {
+  const mencionaDemo = /\bdemo\b/i.test(texto);
+  const pideReinicio = /reiniciar|reinicia|comenzar de nuevo|empezar de nuevo|desde el inicio|desde cero|de nuevo|otra vez/i.test(texto);
+  const mencionaEquipo = /mostrar(le|la|selo|sela)?\s+a\s+(mi|su|otro)\s+(equipo|jefe|socio|colega)/i.test(texto);
+  return (mencionaDemo && pideReinicio) || mencionaEquipo;
+}
 
 function historialAMensajes(historial) {
   const recortado = historial.slice(-40);
@@ -153,8 +162,6 @@ function escaparRegex(texto) {
   return texto.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-// NUEVO: busca si el texto menciona un servicio REAL del rubro — nunca
-// devuelve texto libre suelto como "servicio".
 function detectarServicioMencionado(texto, serviciosBase) {
   for (const servicio of serviciosBase) {
     const patron = new RegExp(escaparRegex(servicio), 'i');
@@ -163,9 +170,6 @@ function detectarServicioMencionado(texto, serviciosBase) {
   return null;
 }
 
-// Palabras genéricas de agendar SIN mencionar un servicio puntual (ej. "sí,
-// necesito hora para esta semana") — en ese caso preguntamos cuál servicio
-// específico, en vez de guardar la frase completa como si fuera el servicio.
 function detectaIntencionAgendarGenerico(texto) {
   return /agendar|reservar|\bhora\b|\bcita\b|\bturno\b/i.test(texto);
 }
@@ -195,6 +199,30 @@ async function procesarMensajeDemo({ demoAsignada, telefonoCliente, mensaje, nom
   const idFilaElegida = mensaje.type === 'interactive'
     ? mensaje.interactive?.list_reply?.id
     : null;
+
+  // NUEVO: reinicio manual de la demo, sin importar en qué paso esté hoy.
+  // Solo aplica a texto libre (no tiene sentido si viene de una selección
+  // de lista/botón).
+  if (mensaje.type === 'text' && detectaIntencionReiniciar(textoEntrante)) {
+    const nombreParaSaludo = demoAsignada.nombreProspecto || nombreContacto;
+    const respuestaTexto =
+      `¡Dale! 🔄 Reiniciamos la demo desde cero.\n\n` +
+      `¡Hola${nombreParaSaludo ? ` ${nombreParaSaludo}` : ''}! 👋 Soy el asistente de *Totemsystem*.\n\n` +
+      `Te voy a responder como si fuera *"${empresaDemo.nombre}"* — solo para esta prueba, no uso tu marca para nada más.\n\n` +
+      `Pruébalo tú mismo — escríbeme algo, como si fueras un cliente tuyo 👇`;
+
+    await prisma.demoAsignada.update({
+      where: { id: demoAsignada.id },
+      data: {
+        paso: PASOS.SIMULACION_LIBRE,
+        historialSimulacion: [{ rol: 'asistente', texto: respuestaTexto }],
+        citaDemoJson: null,
+        carritoDemoJson: [],
+      },
+    });
+
+    return { respuestaTexto, interactivo: null };
+  }
 
   let nuevoHistorial = [...historial, { rol: 'prospecto', texto: textoEntrante }];
 
@@ -306,8 +334,6 @@ async function procesarMensajeDemo({ demoAsignada, telefonoCliente, mensaje, nom
         break;
       }
 
-      // NUEVO: esperando que el prospecto confirme un servicio real,
-      // después de haber pedido "hora" sin especificar cuál.
       case PASOS.AGENDA_ESPERANDO_SERVICIO: {
         const servicioMencionado = detectarServicioMencionado(textoEntrante, serviciosBase);
 
@@ -324,9 +350,6 @@ async function procesarMensajeDemo({ demoAsignada, telefonoCliente, mensaje, nom
         break;
       }
 
-      // NUEVO: valida que la respuesta sea "Nombre, edad" (edad numérica)
-      // antes de aceptarla — si no calza, vuelve a pedirla en vez de
-      // guardar cualquier texto como si fuera el dato.
       case PASOS.AGENDA_ESPERANDO_DATOS: {
         const partes = textoEntrante.split(',').map((s) => s.trim()).filter(Boolean);
         const edadCandidata = partes[partes.length - 1];
