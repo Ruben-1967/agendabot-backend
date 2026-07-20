@@ -6,7 +6,7 @@ const { requireAuth, JWT_SECRET } = require('../middleware/auth');
 
 const router = express.Router();
 
-const TOKEN_EXPIRA_EN = '10s';
+const TOKEN_EXPIRA_EN = '12h';
 
 // ------------------------------------------------------------
 // POST /auth/login

@@ -5,7 +5,7 @@ const prisma = require('../lib/prisma');
 const { JWT_SECRET } = require('../middleware/auth');
 
 const router = express.Router();
-const TOKEN_EXPIRA_EN = '12h';
+const TOKEN_EXPIRA_EN = '10s';
 
 // ------------------------------------------------------------
 // POST /auth-vendedor/login
