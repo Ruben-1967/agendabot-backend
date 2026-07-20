@@ -9,7 +9,10 @@
 //
 // IMPORTANTE: el estado propio de la demo (en qué paso va, historial de la
 // simulación, carrito o cita simulada) se guarda en el modelo DemoAsignada,
-// NO en Conversacion.
+// NO en Conversacion. El historial registra AMBOS lados de la conversación
+// (prospecto y asistente), y tanto el servicio elegido como el nombre/edad
+// se VALIDAN antes de aceptarlos — nunca se guarda texto libre sin más como
+// si fuera un dato estructurado.
 
 const Anthropic = require('@anthropic-ai/sdk');
 const prisma = require('../lib/prisma');
@@ -29,14 +32,48 @@ const PASOS = {
   ESPERANDO_PRODUCTOS: 2,
   PREGUNTAS_ABIERTAS: 3,
   DESAMBIGUANDO_PRECIO: 4,
-  AGENDA_ESPERANDO_DATOS: 5, // NUEVO — esperando nombre+edad tras elegir hora simulada
+  AGENDA_ESPERANDO_DATOS: 5,
+  AGENDA_ESPERANDO_SERVICIO: 6, // NUEVO — cuando el prospecto quiere agendar pero no mencionó un servicio real
 };
+
+// Grilla real de planes — usada tal cual en los prompts para que Claude
+// nunca invente cifras (ver bug del "plan $19.900 incluye 200 citas").
+const GRILLA_PLANES_TEXTO = `- Plan A: $9.900 CLP/mes — 100 citas incluidas, excedente $150 CLP/cita
+- Plan B: $19.900 CLP/mes — 300 citas incluidas, excedente $90 CLP/cita
+- Plan C: $49.900 CLP/mes — 700 citas incluidas, excedente $60 CLP/cita
+- Todos los planes incluyen, SIN costo adicional: 1 UF de hosting al año, recordatorios automáticos de
+  confirmación (24h antes + reintentos) y promoción automática a la lista de espera cuando alguien cancela.
+  WhatsApp no cobra por los mensajes de servicio dentro de la ventana de conversación del cliente, así que el
+  costo real de operar es mínimo.`;
+
+function historialAMensajes(historial) {
+  const recortado = historial.slice(-40);
+  const mensajes = [];
+  for (const turno of recortado) {
+    const role = turno.rol === 'asistente' ? 'assistant' : 'user';
+    const ultimo = mensajes[mensajes.length - 1];
+    if (ultimo && ultimo.role === role) {
+      ultimo.content += `\n${turno.texto}`;
+    } else {
+      mensajes.push({ role, content: turno.texto });
+    }
+  }
+  while (mensajes.length && mensajes[0].role !== 'user') {
+    mensajes.shift();
+  }
+  return mensajes;
+}
 
 function textoPrecios(modoOperacion) {
   if (modoOperacion === 'CATALOGO_ROTATIVO') {
     return `💳 Créditos prepagados: $149 CLP por mensaje enviado, mínimo 50 por compra. Pagas solo lo que usas.`;
   }
-  return `💰 Planes desde $9.900 hasta $49.900 CLP/mes según volumen de citas, + 1 UF de hosting al año.`;
+  return (
+    `💰 *Plan A:* $9.900/mes — 100 citas incluidas\n` +
+    `💰 *Plan B:* $19.900/mes — 300 citas incluidas\n` +
+    `💰 *Plan C:* $49.900/mes — 700 citas incluidas\n` +
+    `Los 3 incluyen 1 UF de hosting anual, recordatorios automáticos y lista de espera, sin costo extra.`
+  );
 }
 
 function construirMockupYPitch({ items, empresaDemo, modoOperacion, origenCarritoReal }) {
@@ -62,15 +99,18 @@ function construirMockupYPitch({ items, empresaDemo, modoOperacion, origenCarrit
   );
 }
 
-async function responderPreguntaAbierta({ pregunta, empresaDemo, modoOperacion }) {
+async function responderPreguntaAbierta({ historial, modoOperacion }) {
   const systemPrompt = `Eres el mismo asistente de venta de Totemsystem que ya estuvo mostrando una demo.
 Ahora el prospecto está haciendo preguntas de cierre (precio, condiciones, dudas). Responde en 2-4 líneas,
-tono directo y cercano, como WhatsApp — nunca un párrafo largo.
+tono directo y cercano, como WhatsApp — nunca un párrafo largo. Ya tienes todo el historial de la
+conversación arriba — úsalo para no perder el hilo (ej. si preguntó cuántas citas hace y luego solo
+responde un número, entiende que es la respuesta a esa pregunta).
 
-Datos reales que puedes usar:
-- Modo agendamiento: planes desde $9.900 hasta $49.900 CLP/mes según volumen de citas, + 1 UF de hosting anual.
-- Modo catálogo rotativo: créditos prepagados a $149 CLP por mensaje, mínimo 50 créditos por compra.
-- El producto responde WhatsApp 24/7, agenda o toma pedidos automáticamente, y se personaliza al rubro del negocio.
+Grilla EXACTA de planes de agendamiento — usa estos números tal cual, NUNCA inventes ni redondees otros:
+${GRILLA_PLANES_TEXTO}
+
+Modo catálogo rotativo: créditos prepagados a $149 CLP por mensaje, mínimo 50 créditos por compra.
+El producto responde WhatsApp 24/7, agenda o toma pedidos automáticamente, y se personaliza al rubro del negocio.
 
 Regla estricta: NUNCA inventes políticas de cancelación, reembolso, garantías, plazos de prueba, ni
 condiciones contractuales que no aparezcan arriba. Si preguntan algo así, sé honesto: di que esas
@@ -80,32 +120,29 @@ condiciones las confirma el equipo comercial directamente. No prometas nada que 
     model: 'claude-haiku-4-5-20251001',
     max_tokens: 250,
     system: systemPrompt,
-    messages: [{ role: 'user', content: pregunta }],
+    messages: historialAMensajes(historial),
   });
 
   const textBlock = response.content.find((b) => b.type === 'text');
   return textBlock ? textBlock.text : 'Buena pregunta — te conecto con el equipo para que te lo confirmen bien.';
 }
 
-// NUEVO: responde preguntas libres del prospecto durante la simulación de
-// agendamiento (ej. "¿qué servicios ofrecen?", "¿dónde están ubicados?"),
-// usando solo los datos reales cargados de la empresa de demo — sin tools,
-// sin depender del motor real de agendamiento.
-async function responderPreguntaSobreNegocio({ pregunta, empresaDemo, serviciosBase }) {
+async function responderPreguntaSobreNegocio({ historial, empresaDemo, serviciosBase }) {
   const systemPrompt = `Eres el asistente de WhatsApp de "${empresaDemo.nombre}" (esto es una demo comercial de Totemsystem).
 Servicios que ofrece: ${serviciosBase.length ? serviciosBase.join(', ') : 'servicios generales del rubro'}.
 ${empresaDemo.direccion ? `Dirección: ${empresaDemo.direccion}.` : ''}
 ${empresaDemo.informacionAdicional ? `Información adicional que puedes citar tal cual: ${empresaDemo.informacionAdicional}` : ''}
 
-Responde en 1-3 líneas, tono cordial y directo, como WhatsApp. Si preguntan por agendar, invítalos a decir
-el servicio que quieren para mostrarles los horarios disponibles. NUNCA inventes precios, horarios exactos,
-ni políticas que no te dieron arriba — si no lo sabes, dilo con naturalidad.`;
+Ya tienes arriba el historial completo de la conversación — úsalo para no perder el hilo. Responde en 1-3
+líneas, tono cordial y directo, como WhatsApp. Si preguntan por agendar, invítalos a decir el servicio que
+quieren para mostrarles los horarios disponibles. NUNCA inventes precios, horarios exactos, ni políticas que
+no te dieron arriba — si no lo sabes, dilo con naturalidad.`;
 
   const response = await anthropic.messages.create({
     model: 'claude-haiku-4-5-20251001',
     max_tokens: 200,
     system: systemPrompt,
-    messages: [{ role: 'user', content: pregunta }],
+    messages: historialAMensajes(historial),
   });
 
   const textBlock = response.content.find((b) => b.type === 'text');
@@ -116,14 +153,21 @@ function escaparRegex(texto) {
   return texto.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-// NUEVO: detecta si el prospecto quiere agendar — por el nombre de un
-// servicio real del rubro, o por palabras genéricas de agendamiento.
-function detectaIntencionAgendar(texto, serviciosBase) {
-  const patronGenerico = /agendar|reservar|\bhora\b|\bcita\b|\bturno\b/i;
-  if (patronGenerico.test(texto)) return true;
-  if (serviciosBase.length === 0) return false;
-  const patronServicios = new RegExp(serviciosBase.map(escaparRegex).join('|'), 'i');
-  return patronServicios.test(texto);
+// NUEVO: busca si el texto menciona un servicio REAL del rubro — nunca
+// devuelve texto libre suelto como "servicio".
+function detectarServicioMencionado(texto, serviciosBase) {
+  for (const servicio of serviciosBase) {
+    const patron = new RegExp(escaparRegex(servicio), 'i');
+    if (patron.test(texto)) return servicio;
+  }
+  return null;
+}
+
+// Palabras genéricas de agendar SIN mencionar un servicio puntual (ej. "sí,
+// necesito hora para esta semana") — en ese caso preguntamos cuál servicio
+// específico, en vez de guardar la frase completa como si fuera el servicio.
+function detectaIntencionAgendarGenerico(texto) {
+  return /agendar|reservar|\bhora\b|\bcita\b|\bturno\b/i.test(texto);
 }
 
 async function procesarMensajeDemo({ demoAsignada, telefonoCliente, mensaje, nombreContacto }) {
@@ -132,6 +176,9 @@ async function procesarMensajeDemo({ demoAsignada, telefonoCliente, mensaje, nom
   const paso = demoAsignada.paso || PASOS.INICIO;
   const historial = Array.isArray(demoAsignada.historialSimulacion) ? demoAsignada.historialSimulacion : [];
   const carritoActual = Array.isArray(demoAsignada.carritoDemoJson) ? demoAsignada.carritoDemoJson : [];
+  const serviciosBase = Array.isArray(empresaDemo.rubroTemplate.serviciosBase)
+    ? empresaDemo.rubroTemplate.serviciosBase
+    : [];
 
   const horarioElegido = mensaje.type === 'interactive'
     ? decodificarFilaHorario(mensaje.interactive?.list_reply?.id)
@@ -149,32 +196,23 @@ async function procesarMensajeDemo({ demoAsignada, telefonoCliente, mensaje, nom
     ? mensaje.interactive?.list_reply?.id
     : null;
 
+  let nuevoHistorial = [...historial, { rol: 'prospecto', texto: textoEntrante }];
+
   let respuestaTexto;
   let interactivo = null;
   let nuevoPaso = paso;
-  let nuevoHistorial = historial;
   let nuevoCitaDemo = demoAsignada.citaDemoJson || null;
 
-  // ------------------------------------------------------------
-  // Si el prospecto tocó una hora simulada (modo agendamiento), no pasa por
-  // el switch normal — pedimos nombre+edad y guardamos la fecha/hora elegida.
-  // ------------------------------------------------------------
   if (horarioElegido && modoOperacion === 'AGENDAMIENTO') {
-    nuevoHistorial = [...historial, { rol: 'prospecto', texto: textoEntrante }];
     nuevoCitaDemo = { ...(nuevoCitaDemo || {}), fecha: horarioElegido.fecha, hora: horarioElegido.hora };
     const fechaLegible = fechaLegibleDesdeISO(horarioElegido.fecha);
 
     respuestaTexto =
-      `Perfecto, ${fechaLegible} a las ${horarioElegido.hora}. Para dejarlo agendado, dime el *nombre completo* ` +
-      `y la *edad* de la persona, separados por coma (ej. "Juan Pérez, 34").\n\n` +
-      `_(Esto es solo para la demo — en el negocio real, el nombre y teléfono del cliente se capturan automático ` +
-      `desde WhatsApp, sin pedirlos aparte. Solo se piden datos extra como este cuando el rubro los necesita.)_`;
+      `Perfecto, ${fechaLegible} a las ${horarioElegido.hora}. Para dejarlo agendado, dime tu *nombre completo* ` +
+      `y tu *edad*, separados por coma (ej. "Juan Pérez, 34").`;
     nuevoPaso = PASOS.AGENDA_ESPERANDO_DATOS;
   } else {
     switch (paso) {
-      // ------------------------------------------------------------
-      // PASO 0: identidad + gancho.
-      // ------------------------------------------------------------
       case PASOS.INICIO: {
         const nombreParaSaludo = demoAsignada.nombreProspecto || nombreContacto;
         respuestaTexto =
@@ -186,19 +224,12 @@ async function procesarMensajeDemo({ demoAsignada, telefonoCliente, mensaje, nom
         break;
       }
 
-      // ------------------------------------------------------------
-      // PASO 1: simulación libre. Detecta intención de precio (de
-      // Totemsystem) o de agendar (modo AGENDAMIENTO); si no es ninguna
-      // de las dos, responde libremente sobre el negocio simulado o
-      // delega al carrito real (modo CATALOGO_ROTATIVO).
-      // ------------------------------------------------------------
       case PASOS.SIMULACION_LIBRE: {
         const hablaDePagoDelNegocio = /medios?\s+de\s+pago|formas?\s+de\s+pago|plan(es)?\s+de\s+pago/i.test(textoEntrante);
         const pareceQuererPrecio = !hablaDePagoDelNegocio &&
           /precio|beneficios?|cu[aá]nto (sale|vale|cobra|cuesta|es)|tarifa|\bcosto\b|\bplan(es)?\b|contrat(ar|o)|cotiza|totemsystem/i.test(textoEntrante);
 
         if (pareceQuererPrecio) {
-          nuevoHistorial = [...historial, { rol: 'prospecto', texto: textoEntrante }];
           const esInequivoco = /totemsystem/i.test(textoEntrante);
 
           if (esInequivoco) {
@@ -233,23 +264,25 @@ async function procesarMensajeDemo({ demoAsignada, telefonoCliente, mensaje, nom
           break;
         }
 
-        nuevoHistorial = [...historial, { rol: 'prospecto', texto: textoEntrante }];
-
         if (modoOperacion === 'AGENDAMIENTO') {
-          const serviciosBase = Array.isArray(empresaDemo.rubroTemplate.serviciosBase)
-            ? empresaDemo.rubroTemplate.serviciosBase
-            : [];
+          const servicioMencionado = detectarServicioMencionado(textoEntrante, serviciosBase);
 
-          if (detectaIntencionAgendar(textoEntrante, serviciosBase)) {
-            nuevoCitaDemo = { servicio: textoEntrante.trim() };
+          if (servicioMencionado) {
+            nuevoCitaDemo = { servicio: servicioMencionado };
             respuestaTexto = '¡Claro! Estos son los próximos días disponibles:';
             interactivo = { tipo: 'lista_dias', dias: generarProximosDiasSimulados() };
             nuevoPaso = PASOS.SIMULACION_LIBRE;
             break;
           }
 
+          if (detectaIntencionAgendarGenerico(textoEntrante) && serviciosBase.length > 0) {
+            respuestaTexto = `¡Claro! ¿Para cuál de estos servicios?\n${serviciosBase.map((s) => `• ${s}`).join('\n')}`;
+            nuevoPaso = PASOS.AGENDA_ESPERANDO_SERVICIO;
+            break;
+          }
+
           try {
-            respuestaTexto = await responderPreguntaSobreNegocio({ pregunta: textoEntrante, empresaDemo, serviciosBase });
+            respuestaTexto = await responderPreguntaSobreNegocio({ historial: nuevoHistorial, empresaDemo, serviciosBase });
           } catch (error) {
             console.error('[DEMO] Error respondiendo pregunta libre de agendamiento:', error.message);
             respuestaTexto = '¿En qué te puedo ayudar? Puedo contarte de nuestros servicios o agendarte una hora.';
@@ -258,7 +291,6 @@ async function procesarMensajeDemo({ demoAsignada, telefonoCliente, mensaje, nom
           break;
         }
 
-        // CATALOGO_ROTATIVO: delega al motor simplificado con carrito real.
         let respuestaMotorReal = null;
         let interactivoMotorReal = null;
         try {
@@ -274,15 +306,42 @@ async function procesarMensajeDemo({ demoAsignada, telefonoCliente, mensaje, nom
         break;
       }
 
-      // ------------------------------------------------------------
-      // NUEVO PASO: esperando nombre+edad tras elegir hora simulada.
-      // ------------------------------------------------------------
-      case PASOS.AGENDA_ESPERANDO_DATOS: {
-        nuevoHistorial = [...historial, { rol: 'prospecto', texto: textoEntrante }];
+      // NUEVO: esperando que el prospecto confirme un servicio real,
+      // después de haber pedido "hora" sin especificar cuál.
+      case PASOS.AGENDA_ESPERANDO_SERVICIO: {
+        const servicioMencionado = detectarServicioMencionado(textoEntrante, serviciosBase);
 
+        if (!servicioMencionado) {
+          respuestaTexto = `No alcancé a reconocer ese servicio — ¿me escribes uno de estos tal cual?\n${serviciosBase.map((s) => `• ${s}`).join('\n')}`;
+          nuevoPaso = PASOS.AGENDA_ESPERANDO_SERVICIO;
+          break;
+        }
+
+        nuevoCitaDemo = { servicio: servicioMencionado };
+        respuestaTexto = '¡Perfecto! Estos son los próximos días disponibles:';
+        interactivo = { tipo: 'lista_dias', dias: generarProximosDiasSimulados() };
+        nuevoPaso = PASOS.SIMULACION_LIBRE;
+        break;
+      }
+
+      // NUEVO: valida que la respuesta sea "Nombre, edad" (edad numérica)
+      // antes de aceptarla — si no calza, vuelve a pedirla en vez de
+      // guardar cualquier texto como si fuera el dato.
+      case PASOS.AGENDA_ESPERANDO_DATOS: {
         const partes = textoEntrante.split(',').map((s) => s.trim()).filter(Boolean);
-        const nombreProspecto = partes[0] || 'Sin nombre';
-        const edadProspecto = partes[1] || 'Sin edad';
+        const edadCandidata = partes[partes.length - 1];
+        const pareceValido = partes.length >= 2 && /^\d{1,3}$/.test(edadCandidata);
+
+        if (!pareceValido) {
+          respuestaTexto =
+            `Para dejar la cita agendada necesito tu *nombre completo* y tu *edad*, separados por coma ` +
+            `(ej. "Juan Pérez, 34"). ¿Me los compartes así?`;
+          nuevoPaso = PASOS.AGENDA_ESPERANDO_DATOS;
+          break;
+        }
+
+        const edadProspecto = edadCandidata;
+        const nombreProspecto = partes.slice(0, -1).join(', ');
 
         nuevoCitaDemo = { ...(nuevoCitaDemo || {}), nombre: nombreProspecto, edad: edadProspecto };
         const fechaLegible = nuevoCitaDemo.fecha ? fechaLegibleDesdeISO(nuevoCitaDemo.fecha) : 'el día elegido';
@@ -303,12 +362,7 @@ async function procesarMensajeDemo({ demoAsignada, telefonoCliente, mensaje, nom
         break;
       }
 
-      // ------------------------------------------------------------
-      // Desambiguando si "precio" era sobre el negocio simulado o Totemsystem.
-      // ------------------------------------------------------------
       case PASOS.DESAMBIGUANDO_PRECIO: {
-        nuevoHistorial = [...historial, { rol: 'prospecto', texto: textoEntrante }];
-
         if (idFilaElegida === 'precio_totemsystem') {
           if (modoOperacion === 'CATALOGO_ROTATIVO' && carritoActual.length > 0) {
             const items = carritoActual.map((it) => `${it.cantidad}x ${it.nombre}`);
@@ -324,11 +378,8 @@ async function procesarMensajeDemo({ demoAsignada, telefonoCliente, mensaje, nom
         nuevoPaso = PASOS.SIMULACION_LIBRE;
 
         if (modoOperacion === 'AGENDAMIENTO') {
-          const serviciosBase = Array.isArray(empresaDemo.rubroTemplate.serviciosBase)
-            ? empresaDemo.rubroTemplate.serviciosBase
-            : [];
           try {
-            respuestaTexto = await responderPreguntaSobreNegocio({ pregunta: textoEntrante, empresaDemo, serviciosBase });
+            respuestaTexto = await responderPreguntaSobreNegocio({ historial: nuevoHistorial, empresaDemo, serviciosBase });
           } catch (error) {
             console.error('[DEMO] Error respondiendo tras desambiguación:', error.message);
             respuestaTexto = 'Cuéntame más — ¿qué te gustaría hacer?';
@@ -347,9 +398,6 @@ async function procesarMensajeDemo({ demoAsignada, telefonoCliente, mensaje, nom
         break;
       }
 
-      // ------------------------------------------------------------
-      // PASO 2: personalización + cierre corto.
-      // ------------------------------------------------------------
       case PASOS.ESPERANDO_PRODUCTOS: {
         const itemsIngresados = textoEntrante
           .split(',')
@@ -368,17 +416,10 @@ async function procesarMensajeDemo({ demoAsignada, telefonoCliente, mensaje, nom
         break;
       }
 
-      // ------------------------------------------------------------
-      // PASO 3: preguntas abiertas post-cierre.
-      // ------------------------------------------------------------
       case PASOS.PREGUNTAS_ABIERTAS:
       default: {
         try {
-          respuestaTexto = await responderPreguntaAbierta({
-            pregunta: textoEntrante,
-            empresaDemo,
-            modoOperacion,
-          });
+          respuestaTexto = await responderPreguntaAbierta({ historial: nuevoHistorial, modoOperacion });
         } catch (error) {
           console.error('[DEMO] Error respondiendo pregunta abierta:', error.message);
           respuestaTexto = `Buena pregunta — te conecto con el equipo para confirmártelo bien. Mientras, puedes ver más acá: ${LINK_LANDING}`;
@@ -387,6 +428,8 @@ async function procesarMensajeDemo({ demoAsignada, telefonoCliente, mensaje, nom
       }
     }
   }
+
+  nuevoHistorial = [...nuevoHistorial, { rol: 'asistente', texto: respuestaTexto }].slice(-40);
 
   await prisma.demoAsignada.update({
     where: { id: demoAsignada.id },
