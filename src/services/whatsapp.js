@@ -255,6 +255,21 @@ function decodificarFilaCantidadDemo(id) {
   return { productoId: partes[1], cantidadRaw: partes[2] };
 }
 
+/**
+ * Codifica la elección de rubro en el menú genérico (número desconocido
+ * que escribe al número de demo). Formato: "rubrogenerico|id"
+ */
+function codificarFilaRubroGenerico(id) {
+  return `rubrogenerico|${id}`;
+}
+
+function decodificarFilaRubroGenerico(id) {
+  if (typeof id !== 'string') return null;
+  const partes = id.split('|');
+  if (partes.length !== 2 || partes[0] !== 'rubrogenerico') return null;
+  return partes[1];
+}
+
 module.exports = {
   sendWhatsAppTextMessage,
   sendWhatsAppTemplateMessage,
@@ -267,4 +282,6 @@ module.exports = {
   decodificarFilaProductoDemo,
   codificarFilaCantidadDemo,
   decodificarFilaCantidadDemo,
+  codificarFilaRubroGenerico,
+  decodificarFilaRubroGenerico,
 };

@@ -10,6 +10,8 @@ const {
   decodificarFilaDia,
   codificarFilaDia,
   codificarFilaProductoDemo,
+  codificarFilaRubroGenerico,
+  decodificarFilaRubroGenerico,
 } = require('./services/whatsapp');
 const { obtenerHorariosDisponibles } = require('./services/disponibilidad');
 const { fechaLegibleDesdeISO } = require('./lib/formatoFechas');
@@ -29,6 +31,7 @@ const { procesarMensajeDemo } = require('./services/demoEngine');
 const authVendedorRouter = require('./routes/authVendedor');
 const demosRouter = require('./routes/demos');
 const { generarHorasSimuladasParaDia } = require('./lib/agendaDemoSimulada');
+const { RUBROS_MENU_GENERICO } = require('./lib/rubrosMenuGenerico');
 const app = express();
 
 // En desarrollo, si PANEL_FRONTEND_URL no está definida, se permite cualquier
@@ -107,7 +110,8 @@ app.post('/webhook/whatsapp', async (req, res) => {
     // al motor de demo en vez del flujo normal de Empresa real.
     // ------------------------------------------------------------
     if (phoneNumberId === process.env.DEMO_PHONE_NUMBER_ID) {
-      const demoAsignada = await prisma.demoAsignada.findUnique({
+      
+let demoAsignada = await prisma.demoAsignada.findUnique({
         where: { telefono: telefonoCliente },
         include: { empresaDemo: { include: { rubroTemplate: true } } },
       });
@@ -115,15 +119,78 @@ app.post('/webhook/whatsapp', async (req, res) => {
       const accessTokenDemo = process.env.DEMO_WHATSAPP_ACCESS_TOKEN;
 
       if (!demoAsignada) {
-        // Nadie asignó este teléfono a ninguna demo todavía
-        await sendWhatsAppTextMessage({
-          phoneNumberId,
-          to: telefonoCliente,
-          text: 'Este número es para demos coordinadas con nuestro equipo. Escríbenos a contacto@multidigital.cl para agendar tu demo personalizada 🙌',
-          accessToken: accessTokenDemo,
+        const rubroElegidoId = mensaje.type === 'interactive'
+          ? decodificarFilaRubroGenerico(mensaje.interactive?.list_reply?.id)
+          : null;
+        const rubroGenerico = rubroElegidoId
+          ? RUBROS_MENU_GENERICO.find((r) => r.id === rubroElegidoId)
+          : null;
+
+        if (!rubroGenerico) {
+          // Nadie asignó este teléfono a ninguna demo todavía — muestra el
+          // menú de rubros genéricos para que se autogestione.
+          await sendWhatsAppInteractiveList({
+            phoneNumberId,
+            to: telefonoCliente,
+            accessToken: accessTokenDemo,
+            textoCuerpo: '¡Hola! 👋 Soy el asistente de *Totemsystem*. Elige el tipo de negocio que quieres ver funcionando por WhatsApp 👇',
+            textoBoton: 'Ver rubros',
+            textoHeader: 'Totemsystem — Demo',
+            secciones: [
+              {
+                titulo: 'Agendamiento de citas',
+                filas: RUBROS_MENU_GENERICO.filter((r) => !r.productos).map((r) => ({
+                  id: codificarFilaRubroGenerico(r.id), titulo: r.titulo, descripcion: r.descripcion,
+                })),
+              },
+              {
+                titulo: 'Catálogo por WhatsApp',
+                filas: RUBROS_MENU_GENERICO.filter((r) => r.productos).map((r) => ({
+                  id: codificarFilaRubroGenerico(r.id), titulo: r.titulo, descripcion: r.descripcion,
+                })),
+              },
+            ],
+          });
+          return;
+        }
+
+        // Eligió un rubro — crea una empresa PRIVADA nueva para este
+        // teléfono (nunca compartida) y su DemoAsignada.
+        const rubroTemplate = await prisma.rubroTemplate.findUnique({ where: { clave: rubroGenerico.claveRubro } });
+        if (!rubroTemplate) {
+          console.error(`[DEMO] Falta RubroTemplate con clave "${rubroGenerico.claveRubro}" — revisar seed.`);
+          await sendWhatsAppTextMessage({
+            phoneNumberId, to: telefonoCliente, accessToken: accessTokenDemo,
+            text: 'Tuvimos un problema armando esa demo — escríbenos a contacto@multidigital.cl y te ayudamos directo 🙌',
+          });
+          return;
+        }
+
+        const empresaNueva = await prisma.empresa.create({
+          data: { nombre: rubroGenerico.nombreEmpresa, rubroTemplateId: rubroTemplate.id, esDemo: true },
         });
-        return;
+
+        if (rubroGenerico.productos?.length > 0) {
+          await prisma.producto.createMany({
+            data: rubroGenerico.productos.map((p) => ({
+              empresaId: empresaNueva.id, nombre: p.nombre, precio: p.precio, activo: true,
+            })),
+          });
+        }
+
+        await prisma.demoAsignada.create({
+          data: { telefono: telefonoCliente, empresaDemoId: empresaNueva.id, nombreProspecto: nombreContacto },
+        });
+
+        demoAsignada = await prisma.demoAsignada.findUnique({
+          where: { telefono: telefonoCliente },
+          include: { empresaDemo: { include: { rubroTemplate: true } } },
+        });
+
+        console.log(`[DEMO] Número desconocido ${telefonoCliente} eligió "${rubroGenerico.titulo}" — empresa privada ${empresaNueva.id} creada.`);
+        // Sigue abajo con el flujo normal de demo (INICIO) — no hay return aquí.
       }
+
 
       // NUEVO: si el mensaje entrante es la selección de un DÍA en la demo,
       // lo interceptamos igual que en el flujo real, sin pasar por el motor
