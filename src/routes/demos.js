@@ -25,6 +25,14 @@ function normalizarTelefono(numeroIngresado, paisIso) {
   return numero.number.replace('+', '');
 }
 
+function normalizarSitioWeb(url) {
+  if (!url) return null;
+  const limpio = url.trim();
+  if (!limpio) return null;
+  return /^https?:\/\//i.test(limpio) ? limpio : `https://${limpio}`;
+}
+
+
 router.post('/prospectos', requireAuth, requireRole('VENDEDOR'), async (req, res) => {
   try {
     const { nombreNegocio, telefono, paisTelefono, nombreEncargado, rubro, sitioWeb } = req.body;
@@ -52,17 +60,19 @@ router.post('/prospectos', requireAuth, requireRole('VENDEDOR'), async (req, res
 
     const demoExistente = await prisma.demoAsignada.findUnique({ where: { telefono: telefonoNormalizado } });
 
+    const sitioWebNormalizado = normalizarSitioWeb(sitioWeb);
+
     let infoExtraida = null;
-    if (sitioWeb) {
+    if (sitioWebNormalizado) {
       const rutas = claveRubro === 'catalogo_rotativo' ? RUTAS_CATALOGO_TIPICAS : undefined;
-      infoExtraida = await extraerInfoSitioWeb(sitioWeb, rutas);
+      infoExtraida = await extraerInfoSitioWeb(sitioWebNormalizado, rutas);
     }
 
     const datosEmpresa = {
       nombre: nombreNegocio,
       rubroTemplateId: rubroTemplate.id,
       esDemo: true,
-      sitioWeb: sitioWeb || null,
+      sitioWeb: sitioWebNormalizado,
       direccion: infoExtraida?.exito ? infoExtraida.direccion : null,
       informacionAdicional: infoExtraida?.exito ? infoExtraida.informacionAdicionalSugerida : null,
     };
