@@ -235,6 +235,26 @@ function decodificarFilaProductoDemo(id) {
   return partes[1];
 }
 
+/**
+ * Codifica producto+cantidad en el id de fila para la lista interactiva de
+ * cantidad (demo de catálogo). Formato: "demoscantidad|productoId|cantidad"
+ * — cantidad puede ser un número (1-6) o el string "otra" (pide escribirla).
+ */
+function codificarFilaCantidadDemo(productoId, cantidad) {
+  return `demoscantidad|${productoId}|${cantidad}`;
+}
+
+/**
+ * Inverso de codificarFilaCantidadDemo. Devuelve { productoId, cantidadRaw }
+ * sin convertir "otra" a número — eso lo decide quien la use.
+ */
+function decodificarFilaCantidadDemo(id) {
+  if (typeof id !== 'string') return null;
+  const partes = id.split('|');
+  if (partes.length !== 3 || partes[0] !== 'demoscantidad') return null;
+  return { productoId: partes[1], cantidadRaw: partes[2] };
+}
+
 module.exports = {
   sendWhatsAppTextMessage,
   sendWhatsAppTemplateMessage,
@@ -245,4 +265,6 @@ module.exports = {
   decodificarFilaDia,
   codificarFilaProductoDemo,
   decodificarFilaProductoDemo,
+  codificarFilaCantidadDemo,
+  decodificarFilaCantidadDemo,
 };
