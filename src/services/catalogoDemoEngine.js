@@ -2,18 +2,16 @@
 // comerciales. A diferencia de pedidosEngine.js (el motor real), este lee
 // Producto directo, mantiene un "carrito" simple por demo
 // (DemoAsignada.carritoDemoJson) y un checkout simulado propio
-// (DemoAsignada.checkoutDemoJson: nombre, forma de pago, retiro/domicilio,
-// validado contra una regla de despacho de EJEMPLO). No se usa NUNCA para
-// negocios reales — pedidosEngine.js no tiene hoy estos campos (forma de
-// pago, tipo de entrega, regla de despacho); esto es solo para la demo.
+// (DemoAsignada.checkoutDemoJson). No se usa NUNCA para negocios reales —
+// pedidosEngine.js no tiene hoy forma de pago, tipo de entrega, ni regla
+// de despacho; esto es solo para la demo.
 
 const prisma = require('../lib/prisma');
-const { decodificarFilaProductoDemo } = require('./whatsapp');
+const { decodificarFilaProductoDemo, decodificarFilaCantidadDemo } = require('./whatsapp');
 
 const MAX_PRODUCTOS_EN_LISTA = 10;
+const OPCIONES_CANTIDAD_RAPIDA = [1, 2, 3, 4, 5, 6];
 
-// Regla de despacho de EJEMPLO para la demo — no configurable todavía por
-// negocio real (eso requeriría campos nuevos en Empresa + panel).
 const REGLA_DESPACHO_MINIMO_CLP = 15000;
 const REGLA_DESPACHO_ZONA = 'la Región Metropolitana';
 
@@ -69,6 +67,35 @@ async function construirInteractivoCatalogo(empresaDemo) {
   };
 }
 
+function construirInteractivoCantidad(producto) {
+  return {
+    respuestaTexto: `¿Cuántas unidades de *${producto.nombre}* quieres?`,
+    interactivo: {
+      tipo: 'lista_cantidad_demo',
+      productoId: producto.id,
+      nombreProducto: producto.nombre,
+      opciones: [
+        ...OPCIONES_CANTIDAD_RAPIDA.map((n) => ({ cantidad: n, titulo: `${n} unidad${n > 1 ? 'es' : ''}` })),
+        { cantidad: 'otra', titulo: 'Otra cantidad', descripcion: 'Escríbela tú' },
+      ],
+    },
+  };
+}
+
+async function agregarProductoYResponder({ demoAsignada, carritoActual, producto, cantidad }) {
+  const nuevoCarrito = agregarConCantidad(carritoActual, producto, cantidad);
+  await prisma.demoAsignada.update({
+    where: { id: demoAsignada.id },
+    data: { carritoDemoJson: nuevoCarrito, checkoutDemoJson: null },
+  });
+
+  const { resumen, total } = construirResumenCarrito(nuevoCarrito);
+  return {
+    respuestaTexto: `¡Agregado! ${cantidad}x ${producto.nombre} — $${producto.precio * cantidad}\n\nPedido hasta ahora:\n${resumen}\n\nTotal: $${total}\n\nEscribe "menú" para agregar algo más, o "listo" para cerrar el pedido.`,
+    interactivo: null,
+  };
+}
+
 /**
  * @param {Object} params
  * @param {Object} params.demoAsignada - incluye empresaDemo, carritoDemoJson, checkoutDemoJson
@@ -83,25 +110,47 @@ async function procesarMensajeCatalogoDemo({ demoAsignada, textoEntrante, mensaj
   const paso = checkout.paso || null;
   const idFilaElegida = mensaje?.type === 'interactive' ? mensaje.interactive?.list_reply?.id : null;
 
-  // Cancelar el checkout en curso y volver al catálogo, en cualquier paso.
+  // Cancelar el checkout/selección en curso y volver al catálogo, en cualquier paso.
   if (paso && /^\s*men[uú]\s*$/i.test(textoEntrante || '')) {
-    await prisma.demoAsignada.update({
-      where: { id: demoAsignada.id },
-      data: { checkoutDemoJson: null },
-    });
+    await prisma.demoAsignada.update({ where: { id: demoAsignada.id }, data: { checkoutDemoJson: null } });
     return construirInteractivoCatalogo(empresaDemo);
   }
 
   // ------------------------------------------------------------
-  // Esperando la CANTIDAD de un producto recién elegido.
+  // Esperando la CANTIDAD de un producto recién elegido — primero por
+  // botón/lista (rápido), y si tocó "otra", por texto libre.
   // ------------------------------------------------------------
   if (paso === 'ESPERANDO_CANTIDAD') {
+    const seleccionCantidad = mensaje?.type === 'interactive' ? decodificarFilaCantidadDemo(idFilaElegida) : null;
+
+    if (seleccionCantidad && seleccionCantidad.productoId === checkout.productoPendienteId) {
+      if (seleccionCantidad.cantidadRaw === 'otra') {
+        return {
+          respuestaTexto: 'Perfecto, escríbeme la cantidad que quieres (ej. 8).',
+          interactivo: null,
+        };
+      }
+
+      const cantidad = parseInt(seleccionCantidad.cantidadRaw, 10);
+      const producto = await prisma.producto.findUnique({ where: { id: checkout.productoPendienteId } });
+      if (!producto) {
+        await prisma.demoAsignada.update({ where: { id: demoAsignada.id }, data: { checkoutDemoJson: null } });
+        return {
+          respuestaTexto: 'Ese producto ya no está disponible, disculpa. Escríbeme "menú" para ver las opciones actuales.',
+          interactivo: null,
+        };
+      }
+      return agregarProductoYResponder({ demoAsignada, carritoActual, producto, cantidad });
+    }
+
+    // Texto libre (llegó acá porque tocó "Otra cantidad", o escribió
+    // directamente un número sin usar la lista).
     const match = (textoEntrante || '').trim().match(/^\d{1,3}$/);
     const cantidad = match ? parseInt(match[0], 10) : null;
 
-    if (!cantidad || cantidad < 1 || cantidad > 50) {
+    if (!cantidad || cantidad < 1 || cantidad > 999) {
       return {
-        respuestaTexto: '¿Cuántas unidades quieres? Escríbeme solo el número (ej. 2).',
+        respuestaTexto: '¿Cuántas unidades quieres? Escríbeme solo el número (ej. 8).',
         interactivo: null,
       };
     }
@@ -114,18 +163,7 @@ async function procesarMensajeCatalogoDemo({ demoAsignada, textoEntrante, mensaj
         interactivo: null,
       };
     }
-
-    const nuevoCarrito = agregarConCantidad(carritoActual, producto, cantidad);
-    await prisma.demoAsignada.update({
-      where: { id: demoAsignada.id },
-      data: { carritoDemoJson: nuevoCarrito, checkoutDemoJson: null },
-    });
-
-    const { resumen, total } = construirResumenCarrito(nuevoCarrito);
-    return {
-      respuestaTexto: `¡Agregado! ${cantidad}x ${producto.nombre} — $${producto.precio * cantidad}\n\nPedido hasta ahora:\n${resumen}\n\nTotal: $${total}\n\nEscribe "menú" para agregar algo más, o "listo" para cerrar el pedido.`,
-      interactivo: null,
-    };
+    return agregarProductoYResponder({ demoAsignada, carritoActual, producto, cantidad });
   }
 
   // ------------------------------------------------------------
@@ -204,7 +242,6 @@ async function procesarMensajeCatalogoDemo({ demoAsignada, textoEntrante, mensaj
       };
     }
 
-    // Retiro en tienda — sin dirección, va directo al resumen.
     return finalizarPedido({ demoAsignada, empresaDemo, carritoActual, checkout: { ...checkout, tipoEntrega: opcion.titulo } });
   }
 
@@ -235,10 +272,7 @@ async function procesarMensajeCatalogoDemo({ demoAsignada, textoEntrante, mensaj
         data: { checkoutDemoJson: { paso: 'ESPERANDO_CANTIDAD', productoPendienteId: producto.id } },
       });
 
-      return {
-        respuestaTexto: `¿Cuántas unidades de *${producto.nombre}* quieres? Escríbeme solo el número (ej. 2).`,
-        interactivo: null,
-      };
+      return construirInteractivoCantidad(producto);
     }
   }
 

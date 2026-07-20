@@ -238,6 +238,23 @@ app.post('/webhook/whatsapp', async (req, res) => {
           filas: interactivo.opciones.map((o) => ({ id: o.id, titulo: o.titulo, descripcion: o.descripcion })),
         });
 
+} else if (interactivo?.tipo === 'lista_cantidad_demo') {
+        await sendWhatsAppInteractiveList({
+          phoneNumberId,
+          to: telefonoCliente,
+          accessToken: accessTokenDemo,
+          textoCuerpo: respuestaTexto,
+          textoBoton: 'Elegir',
+          textoHeader: interactivo.nombreProducto?.slice(0, 60),
+          filas: interactivo.opciones.map((o) => ({
+            id: require('./services/whatsapp').codificarFilaCantidadDemo(interactivo.productoId, o.cantidad),
+            titulo: o.titulo,
+            descripcion: o.descripcion,
+          })),
+        });
+
+      } else if (interactivo?.tipo === 'lista_forma_pago') {
+
       } else {
 
 
