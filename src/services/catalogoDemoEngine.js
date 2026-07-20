@@ -12,7 +12,12 @@ const { decodificarFilaProductoDemo, decodificarFilaCantidadDemo } = require('./
 const MAX_PRODUCTOS_EN_LISTA = 10;
 const OPCIONES_CANTIDAD_RAPIDA = [1, 2, 3, 4, 5, 6];
 
+// Regla de despacho de EJEMPLO para la demo — no configurable todavía por
+// negocio real (eso requeriría campos nuevos en Empresa + panel). El monto
+// mínimo, la tarifa de envío (o si es gratis) y la zona los define cada
+// negocio en la vida real; acá son solo valores de muestra.
 const REGLA_DESPACHO_MINIMO_CLP = 15000;
+const REGLA_DESPACHO_TARIFA_CLP = 2500;
 const REGLA_DESPACHO_ZONA = 'la Región Metropolitana';
 
 const OPCIONES_FORMA_PAGO = [
@@ -23,12 +28,35 @@ const OPCIONES_FORMA_PAGO = [
 
 const OPCIONES_TIPO_ENTREGA = [
   { id: 'entrega_retiro', titulo: 'Retiro en tienda', descripcion: 'Sin costo adicional' },
-  { id: 'entrega_domicilio', titulo: 'Despacho a domicilio', descripcion: `Mín. $${REGLA_DESPACHO_MINIMO_CLP.toLocaleString('es-CL')}` },
+  {
+    id: 'entrega_domicilio',
+    titulo: 'Despacho a domicilio',
+    descripcion: `Mín. $${REGLA_DESPACHO_MINIMO_CLP.toLocaleString('es-CL')} + envío $${REGLA_DESPACHO_TARIFA_CLP.toLocaleString('es-CL')}`,
+  },
 ];
+
+// Etiquetas de unidad de medida — el campo `unidad` en Producto ya existe
+// en producción ("unidad" | "kg" | "docena" | "porción", etc.); acá solo
+// mapeamos las que usamos en las plantillas de demo a un texto lindo.
+const ETIQUETAS_UNIDAD = {
+  unidad: { capitalizada: 'Unidad', singular: 'unidad', plural: 'unidades' },
+  kg: { capitalizada: 'Kilo', singular: 'kilo', plural: 'kilos' },
+  litro: { capitalizada: 'Litro', singular: 'litro', plural: 'litros' },
+};
+
+function etiquetaUnidad(unidad) {
+  return ETIQUETAS_UNIDAD[unidad] || { capitalizada: 'Otro', singular: 'unidad', plural: 'unidades' };
+}
+
+function formatearCantidad(cantidad, unidad) {
+  const etiqueta = etiquetaUnidad(unidad);
+  const palabra = cantidad === 1 ? etiqueta.singular : etiqueta.plural;
+  return unidad === 'unidad' ? `${cantidad}x` : `${cantidad} ${palabra} de`;
+}
 
 function construirResumenCarrito(carrito) {
   const resumen = carrito
-    .map((it) => `• ${it.cantidad}x ${it.nombre} ($${it.precio * it.cantidad})`)
+    .map((it) => `• ${formatearCantidad(it.cantidad, it.unidad)} ${it.nombre} ($${(it.precio * it.cantidad).toLocaleString('es-CL')})`)
     .join('\n');
   const total = carrito.reduce((acc, it) => acc + it.cantidad * it.precio, 0);
   return { resumen, total };
@@ -41,7 +69,7 @@ function agregarConCantidad(carrito, producto, cantidad) {
       it.productoId === producto.id ? { ...it, cantidad: it.cantidad + cantidad } : it
     );
   }
-  return [...carrito, { productoId: producto.id, nombre: producto.nombre, precio: producto.precio, cantidad }];
+  return [...carrito, { productoId: producto.id, nombre: producto.nombre, precio: producto.precio, unidad: producto.unidad || 'unidad', cantidad }];
 }
 
 async function construirInteractivoCatalogo(empresaDemo) {
@@ -62,20 +90,27 @@ async function construirInteractivoCatalogo(empresaDemo) {
     respuestaTexto: `Esto es lo que tenemos disponible hoy en ${empresaDemo.nombre} 👇`,
     interactivo: {
       tipo: 'lista_productos_demo',
-      productos: productos.map((p) => ({ id: p.id, nombre: p.nombre, precio: p.precio })),
+      productos: productos.map((p) => ({
+        id: p.id,
+        nombre: p.nombre,
+        precio: p.precio,
+        unidad: p.unidad || 'unidad',
+      })),
     },
   };
 }
 
 function construirInteractivoCantidad(producto) {
+  const etiqueta = etiquetaUnidad(producto.unidad);
   return {
-    respuestaTexto: `¿Cuántas unidades de *${producto.nombre}* quieres?`,
+    respuestaTexto: `¿Cuántos ${etiqueta.plural} de *${producto.nombre}* quieres?`,
     interactivo: {
       tipo: 'lista_cantidad_demo',
       productoId: producto.id,
       nombreProducto: producto.nombre,
+      unidad: producto.unidad || 'unidad',
       opciones: [
-        ...OPCIONES_CANTIDAD_RAPIDA.map((n) => ({ cantidad: n, titulo: `${n} unidad${n > 1 ? 'es' : ''}` })),
+        ...OPCIONES_CANTIDAD_RAPIDA.map((n) => ({ cantidad: n, titulo: `${n} ${n > 1 ? etiqueta.plural : etiqueta.singular}` })),
         { cantidad: 'otra', titulo: 'Otra cantidad', descripcion: 'Escríbela tú' },
       ],
     },
@@ -90,8 +125,10 @@ async function agregarProductoYResponder({ demoAsignada, carritoActual, producto
   });
 
   const { resumen, total } = construirResumenCarrito(nuevoCarrito);
+  const etiqueta = etiquetaUnidad(producto.unidad);
+  const cantidadTexto = formatearCantidad(cantidad, producto.unidad);
   return {
-    respuestaTexto: `¡Agregado! ${cantidad}x ${producto.nombre} — $${producto.precio * cantidad}\n\nPedido hasta ahora:\n${resumen}\n\nTotal: $${total}\n\nEscribe "menú" para agregar algo más, o "listo" para cerrar el pedido.`,
+    respuestaTexto: `¡Agregado! ${cantidadTexto} ${producto.nombre} — $${(producto.precio * cantidad).toLocaleString('es-CL')}\n\nPedido hasta ahora:\n${resumen}\n\nTotal: $${total.toLocaleString('es-CL')}\n\nEscribe "menú" para agregar algo más, o "listo" para cerrar el pedido.`,
     interactivo: null,
   };
 }
@@ -118,20 +155,25 @@ async function procesarMensajeCatalogoDemo({ demoAsignada, textoEntrante, mensaj
 
   // ------------------------------------------------------------
   // Esperando la CANTIDAD de un producto recién elegido — primero por
-  // botón/lista (rápido), y si tocó "otra", por texto libre.
+  // botón/lista (rápido), y si tocó "otra", por texto libre. Los productos
+  // por kilo/litro admiten decimales (ej. "1.5"); los de unidad, solo enteros.
   // ------------------------------------------------------------
   if (paso === 'ESPERANDO_CANTIDAD') {
+    const unidadPendiente = checkout.unidadPendiente || 'unidad';
+    const permiteDecimal = unidadPendiente === 'kg' || unidadPendiente === 'litro';
+    const etiqueta = etiquetaUnidad(unidadPendiente);
+
     const seleccionCantidad = mensaje?.type === 'interactive' ? decodificarFilaCantidadDemo(idFilaElegida) : null;
 
     if (seleccionCantidad && seleccionCantidad.productoId === checkout.productoPendienteId) {
       if (seleccionCantidad.cantidadRaw === 'otra') {
         return {
-          respuestaTexto: 'Perfecto, escríbeme la cantidad que quieres (ej. 8).',
+          respuestaTexto: `Perfecto, escríbeme la cantidad de ${etiqueta.plural} que quieres${permiteDecimal ? ' (ej. 1.5)' : ' (ej. 8)'}.`,
           interactivo: null,
         };
       }
 
-      const cantidad = parseInt(seleccionCantidad.cantidadRaw, 10);
+      const cantidad = parseFloat(seleccionCantidad.cantidadRaw);
       const producto = await prisma.producto.findUnique({ where: { id: checkout.productoPendienteId } });
       if (!producto) {
         await prisma.demoAsignada.update({ where: { id: demoAsignada.id }, data: { checkoutDemoJson: null } });
@@ -144,13 +186,14 @@ async function procesarMensajeCatalogoDemo({ demoAsignada, textoEntrante, mensaj
     }
 
     // Texto libre (llegó acá porque tocó "Otra cantidad", o escribió
-    // directamente un número sin usar la lista).
-    const match = (textoEntrante || '').trim().match(/^\d{1,3}$/);
-    const cantidad = match ? parseInt(match[0], 10) : null;
+    // directamente sin usar la lista).
+    const patron = permiteDecimal ? /^\d{1,3}(\.\d{1,2})?$/ : /^\d{1,3}$/;
+    const match = (textoEntrante || '').trim().match(patron);
+    const cantidad = match ? parseFloat(match[0]) : null;
 
-    if (!cantidad || cantidad < 1 || cantidad > 999) {
+    if (!cantidad || cantidad <= 0 || cantidad > 999) {
       return {
-        respuestaTexto: '¿Cuántas unidades quieres? Escríbeme solo el número (ej. 8).',
+        respuestaTexto: `¿Cuántos ${etiqueta.plural} quieres? Escríbeme solo el número${permiteDecimal ? ' (ej. 1.5)' : ' (ej. 8)'}.`,
         interactivo: null,
       };
     }
@@ -203,7 +246,11 @@ async function procesarMensajeCatalogoDemo({ demoAsignada, textoEntrante, mensaj
     });
 
     return {
-      respuestaTexto: '¿Retiras en tienda o prefieres despacho a domicilio?',
+      respuestaTexto:
+        `¿Retiras en tienda o prefieres despacho a domicilio?\n\n` +
+        `_(Cada negocio decide si ofrece despacho, define su propio monto mínimo de compra, y elige si el envío es ` +
+        `gratis o tiene un costo fijo — este ejemplo usa mínimo $${REGLA_DESPACHO_MINIMO_CLP.toLocaleString('es-CL')} ` +
+        `y envío de $${REGLA_DESPACHO_TARIFA_CLP.toLocaleString('es-CL')})_`,
       interactivo: { tipo: 'lista_tipo_entrega', opciones: OPCIONES_TIPO_ENTREGA },
     };
   }
@@ -233,7 +280,7 @@ async function procesarMensajeCatalogoDemo({ demoAsignada, textoEntrante, mensaj
 
       await prisma.demoAsignada.update({
         where: { id: demoAsignada.id },
-        data: { checkoutDemoJson: { ...checkout, paso: 'ESPERANDO_DIRECCION', tipoEntrega: opcion.titulo } },
+        data: { checkoutDemoJson: { ...checkout, paso: 'ESPERANDO_DIRECCION', tipoEntrega: opcion.titulo, costoEnvio: REGLA_DESPACHO_TARIFA_CLP } },
       });
 
       return {
@@ -242,7 +289,7 @@ async function procesarMensajeCatalogoDemo({ demoAsignada, textoEntrante, mensaj
       };
     }
 
-    return finalizarPedido({ demoAsignada, empresaDemo, carritoActual, checkout: { ...checkout, tipoEntrega: opcion.titulo } });
+    return finalizarPedido({ demoAsignada, empresaDemo, carritoActual, checkout: { ...checkout, tipoEntrega: opcion.titulo, costoEnvio: 0 } });
   }
 
   if (paso === 'ESPERANDO_DIRECCION') {
@@ -269,7 +316,7 @@ async function procesarMensajeCatalogoDemo({ demoAsignada, textoEntrante, mensaj
 
       await prisma.demoAsignada.update({
         where: { id: demoAsignada.id },
-        data: { checkoutDemoJson: { paso: 'ESPERANDO_CANTIDAD', productoPendienteId: producto.id } },
+        data: { checkoutDemoJson: { paso: 'ESPERANDO_CANTIDAD', productoPendienteId: producto.id, unidadPendiente: producto.unidad || 'unidad' } },
       });
 
       return construirInteractivoCantidad(producto);
@@ -308,9 +355,15 @@ async function procesarMensajeCatalogoDemo({ demoAsignada, textoEntrante, mensaj
 
 async function finalizarPedido({ demoAsignada, empresaDemo, carritoActual, checkout }) {
   const { resumen, total } = construirResumenCarrito(carritoActual);
+  const costoEnvio = checkout.costoEnvio || 0;
+  const totalFinal = total + costoEnvio;
+
+  const lineaEnvio = checkout.direccion
+    ? `\n• Envío${costoEnvio === 0 ? ' (gratis)' : ''}: $${costoEnvio.toLocaleString('es-CL')}`
+    : '';
 
   const respuestaTexto =
-    `📋 *Resumen de tu pedido en ${empresaDemo.nombre}*\n\n${resumen}\n\nTotal: $${total.toLocaleString('es-CL')}\n\n` +
+    `📋 *Resumen de tu pedido en ${empresaDemo.nombre}*\n\n${resumen}${lineaEnvio}\n\nTotal: $${totalFinal.toLocaleString('es-CL')}\n\n` +
     `• Nombre: ${checkout.nombre}\n` +
     `• Forma de pago: ${checkout.formaPago}\n` +
     `• Entrega: ${checkout.tipoEntrega}${checkout.direccion ? `\n• Dirección: ${checkout.direccion}` : ''}\n\n` +
