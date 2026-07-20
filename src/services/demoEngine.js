@@ -464,8 +464,31 @@ async function procesarMensajeDemo({ demoAsignada, telefonoCliente, mensaje, nom
         break;
       }
 
-      case PASOS.PREGUNTAS_ABIERTAS:
+     case PASOS.PREGUNTAS_ABIERTAS:
       default: {
+        // Aunque ya se mostró el pitch de precios, el prospecto puede seguir
+        // probando el negocio simulado — incluyendo pedir hora. Sin este
+        // chequeo, cualquier mensaje acá caía directo a Claude en modo
+        // "cierre de venta genérico", que no sabe nada del calendario
+        // simulado y terminaba inventando un flujo de agendamiento falso.
+        if (modoOperacion === 'AGENDAMIENTO') {
+          const servicioMencionado = detectarServicioMencionado(textoEntrante, serviciosBase);
+
+          if (servicioMencionado) {
+            nuevoCitaDemo = { servicio: servicioMencionado };
+            respuestaTexto = '¡Claro! Estos son los próximos días disponibles:';
+            interactivo = { tipo: 'lista_dias', dias: generarProximosDiasSimulados() };
+            nuevoPaso = PASOS.SIMULACION_LIBRE;
+            break;
+          }
+
+          if (detectaIntencionAgendarGenerico(textoEntrante) && serviciosBase.length > 0) {
+            respuestaTexto = `¡Claro! ¿Para cuál de estos servicios?\n${serviciosBase.map((s) => `• ${s}`).join('\n')}`;
+            nuevoPaso = PASOS.AGENDA_ESPERANDO_SERVICIO;
+            break;
+          }
+        }
+
         try {
           respuestaTexto = await responderPreguntaAbierta({ historial: nuevoHistorial, modoOperacion });
         } catch (error) {
@@ -474,8 +497,6 @@ async function procesarMensajeDemo({ demoAsignada, telefonoCliente, mensaje, nom
         }
         break;
       }
-    }
-  }
 
   nuevoHistorial = [...nuevoHistorial, { rol: 'asistente', texto: respuestaTexto }].slice(-40);
 
