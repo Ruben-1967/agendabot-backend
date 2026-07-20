@@ -202,6 +202,7 @@ Instrucciones:
 - NUNCA inventes horas ni días disponibles.
 ${empresa.requiereRut ? '- Este negocio EXIGE RUT para agendar. Antes de llamar a agendar_cita, además de fecha/hora/servicio, pide el RUT del cliente si aún no lo tienes en la conversación.\n' : ''}- Una vez que el cliente confirme fecha, hora${empresa.requiereRut ? ', servicio y RUT' : ' y servicio'} específicos, usa agendar_cita para crear la cita de verdad. El campo "servicio" debe ser exactamente uno de los nombres de la lista SERVICIOS AGENDABLES.
 - Si agendar_cita falla porque el horario ya no está disponible, discúlpate y ofrece consultar otra hora.
+- Cuando confirmes una cita agendada, NUNCA muestres el "citaId" (es un identificador interno de la base de datos, sin ningún valor para el cliente) — el resumen debe incluir solo servicio, fecha, hora, y dirección si corresponde.
 - Si el cliente pregunta algo que no está cubierto en la información de este mensaje (precios, condiciones, detalles clínicos), no inventes: dile que lo puede confirmar directamente con el negocio.
 - No des información médica ni de salud como si fueras un profesional — solo agenda.`;
 
