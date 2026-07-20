@@ -48,11 +48,20 @@ const GRILLA_PLANES_TEXTO = `- Plan A: $9.900 CLP/mes — 100 citas incluidas, e
 // para mostrársela a su equipo). Exige mencionar "demo" junto a una palabra
 // de reinicio, para no confundirlo con un pedido normal de "empezar de
 // nuevo con el pedido" dentro del catálogo.
-function detectaIntencionReiniciar(texto) {
-  const mencionaDemo = /\bdemo\b/i.test(texto);
-  const pideReinicio = /reiniciar|reinicia|comenzar de nuevo|empezar de nuevo|desde el inicio|desde cero|de nuevo|otra vez/i.test(texto);
+function detectaIntencionReiniciar(texto, modoOperacion) {
+  const pideReinicio = /reiniciar|reinicia|reiniciemos|comenzar de nuevo|empezar de nuevo|volver a empezar|volvamos a empezar|desde el inicio|desde cero|de nuevo|nuevamente|otra vez|iniciar (la )?demo/i.test(texto);
   const mencionaEquipo = /mostrar(le|la|selo|sela)?\s+a\s+(mi|su|otro)\s+(equipo|jefe|socio|colega)/i.test(texto);
-  return (mencionaDemo && pideReinicio) || mencionaEquipo;
+
+  if (mencionaEquipo) return true;
+  if (!pideReinicio) return false;
+
+  // En catálogo rotativo existe la ambigüedad real con "quiero reiniciar mi
+  // pedido" — ahí sí exigimos que mencione la demo explícitamente. En
+  // agendamiento no hay otro flujo de "reinicio" con el que confundirse.
+  if (modoOperacion === 'CATALOGO_ROTATIVO') {
+    return /\bdemo\b/i.test(texto);
+  }
+  return true;
 }
 
 function historialAMensajes(historial) {
@@ -203,7 +212,7 @@ async function procesarMensajeDemo({ demoAsignada, telefonoCliente, mensaje, nom
   // NUEVO: reinicio manual de la demo, sin importar en qué paso esté hoy.
   // Solo aplica a texto libre (no tiene sentido si viene de una selección
   // de lista/botón).
-  if (mensaje.type === 'text' && detectaIntencionReiniciar(textoEntrante)) {
+ if (mensaje.type === 'text' && detectaIntencionReiniciar(textoEntrante, modoOperacion)) {
     const nombreParaSaludo = demoAsignada.nombreProspecto || nombreContacto;
     const respuestaTexto =
       `¡Dale! 🔄 Reiniciamos la demo desde cero.\n\n` +
