@@ -155,8 +155,14 @@ app.post('/webhook/whatsapp', async (req, res) => {
           return;
         }
 
-        // Eligió un rubro — crea una empresa PRIVADA nueva para este
-        // teléfono (nunca compartida) y su DemoAsignada.
+// Eligió un rubro — crea una empresa PRIVADA nueva para este
+        // teléfono (nunca compartida) y su DemoAsignada, todo en una sola
+        // transacción. Si dos mensajes casi simultáneos llegan del mismo
+        // número (ej. reintento de Meta), el segundo va a chocar con la
+        // restricción única de `telefono` — en ese caso, en vez de fallar,
+        // recuperamos la demo que ya creó el primero. La transacción
+        // también evita que quede una Empresa/Producto huérfana si el
+        // segundo intento falla a mitad de camino.
         const rubroTemplate = await prisma.rubroTemplate.findUnique({ where: { clave: rubroGenerico.claveRubro } });
         if (!rubroTemplate) {
           console.error(`[DEMO] Falta RubroTemplate con clave "${rubroGenerico.claveRubro}" — revisar seed.`);
@@ -167,28 +173,57 @@ app.post('/webhook/whatsapp', async (req, res) => {
           return;
         }
 
-        const empresaNueva = await prisma.empresa.create({
-          data: { nombre: rubroGenerico.nombreEmpresa, rubroTemplateId: rubroTemplate.id, esDemo: true },
-        });
+        try {
+          const { empresaNueva } = await prisma.$transaction(async (tx) => {
+            const empresaCreada = await tx.empresa.create({
+              data: { nombre: rubroGenerico.nombreEmpresa, rubroTemplateId: rubroTemplate.id, esDemo: true },
+            });
 
-        if (rubroGenerico.productos?.length > 0) {
-          await prisma.producto.createMany({
-            data: rubroGenerico.productos.map((p) => ({
-              empresaId: empresaNueva.id, nombre: p.nombre, precio: p.precio, activo: true,
-            })),
+            if (rubroGenerico.productos?.length > 0) {
+              await tx.producto.createMany({
+                data: rubroGenerico.productos.map((p) => ({
+                  empresaId: empresaCreada.id, nombre: p.nombre, precio: p.precio, activo: true,
+                })),
+              });
+            }
+
+            await tx.demoAsignada.create({
+              data: { telefono: telefonoCliente, empresaDemoId: empresaCreada.id, nombreProspecto: nombreContacto },
+            });
+
+            return { empresaNueva: empresaCreada };
           });
+
+          demoAsignada = await prisma.demoAsignada.findUnique({
+            where: { telefono: telefonoCliente },
+            include: { empresaDemo: { include: { rubroTemplate: true } } },
+          });
+
+          console.log(`[DEMO] Número desconocido ${telefonoCliente} eligió "${rubroGenerico.titulo}" — empresa privada ${empresaNueva.id} creada.`);
+        } catch (error) {
+          if (error.code === 'P2002') {
+            // Condición de carrera: otro mensaje casi simultáneo del mismo
+            // teléfono ya creó la demo primero — la recuperamos y seguimos
+            // normal, sin duplicar nada.
+            demoAsignada = await prisma.demoAsignada.findUnique({
+              where: { telefono: telefonoCliente },
+              include: { empresaDemo: { include: { rubroTemplate: true } } },
+            });
+            console.log(`[DEMO] Condición de carrera detectada para ${telefonoCliente} — se usó la demo creada por el mensaje concurrente.`);
+          } else {
+            throw error;
+          }
         }
 
-        await prisma.demoAsignada.create({
-          data: { telefono: telefonoCliente, empresaDemoId: empresaNueva.id, nombreProspecto: nombreContacto },
-        });
-
-        demoAsignada = await prisma.demoAsignada.findUnique({
-          where: { telefono: telefonoCliente },
-          include: { empresaDemo: { include: { rubroTemplate: true } } },
-        });
-
-        console.log(`[DEMO] Número desconocido ${telefonoCliente} eligió "${rubroGenerico.titulo}" — empresa privada ${empresaNueva.id} creada.`);
+        if (!demoAsignada) {
+          // Extremadamente improbable (la recuperación tras P2002 también
+          // falló), pero mejor un mensaje claro que dejar tronar más abajo.
+          await sendWhatsAppTextMessage({
+            phoneNumberId, to: telefonoCliente, accessToken: accessTokenDemo,
+            text: 'Tuvimos un problema armando esa demo — escríbenos a contacto@multidigital.cl y te ayudamos directo 🙌',
+          });
+          return;
+        }
         // Sigue abajo con el flujo normal de demo (INICIO) — no hay return aquí.
       }
 
