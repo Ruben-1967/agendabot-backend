@@ -11,8 +11,7 @@
 // simulación, carrito o cita simulada) se guarda en el modelo DemoAsignada,
 // NO en Conversacion. El historial registra ambos lados de la conversación,
 // el servicio y el nombre/edad se VALIDAN antes de aceptarlos, y el mismo
-// teléfono puede pedir "reiniciar" la demo en cualquier momento — útil
-// cuando alguien ya la vio y quiere mostrársela de nuevo a su equipo.
+// teléfono puede pedir "reiniciar" la demo en cualquier momento.
 
 const Anthropic = require('@anthropic-ai/sdk');
 const prisma = require('../lib/prisma');
@@ -44,10 +43,6 @@ const GRILLA_PLANES_TEXTO = `- Plan A: $9.900 CLP/mes — 100 citas incluidas, e
   WhatsApp no cobra por los mensajes de servicio dentro de la ventana de conversación del cliente, así que el
   costo real de operar es mínimo.`;
 
-// NUEVO: detecta si el prospecto quiere volver al inicio de la demo (ej.
-// para mostrársela a su equipo). Exige mencionar "demo" junto a una palabra
-// de reinicio, para no confundirlo con un pedido normal de "empezar de
-// nuevo con el pedido" dentro del catálogo.
 function detectaIntencionReiniciar(texto, modoOperacion) {
   const pideReinicio = /reiniciar|reinicia|reiniciemos|comenzar de nuevo|empezar de nuevo|volver a empezar|volvamos a empezar|desde el inicio|desde cero|de nuevo|nuevamente|otra vez|iniciar (la )?demo/i.test(texto);
   const mencionaEquipo = /mostrar(le|la|selo|sela)?\s+a\s+(mi|su|otro)\s+(equipo|jefe|socio|colega)/i.test(texto);
@@ -55,9 +50,6 @@ function detectaIntencionReiniciar(texto, modoOperacion) {
   if (mencionaEquipo) return true;
   if (!pideReinicio) return false;
 
-  // En catálogo rotativo existe la ambigüedad real con "quiero reiniciar mi
-  // pedido" — ahí sí exigimos que mencione la demo explícitamente. En
-  // agendamiento no hay otro flujo de "reinicio" con el que confundirse.
   if (modoOperacion === 'CATALOGO_ROTATIVO') {
     return /\bdemo\b/i.test(texto);
   }
@@ -181,9 +173,6 @@ function palabrasSignificativas(s) {
   return normalizarTexto(s).split(/\s+/).filter((p) => p && !PALABRAS_VACIAS.has(p));
 }
 
-// Compara por palabras significativas (sin tildes, sin "de/la/el"), no por
-// frase exacta — así "examen de vista" matchea con el servicio real
-// "Examen de la vista" aunque falte una palabra de relleno.
 function detectarServicioMencionado(texto, serviciosBase) {
   const textoNorm = normalizarTexto(texto);
   for (const servicio of serviciosBase) {
@@ -225,10 +214,7 @@ async function procesarMensajeDemo({ demoAsignada, telefonoCliente, mensaje, nom
     ? mensaje.interactive?.list_reply?.id
     : null;
 
-  // NUEVO: reinicio manual de la demo, sin importar en qué paso esté hoy.
-  // Solo aplica a texto libre (no tiene sentido si viene de una selección
-  // de lista/botón).
- if (mensaje.type === 'text' && detectaIntencionReiniciar(textoEntrante, modoOperacion)) {
+  if (mensaje.type === 'text' && detectaIntencionReiniciar(textoEntrante, modoOperacion)) {
     const nombreParaSaludo = demoAsignada.nombreProspecto || nombreContacto;
     const respuestaTexto =
       `¡Dale! 🔄 Reiniciamos la demo desde cero.\n\n` +
@@ -464,13 +450,8 @@ async function procesarMensajeDemo({ demoAsignada, telefonoCliente, mensaje, nom
         break;
       }
 
-     case PASOS.PREGUNTAS_ABIERTAS:
+      case PASOS.PREGUNTAS_ABIERTAS:
       default: {
-        // Aunque ya se mostró el pitch de precios, el prospecto puede seguir
-        // probando el negocio simulado — incluyendo pedir hora. Sin este
-        // chequeo, cualquier mensaje acá caía directo a Claude en modo
-        // "cierre de venta genérico", que no sabe nada del calendario
-        // simulado y terminaba inventando un flujo de agendamiento falso.
         if (modoOperacion === 'AGENDAMIENTO') {
           const servicioMencionado = detectarServicioMencionado(textoEntrante, serviciosBase);
 
@@ -497,6 +478,8 @@ async function procesarMensajeDemo({ demoAsignada, telefonoCliente, mensaje, nom
         }
         break;
       }
+    }
+  }
 
   nuevoHistorial = [...nuevoHistorial, { rol: 'asistente', texto: respuestaTexto }].slice(-40);
 
