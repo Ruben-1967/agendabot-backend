@@ -171,10 +171,26 @@ function escaparRegex(texto) {
   return texto.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+const PALABRAS_VACIAS = new Set(['de', 'la', 'el', 'los', 'las', 'un', 'una', 'y', 'del', 'al']);
+
+function normalizarTexto(s) {
+  return s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+}
+
+function palabrasSignificativas(s) {
+  return normalizarTexto(s).split(/\s+/).filter((p) => p && !PALABRAS_VACIAS.has(p));
+}
+
+// Compara por palabras significativas (sin tildes, sin "de/la/el"), no por
+// frase exacta — así "examen de vista" matchea con el servicio real
+// "Examen de la vista" aunque falte una palabra de relleno.
 function detectarServicioMencionado(texto, serviciosBase) {
+  const textoNorm = normalizarTexto(texto);
   for (const servicio of serviciosBase) {
-    const patron = new RegExp(escaparRegex(servicio), 'i');
-    if (patron.test(texto)) return servicio;
+    const palabras = palabrasSignificativas(servicio);
+    if (palabras.length > 0 && palabras.every((p) => textoNorm.includes(p))) {
+      return servicio;
+    }
   }
   return null;
 }
