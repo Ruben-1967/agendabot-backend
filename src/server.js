@@ -39,6 +39,7 @@ const authVendedorRouter = require('./routes/authVendedor');
 const demosRouter = require('./routes/demos');
 const { generarHorasSimuladasParaDia } = require('./lib/agendaDemoSimulada');
 const { RUBROS_MENU_GENERICO } = require('./lib/rubrosMenuGenerico');
+const { renderPanelDemo } = require('./services/panelDemoHtml');
 
 const app = express();
 

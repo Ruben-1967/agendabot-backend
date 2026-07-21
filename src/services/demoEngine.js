@@ -120,7 +120,7 @@ function construirMockupYPitch({ items, empresaDemo, modoOperacion, origenCarrit
     `justo cuando alguien los necesitaba.\n\n` +
     `${textoPrecios(modoOperacion)}\n\n` +
     `Detalle completo: ${LINK_LANDING}\n¿Seguimos? 👉 ${LINK_CONTRATACION}\n\n` +
-    `_(¿tienes dudas de precio o condiciones? Pregúntame, sigo aquí)_`
+    `_(¿tienes dudas de precio o condiciones? Pregúntame, sigo aquí — o si quieres ver cómo se ve el panel de administración, solo dímelo)_`
   );
 }
 
@@ -342,6 +342,13 @@ if (!yaResuelto && horarioElegido && modoOperacion === 'AGENDAMIENTO') {
           break;
         }
 
+
+if (detectaIntencionVerPanel(textoEntrante)) {
+          respuestaTexto = `¡Con gusto! Así se ve el panel donde administras todo 👇\n${LINK_PANEL_DEMO}`;
+          nuevoPaso = PASOS.SIMULACION_LIBRE;
+          break;
+        }
+
         const hablaDePagoDelNegocio = /medios?\s+de\s+pago|formas?\s+de\s+pago|plan(es)?\s+de\s+pago/i.test(textoEntrante);
         const pareceQuererPrecio = !hablaDePagoDelNegocio &&
           /precio|beneficios?|cu[aá]nto (sale|vale|cobra|cuesta|es)|tarifa|\bcosto\b|\bplan(es)?\b|contrat(ar|o)|cotiza|totemsystem/i.test(textoEntrante);
@@ -537,6 +544,12 @@ if (!yaResuelto && horarioElegido && modoOperacion === 'AGENDAMIENTO') {
           nuevoPaso = PASOS.PREGUNTAS_ABIERTAS;
           break;
         }
+if (detectaIntencionVerPanel(textoEntrante)) {
+          respuestaTexto = `¡Con gusto! Así se ve el panel donde administras todo 👇\n${LINK_PANEL_DEMO}`;
+          nuevoPaso = PASOS.PREGUNTAS_ABIERTAS;
+          break;
+        }
+
 
         if (modoOperacion === 'AGENDAMIENTO') {
           const servicioMencionado = detectarServicioMencionado(textoEntrante, serviciosBase);
