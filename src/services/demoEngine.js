@@ -483,16 +483,21 @@ async function procesarMensajeDemo({ demoAsignada, telefonoCliente, mensaje, nom
         break;
       }
 
-      case PASOS.DESAMBIGUANDO_PRECIO: {
+     case PASOS.DESAMBIGUANDO_PRECIO: {
+        // Tocar este botón es una elección explícita e inequívoca — va
+        // directo al pitch, sin volver a preguntar nada. En modo
+        // AGENDAMIENTO no existe "carrito", así que usamos el servicio ya
+        // elegido en la demo (si hay uno) como ejemplo; si no hay ninguno
+        // todavía, el pitch genérico ya contempla ese caso.
         if (idFilaElegida === 'precio_totemsystem') {
-          if (modoOperacion === 'CATALOGO_ROTATIVO' && carritoActual.length > 0) {
-            const items = carritoActual.map((it) => `${it.cantidad}x ${it.nombre}`);
-            respuestaTexto = construirMockupYPitch({ items, empresaDemo, modoOperacion, origenCarritoReal: true });
-            nuevoPaso = PASOS.PREGUNTAS_ABIERTAS;
+          if (modoOperacion === 'CATALOGO_ROTATIVO') {
+            const items = carritoActual.length > 0 ? carritoActual.map((it) => `${it.cantidad}x ${it.nombre}`) : [];
+            respuestaTexto = construirMockupYPitch({ items, empresaDemo, modoOperacion, origenCarritoReal: carritoActual.length > 0 });
           } else {
-            respuestaTexto = `¡Con gusto! Para darte un ejemplo con tu negocio real: dime 2 o 3 productos o servicios que ofreces, separados por coma.`;
-            nuevoPaso = PASOS.ESPERANDO_PRODUCTOS;
+            const items = nuevoCitaDemo?.servicio ? [nuevoCitaDemo.servicio] : [];
+            respuestaTexto = construirMockupYPitch({ items, empresaDemo, modoOperacion, origenCarritoReal: items.length > 0 });
           }
+          nuevoPaso = PASOS.PREGUNTAS_ABIERTAS;
           break;
         }
 
