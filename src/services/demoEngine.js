@@ -10,10 +10,11 @@
 // IMPORTANTE: el estado propio de la demo (en qué paso va, historial de la
 // simulación, carrito o cita simulada) se guarda en el modelo DemoAsignada,
 // NO en Conversacion. El historial registra ambos lados de la conversación,
-// el servicio y el nombre/edad se VALIDAN antes de aceptarlos, el mismo
-// teléfono puede pedir "reiniciar" la demo, los servicios se muestran como
-// lista interactiva, y una intención explícita de CONTRATAR salta directo
-// al precio + link, sin pedir productos de ejemplo.
+// el servicio se VALIDA antes de aceptarlo (solo se pide nombre, ya no
+// edad), el mismo teléfono puede pedir "reiniciar" la demo, los servicios
+// se muestran como lista interactiva, una intención explícita de CONTRATAR
+// salta directo al precio + link, y se puede pedir ver el panel de
+// administración (link a /demo/panel) en cualquier momento.
 
 const Anthropic = require('@anthropic-ai/sdk');
 const prisma = require('../lib/prisma');
@@ -30,6 +31,7 @@ const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 const LINK_LANDING = 'https://multidigital.cl/totemsystem';
 const LINK_CONTRATACION = 'https://multidigital.cl/totemsystem#contratar';
+const LINK_PANEL_DEMO = 'https://agendabot-backend-bbw5.onrender.com/demo/panel';
 
 const PASOS = {
   INICIO: 0,
@@ -62,13 +64,16 @@ function detectaIntencionReiniciar(texto, modoOperacion) {
   return true;
 }
 
-// Señal de compra mucho más fuerte que "cuánto cuesta" — cuando el
-// prospecto ya quiere contratar directamente, hay que ir al precio + link
-// de una vez, sin pedirle ejemplos de productos como si quisiera
-// personalizar la demo primero (eso es fricción innecesaria cuando la
-// intención de compra ya es explícita).
+// Señal de compra mucho más fuerte que "cuánto cuesta" — va directo al
+// precio + link, sin pedir productos de ejemplo.
 function detectaIntencionContratarDirecta(texto) {
   return /c[oó]mo (lo )?contrato|quiero contratar|inscribirme|comenzar (ya|ahora)|firmar( el)? contrato|d[oó]nde contrato/i.test(texto);
+}
+
+// Detecta si el prospecto pregunta explícitamente por el panel de
+// administración — distinto de preguntar por precio o servicios.
+function detectaIntencionVerPanel(texto) {
+  return /panel|administraci[oó]n|administrador|backend|dashboard|c[oó]mo (lo )?administr|c[oó]mo (veo|gestiono|manejo) (mis|las) citas/i.test(texto);
 }
 
 function historialAMensajes(historial) {
@@ -191,9 +196,7 @@ function palabrasSignificativas(s) {
 function detectarServicioMencionado(texto, serviciosBase) {
   const textoNorm = normalizarTexto(texto);
 
-  // Paso 1: coincidencia completa — todas las palabras significativas del
-  // servicio están presentes (más preciso, ej. "examen de vista" con el
-  // servicio real "Examen de la vista").
+  // Paso 1: coincidencia completa.
   for (const servicio of serviciosBase) {
     const palabras = palabrasSignificativas(servicio);
     if (palabras.length > 0 && palabras.every((p) => textoNorm.includes(p))) {
@@ -201,11 +204,8 @@ function detectarServicioMencionado(texto, serviciosBase) {
     }
   }
 
-  // Paso 2: coincidencia parcial — el cliente puede usar solo UNA palabra
-  // clave (ej. "examen" en vez del nombre completo). Buscamos servicios que
-  // contengan esa palabra como palabra completa. Si hay ambigüedad (dos
-  // servicios comparten la palabra), no elegimos por él — mejor volver a
-  // preguntar que agendar el servicio equivocado.
+  // Paso 2: coincidencia parcial (una sola palabra clave), solo si es
+  // inequívoca (un único servicio candidato).
   const candidatos = serviciosBase.filter((servicio) => {
     const palabras = palabrasSignificativas(servicio);
     return palabras.some((p) => new RegExp(`\\b${escaparRegex(p)}\\b`, 'i').test(textoNorm));
@@ -250,9 +250,7 @@ async function procesarMensajeDemo({ demoAsignada, telefonoCliente, mensaje, nom
         ? (mensaje.interactive?.list_reply?.title || mensaje.interactive?.button_reply?.title || '')
         : (mensaje.text?.body || ''));
 
-  // Reinicio manual de la demo, sin importar en qué paso esté hoy. Solo
-  // aplica a texto libre (no tiene sentido si viene de una selección de
-  // lista/botón).
+  // Reinicio manual de la demo, sin importar en qué paso esté hoy.
   if (mensaje.type === 'text' && detectaIntencionReiniciar(textoEntrante, modoOperacion)) {
     const nombreParaSaludo = demoAsignada.nombreProspecto || nombreContacto;
     const respuestaTexto =
@@ -283,8 +281,7 @@ async function procesarMensajeDemo({ demoAsignada, telefonoCliente, mensaje, nom
   let yaResuelto = false;
 
   // Selección de un SERVICIO real de la lista tocable (o "Otro/no lo
-  // encuentro"), en modo AGENDAMIENTO. Se resuelve ANTES del switch de
-  // pasos, igual que la hora — puede llegar desde más de un paso distinto.
+  // encuentro"), en modo AGENDAMIENTO. Se resuelve antes del switch.
   if (mensaje.type === 'interactive' && modoOperacion === 'AGENDAMIENTO') {
     if (idFilaElegida === ID_FILA_SERVICIO_OTRO_DEMO) {
       try {
@@ -307,7 +304,7 @@ async function procesarMensajeDemo({ demoAsignada, telefonoCliente, mensaje, nom
     }
   }
 
-if (!yaResuelto && horarioElegido && modoOperacion === 'AGENDAMIENTO') {
+  if (!yaResuelto && horarioElegido && modoOperacion === 'AGENDAMIENTO') {
     nuevoCitaDemo = { ...(nuevoCitaDemo || {}), fecha: horarioElegido.fecha, hora: horarioElegido.hora };
     const fechaLegible = fechaLegibleDesdeISO(horarioElegido.fecha);
 
@@ -330,9 +327,6 @@ if (!yaResuelto && horarioElegido && modoOperacion === 'AGENDAMIENTO') {
       }
 
       case PASOS.SIMULACION_LIBRE: {
-        // Intención de contratar ya explícita — va directo al precio + link,
-        // sin pedir productos de ejemplo (esa personalización solo tiene
-        // sentido cuando el prospecto está evaluando, no cuando ya decidió).
         if (detectaIntencionContratarDirecta(textoEntrante)) {
           const items = carritoActual.length > 0 ? carritoActual.map((it) => `${it.cantidad}x ${it.nombre}`) : [];
           respuestaTexto = construirMockupYPitch({
@@ -342,8 +336,7 @@ if (!yaResuelto && horarioElegido && modoOperacion === 'AGENDAMIENTO') {
           break;
         }
 
-
-if (detectaIntencionVerPanel(textoEntrante)) {
+        if (detectaIntencionVerPanel(textoEntrante)) {
           respuestaTexto = `¡Con gusto! Así se ve el panel donde administras todo 👇\n${LINK_PANEL_DEMO}`;
           nuevoPaso = PASOS.SIMULACION_LIBRE;
           break;
@@ -449,11 +442,6 @@ if (detectaIntencionVerPanel(textoEntrante)) {
       }
 
       case PASOS.AGENDA_ESPERANDO_DATOS: {
-        const partes = textoEntrante.split(',').map((s) => s.trim()).filter(Boolean);
-        const edadCandidata = partes[partes.length - 1];
-        const pareceValido = partes.length >= 2 && /^\d{1,3}$/.test(edadCandidata);
-
-      case PASOS.AGENDA_ESPERANDO_DATOS: {
         const nombreProspecto = textoEntrante.trim();
 
         if (nombreProspecto.length < 2) {
@@ -544,12 +532,12 @@ if (detectaIntencionVerPanel(textoEntrante)) {
           nuevoPaso = PASOS.PREGUNTAS_ABIERTAS;
           break;
         }
-if (detectaIntencionVerPanel(textoEntrante)) {
+
+        if (detectaIntencionVerPanel(textoEntrante)) {
           respuestaTexto = `¡Con gusto! Así se ve el panel donde administras todo 👇\n${LINK_PANEL_DEMO}`;
           nuevoPaso = PASOS.PREGUNTAS_ABIERTAS;
           break;
         }
-
 
         if (modoOperacion === 'AGENDAMIENTO') {
           const servicioMencionado = detectarServicioMencionado(textoEntrante, serviciosBase);
