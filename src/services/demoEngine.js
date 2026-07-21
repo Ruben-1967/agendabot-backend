@@ -11,8 +11,9 @@
 // simulación, carrito o cita simulada) se guarda en el modelo DemoAsignada,
 // NO en Conversacion. El historial registra ambos lados de la conversación,
 // el servicio y el nombre/edad se VALIDAN antes de aceptarlos, el mismo
-// teléfono puede pedir "reiniciar" la demo, y los servicios se muestran como
-// lista interactiva (botones) — igual que el chatbot real.
+// teléfono puede pedir "reiniciar" la demo, los servicios se muestran como
+// lista interactiva, y una intención explícita de CONTRATAR salta directo
+// al precio + link, sin pedir productos de ejemplo.
 
 const Anthropic = require('@anthropic-ai/sdk');
 const prisma = require('../lib/prisma');
@@ -59,6 +60,15 @@ function detectaIntencionReiniciar(texto, modoOperacion) {
     return /\bdemo\b/i.test(texto);
   }
   return true;
+}
+
+// Señal de compra mucho más fuerte que "cuánto cuesta" — cuando el
+// prospecto ya quiere contratar directamente, hay que ir al precio + link
+// de una vez, sin pedirle ejemplos de productos como si quisiera
+// personalizar la demo primero (eso es fricción innecesaria cuando la
+// intención de compra ya es explícita).
+function detectaIntencionContratarDirecta(texto) {
+  return /c[oó]mo (lo )?contrato|quiero contratar|inscribirme|comenzar (ya|ahora)|firmar( el)? contrato|d[oó]nde contrato/i.test(texto);
 }
 
 function historialAMensajes(historial) {
@@ -193,17 +203,8 @@ function detectaIntencionAgendarGenerico(texto) {
   return /agendar|reservar|\bhora\b|\bcita\b|\bturno\b/i.test(texto);
 }
 
-// Señal de compra mucho más fuerte que "cuánto cuesta" — cuando el
-// prospecto ya quiere contratar directamente, hay que ir al precio + link
-// de una vez, sin pedirle ejemplos de productos como si quisiera
-// personalizar la demo primero (eso es fricción innecesaria cuando la
-// intención de compra ya es explícita).
-function detectaIntencionContratarDirecta(texto) {
-  return /c[oó]mo (lo )?contrato|quiero contratar|inscribirme|comenzar (ya|ahora)|firmar( el)? contrato|d[oó]nde contrato/i.test(texto);
-}
-
-// NUEVO: arma el interactivo de servicios como lista tocable, con "Otro/no
-// lo encuentro" al final — mismo patrón que el chatbot real.
+// Arma el interactivo de servicios como lista tocable, con "Otro/no lo
+// encuentro" al final — mismo patrón que el chatbot real.
 function interactivoListaServiciosDemo(serviciosBase) {
   return { tipo: 'lista_servicios_demo', servicios: serviciosBase };
 }
@@ -234,9 +235,9 @@ async function procesarMensajeDemo({ demoAsignada, telefonoCliente, mensaje, nom
         ? (mensaje.interactive?.list_reply?.title || mensaje.interactive?.button_reply?.title || '')
         : (mensaje.text?.body || ''));
 
-  // NUEVO: reinicio manual de la demo, sin importar en qué paso esté hoy.
-  // Solo aplica a texto libre (no tiene sentido si viene de una selección
-  // de lista/botón).
+  // Reinicio manual de la demo, sin importar en qué paso esté hoy. Solo
+  // aplica a texto libre (no tiene sentido si viene de una selección de
+  // lista/botón).
   if (mensaje.type === 'text' && detectaIntencionReiniciar(textoEntrante, modoOperacion)) {
     const nombreParaSaludo = demoAsignada.nombreProspecto || nombreContacto;
     const respuestaTexto =
@@ -266,13 +267,9 @@ async function procesarMensajeDemo({ demoAsignada, telefonoCliente, mensaje, nom
   let nuevoCitaDemo = demoAsignada.citaDemoJson || null;
   let yaResuelto = false;
 
-  // ------------------------------------------------------------
-  // NUEVO: selección de un SERVICIO real de la lista tocable (o "Otro/no lo
+  // Selección de un SERVICIO real de la lista tocable (o "Otro/no lo
   // encuentro"), en modo AGENDAMIENTO. Se resuelve ANTES del switch de
-  // pasos, igual que ya se hace con la hora — porque puede llegar desde más
-  // de un paso distinto (SIMULACION_LIBRE, PREGUNTAS_ABIERTAS,
-  // AGENDA_ESPERANDO_SERVICIO).
-  // ------------------------------------------------------------
+  // pasos, igual que la hora — puede llegar desde más de un paso distinto.
   if (mensaje.type === 'interactive' && modoOperacion === 'AGENDAMIENTO') {
     if (idFilaElegida === ID_FILA_SERVICIO_OTRO_DEMO) {
       try {
@@ -332,19 +329,11 @@ async function procesarMensajeDemo({ demoAsignada, telefonoCliente, mensaje, nom
           break;
         }
 
-case PASOS.SIMULACION_LIBRE: {
         const hablaDePagoDelNegocio = /medios?\s+de\s+pago|formas?\s+de\s+pago|plan(es)?\s+de\s+pago/i.test(textoEntrante);
         const pareceQuererPrecio = !hablaDePagoDelNegocio &&
           /precio|beneficios?|cu[aá]nto (sale|vale|cobra|cuesta|es)|tarifa|\bcosto\b|\bplan(es)?\b|contrat(ar|o)|cotiza|totemsystem/i.test(textoEntrante);
 
         if (pareceQuererPrecio) {
-
-        const hablaDePagoDelNegocio = /medios?\s+de\s+pago|formas?\s+de\s+pago|plan(es)?\s+de\s+pago/i.test(textoEntrante);      
-        const pareceQuererPrecio = !hablaDePagoDelNegocio &&
-          /precio|beneficios?|cu[aá]nto (sale|vale|cobra|cuesta|es)|tarifa|\bcosto\b|\bplan(es)?\b|contrat(ar|o)|cotiza|totemsystem/i.test(textoEntrante);
-
-        if (pareceQuererPrecio) {
-
           const esInequivoco = /totemsystem/i.test(textoEntrante);
 
           if (esInequivoco) {
@@ -528,7 +517,7 @@ case PASOS.SIMULACION_LIBRE: {
         break;
       }
 
- case PASOS.PREGUNTAS_ABIERTAS:
+      case PASOS.PREGUNTAS_ABIERTAS:
       default: {
         if (detectaIntencionContratarDirecta(textoEntrante)) {
           const items = carritoActual.length > 0 ? carritoActual.map((it) => `${it.cantidad}x ${it.nombre}`) : [];
@@ -540,7 +529,6 @@ case PASOS.SIMULACION_LIBRE: {
         }
 
         if (modoOperacion === 'AGENDAMIENTO') {
-
           const servicioMencionado = detectarServicioMencionado(textoEntrante, serviciosBase);
 
           if (servicioMencionado) {
