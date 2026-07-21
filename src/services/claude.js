@@ -10,12 +10,15 @@ const anthropic = new Anthropic({
 const MODEL = 'claude-haiku-4-5-20251001';
 
 /**
- * Arma la lista de herramientas para una empresa específica. Hoy la única
- * variación es que agendar_cita exige el campo "rut" cuando
- * empresa.requiereRut está activo (ej. Ahorróptica) — el resto de las
- * empresas no ven ese campo para nada.
+ * Arma la lista de herramientas para una empresa específica.
+ * - agendar_cita exige el campo "rut" cuando empresa.requiereRut está activo.
+ * - mostrar_lista_servicios solo se incluye si la empresa tiene Servicio
+ *   reales cargados (con id de base de datos) — si solo tiene la lista
+ *   genérica sugerida por el rubro (sin ids reales), no se puede armar una
+ *   lista interactiva de WhatsApp con eso, así que Claude sigue preguntando
+ *   el servicio en texto en ese caso.
  */
-function construirTools(empresa) {
+function construirTools(empresa, incluirMostrarServicios) {
   const agendarCitaProperties = {
     fecha: { type: 'string', description: 'Fecha de la cita, formato YYYY-MM-DD.' },
     hora: { type: 'string', description: "Hora de inicio, formato HH:MM (ej. '10:30')." },
@@ -57,6 +60,16 @@ function construirTools(empresa) {
         required: [],
       },
     },
+    ...(incluirMostrarServicios ? [{
+      name: 'mostrar_lista_servicios',
+      description:
+        'Muestra al cliente la lista de servicios reales disponibles, como opciones tocables para elegir — usar en vez de preguntar el servicio en texto, cuando el cliente quiere agendar pero todavía no sabes cuál servicio específico necesita (no lo mencionó, o lo mencionó de forma ambigua/genérica y no calzó con ninguno).',
+      input_schema: {
+        type: 'object',
+        properties: {},
+        required: [],
+      },
+    }] : []),
     {
       name: 'agendar_cita',
       description: empresa.requiereRut
@@ -75,7 +88,7 @@ function construirTools(empresa) {
  * Ejecuta la herramienta pedida por Claude y devuelve el resultado como texto/JSON.
  */
 async function ejecutarHerramienta(nombre, input, contexto) {
-  const { empresa, cliente, recurso } = contexto;
+  const { empresa, cliente, recurso, serviciosReales } = contexto;
 
   if (nombre === 'consultar_disponibilidad') {
     if (!recurso) {
@@ -91,6 +104,10 @@ async function ejecutarHerramienta(nombre, input, contexto) {
     }
     const dias = await obtenerProximosDiasConDisponibilidad(recurso.id, 4);
     return { dias: dias.map((d) => ({ fecha: d.fecha, primeraHora: d.horas[0] })) };
+  }
+
+  if (nombre === 'mostrar_lista_servicios') {
+    return { servicios: (serviciosReales || []).map((s) => ({ id: s.id, nombre: s.nombre })) };
   }
 
   if (nombre === 'agendar_cita') {
@@ -161,6 +178,7 @@ async function generarRespuestaChatbot({ empresa, cliente, historial, mensajeEnt
   const serviciosBase = serviciosReales.length > 0
     ? serviciosReales.map((s) => s.nombre)
     : (empresa.rubroTemplate?.serviciosBase || []);
+  const tieneServiciosReales = serviciosReales.length > 0;
 
   // Por ahora asumimos un solo RecursoAgendable por empresa (el primero activo).
   // Cuando una empresa tenga varios profesionales, esto deberá preguntarle al
@@ -169,7 +187,7 @@ async function generarRespuestaChatbot({ empresa, cliente, historial, mensajeEnt
 
   const fechaHoyChile = new Date().toLocaleDateString('es-CL', { timeZone: 'America/Santiago' });
 
-  const tools = construirTools(empresa);
+  const tools = construirTools(empresa, tieneServiciosReales);
 
   const bloquesPersonalizacion = [];
   if (empresa.direccion) {
@@ -184,6 +202,10 @@ async function generarRespuestaChatbot({ empresa, cliente, historial, mensajeEnt
     );
   }
 
+  const instruccionServicioAgendar = tieneServiciosReales
+    ? `- Si el cliente quiere agendar y todavía NO sabes cuál servicio específico necesita (no lo mencionó, o lo mencionó de forma ambigua/genérica y no calzó con ninguno de la lista), tu SIGUIENTE ACCIÓN es obligatoriamente llamar a mostrar_lista_servicios, inmediatamente — nunca preguntes el servicio escribiéndolo en texto, nunca lo ofrezcas como pregunta abierta.`
+    : `- Si el cliente quiere agendar, necesitas saber el SERVICIO antes de mostrar disponibilidad. Si no lo mencionó, pregúntale ÚNICAMENTE el servicio, en un mensaje breve — NUNCA menciones "día", "fecha" ni "cuándo" en ese mensaje.`;
+
   const systemPrompt = `Eres el asistente de agendamiento de "${nombreEmpresa}", vía WhatsApp.
 Hoy es ${fechaHoyChile} (zona horaria de Chile).
 
@@ -193,12 +215,12 @@ ${bloquesPersonalizacion.length ? '\n' + bloquesPersonalizacion.join('\n\n') + '
 Instrucciones:
 - Sé breve, cordial y directo — estás en un chat de WhatsApp, no escribas párrafos largos.
 - Cuando te pregunten qué servicios ofrecen, respondes ÚNICAMENTE con los nombres de la lista "SERVICIOS AGENDABLES" de arriba, tal cual están escritos — nunca los desgloses en sub-procedimientos ni los reemplaces por detalles clínicos.
-- Si el cliente usa un término genérico o ambiguo (ej. "atención oftalmológica", "revisión de la vista", "chequeo") que no calza exactamente con ningún nombre de la lista, ayúdalo a elegir agregando junto a cada nombre una explicación MUY breve y en lenguaje simple de qué es ese procedimiento en general (ej. "Toma de agudeza visual: revisa qué tan bien ves de lejos y de cerca") — basándote en tu conocimiento general del área, no en información específica de este negocio. Nunca solo repitas los nombres sin ningún contexto cuando el término del cliente fue genérico.
+- Si el cliente usa un término genérico o ambiguo (ej. "atención oftalmológica", "revisión de la vista", "chequeo") preguntando informativamente qué servicios ofrecen (sin intención de agendar todavía), ayúdalo a entender agregando junto a cada nombre una explicación MUY breve y en lenguaje simple de qué es ese procedimiento en general — basándote en tu conocimiento general del área, no en información específica de este negocio.
 - Esa explicación es solo DEFINICIÓN de cada procedimiento — nunca le digas al cliente cuál necesita según sus síntomas ni hagas ninguna sugerencia clínica. Que él elija con la información, tú no decides por él.
-- El campo "servicio" en agendar_cita/consultar_disponibilidad sigue debiendo ser exactamente uno de los nombres de la lista SERVICIOS AGENDABLES, tal cual — la explicación es solo para ayudar a elegir, nunca cambia el nombre real que se agenda.
+- El campo "servicio" en agendar_cita/consultar_disponibilidad sigue debiendo ser exactamente uno de los nombres de la lista SERVICIOS AGENDABLES, tal cual.
 - La "información adicional" (si existe) es solo para responder preguntas puntuales que el cliente haga (precios, qué incluye un servicio, etc.) — nunca la uses para construir o ampliar la lista de servicios ofrecidos.
-- Si el cliente quiere agendar, necesitas saber el SERVICIO antes de mostrar disponibilidad. Si no lo mencionó, pregúntale ÚNICAMENTE el servicio, en un mensaje breve — NUNCA menciones "día", "fecha" ni "cuándo" en ese mensaje.
-- En cuanto sepas el servicio (aunque sea en el mismo mensaje en que el cliente te lo dice), tu SIGUIENTE ACCIÓN es obligatoriamente llamar a una herramienta — nunca preguntar en texto si quiere ver los días, nunca ofrecerlo como opción, nunca preguntar "¿qué día te gustaría?". Actúa directo:
+${instruccionServicioAgendar}
+- En cuanto sepas el servicio (aunque sea en el mismo mensaje en que el cliente te lo dice, o porque lo eligió de la lista tocable), tu SIGUIENTE ACCIÓN es obligatoriamente llamar a una herramienta — nunca preguntar en texto si quiere ver los días, nunca ofrecerlo como opción, nunca preguntar "¿qué día te gustaría?". Actúa directo:
   - Si el cliente ya mencionó un día específico en algún momento de la conversación (ej. "el jueves", "mañana", una fecha), usa consultar_disponibilidad con esa fecha, inmediatamente.
   - Si el cliente NO ha mencionado ningún día todavía, usa consultar_proximos_dias_disponibles, inmediatamente, sin preguntar antes si quiere verlos.
 - Tienes PROHIBIDO escribir frases como "¿qué día te gustaría?", "¿prefieres que te muestre los días disponibles?" o similares — esa decisión la tomas tú llamando a la herramienta correspondiente, nunca preguntándola en texto.
@@ -217,7 +239,7 @@ ${empresa.requiereRut ? '- Este negocio EXIGE RUT para agendar. Antes de llamar 
     { role: 'user', content: mensajeEntrante },
   ];
 
-  const contexto = { empresa, cliente, recurso };
+  const contexto = { empresa, cliente, recurso, serviciosReales };
 
   // Bucle de tool use: Claude puede pedir usar una herramienta varias veces
   // seguidas (ej. consultar disponibilidad y luego agendar) antes de dar
@@ -243,6 +265,7 @@ ${empresa.requiereRut ? '- Este negocio EXIGE RUT para agendar. Antes de llamar 
     const toolResults = [];
     let horariosParaMostrar = null;
     let diasParaMostrar = null;
+    let serviciosParaMostrar = null;
 
     for (const block of response.content) {
       if (block.type === 'tool_use') {
@@ -267,7 +290,19 @@ ${empresa.requiereRut ? '- Este negocio EXIGE RUT para agendar. Antes de llamar 
         if (block.name === 'consultar_proximos_dias_disponibles' && resultado.dias?.length > 0) {
           diasParaMostrar = resultado.dias;
         }
+
+        // Mismo mecanismo, pero para la lista de SERVICIOS reales.
+        if (block.name === 'mostrar_lista_servicios' && resultado.servicios?.length > 0) {
+          serviciosParaMostrar = resultado.servicios;
+        }
       }
+    }
+
+    if (serviciosParaMostrar) {
+      return {
+        texto: '¿Para cuál de estos servicios necesitas la hora? 👇',
+        interactivo: { tipo: 'lista_servicios', servicios: serviciosParaMostrar },
+      };
     }
 
     if (horariosParaMostrar) {

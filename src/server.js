@@ -14,6 +14,9 @@ const {
   codificarFilaCantidadDemo,
   codificarFilaRubroGenerico,
   decodificarFilaRubroGenerico,
+  codificarFilaServicio,
+  decodificarFilaServicio,
+  ID_FILA_SERVICIO_OTRO,
 } = require('./services/whatsapp');
 const { obtenerHorariosDisponibles } = require('./services/disponibilidad');
 const { fechaLegibleDesdeISO } = require('./lib/formatoFechas');
@@ -197,7 +200,7 @@ app.post('/webhook/whatsapp', verificarFirmaWebhookWhatsApp, async (req, res) =>
           return;
         }
 
-// Eligió un rubro — crea una empresa PRIVADA nueva para este
+        // Eligió un rubro — crea una empresa PRIVADA nueva para este
         // teléfono (nunca compartida) y su DemoAsignada, todo en una sola
         // transacción. Si dos mensajes casi simultáneos llegan del mismo
         // número (ej. reintento de Meta), el segundo va a chocar con la
@@ -425,7 +428,8 @@ app.post('/webhook/whatsapp', verificarFirmaWebhookWhatsApp, async (req, res) =>
     }
 
     // A partir de aquí, flujo normal de agendamiento (texto, botones, y las
-    // listas interactivas que el propio bot ofrece: días y horarios).
+    // listas interactivas que el propio bot ofrece: días, horarios, y
+    // ahora también servicios).
 
     let textoEntrante;
     if (mensaje.type === 'interactive') {
@@ -468,15 +472,31 @@ app.post('/webhook/whatsapp', verificarFirmaWebhookWhatsApp, async (req, res) =>
         return;
       }
 
-      // Único otro tipo interactivo que este flujo entiende: el cliente
-      // tocó un horario de la lista que le mostramos (ver claude.js).
-      // Cualquier otro id (ej. de una lista de otro flujo) se ignora
-      // silenciosamente.
-      const horarioElegido = decodificarFilaHorario(listReplyId);
-      if (!horarioElegido) {
-        return;
+      // NUEVO: el cliente tocó un SERVICIO de la lista, o "Otro / no lo
+      // encuentro". En ambos casos convertimos a texto y seguimos el flujo
+      // normal de Claude — para "otro", el mensaje queda como una consulta
+      // libre, sin forzarlo de vuelta a la lista.
+      if (listReplyId === ID_FILA_SERVICIO_OTRO) {
+        textoEntrante = 'No encuentro el servicio que necesito en la lista, tengo otra consulta.';
+      } else {
+        const servicioIdElegido = decodificarFilaServicio(listReplyId);
+        if (servicioIdElegido) {
+          const servicioElegido = await prisma.servicio.findUnique({ where: { id: servicioIdElegido } });
+          textoEntrante = servicioElegido
+            ? `Quiero agendar el servicio "${servicioElegido.nombre}".`
+            : 'Ese servicio ya no está disponible, ¿me puedes decir cuál necesitas?';
+        } else {
+          // Único otro tipo interactivo que este flujo entiende: el cliente
+          // tocó un horario de la lista que le mostramos (ver claude.js).
+          // Cualquier otro id (ej. de una lista de otro flujo) se ignora
+          // silenciosamente.
+          const horarioElegido = decodificarFilaHorario(listReplyId);
+          if (!horarioElegido) {
+            return;
+          }
+          textoEntrante = `Confirmo que quiero agendar para el ${horarioElegido.fecha} a las ${horarioElegido.hora}.`;
+        }
       }
-      textoEntrante = `Confirmo que quiero agendar para el ${horarioElegido.fecha} a las ${horarioElegido.hora}.`;
     } else {
       textoEntrante = mensaje.type === 'button'
         ? (mensaje.button?.text || '')
@@ -574,6 +594,19 @@ app.post('/webhook/whatsapp', verificarFirmaWebhookWhatsApp, async (req, res) =>
           id: codificarFilaHorario(interactivo.fecha, hora),
           titulo: hora,
         })),
+      });
+    } else if (interactivo?.tipo === 'lista_servicios') {
+      await sendWhatsAppInteractiveList({
+        phoneNumberId,
+        to: telefonoCliente,
+        accessToken,
+        textoCuerpo: respuestaTexto,
+        textoBoton: 'Ver servicios',
+        textoHeader: empresa.nombre?.slice(0, 60),
+        filas: [
+          ...interactivo.servicios.map((s) => ({ id: codificarFilaServicio(s.id), titulo: s.nombre })),
+          { id: ID_FILA_SERVICIO_OTRO, titulo: 'Otro / no lo encuentro', descripcion: 'Cuéntame qué necesitas' },
+        ],
       });
     } else {
       await sendWhatsAppTextMessage({

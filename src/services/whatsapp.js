@@ -236,6 +236,29 @@ function decodificarFilaProductoDemo(id) {
 }
 
 /**
+ * Codifica el id de un Servicio real en el id de fila para la lista
+ * interactiva de selección de servicio (agendamiento real). Formato:
+ * "servicio|<servicioId>"
+ */
+function codificarFilaServicio(servicioId) {
+  return `servicio|${servicioId}`;
+}
+
+function decodificarFilaServicio(id) {
+  if (typeof id !== 'string') return null;
+  const partes = id.split('|');
+  if (partes.length !== 2 || partes[0] !== 'servicio') return null;
+  return partes[1];
+}
+
+// Id fijo para la fila "Otro / no lo encuentro" en la lista de servicios —
+// no necesita decodificarse, se compara directo contra este valor.
+const ID_FILA_SERVICIO_OTRO = 'servicio_otro';
+
+
+
+
+/**
  * Codifica producto+cantidad en el id de fila para la lista interactiva de
  * cantidad (demo de catálogo). Formato: "demoscantidad|productoId|cantidad"
  * — cantidad puede ser un número (1-6) o el string "otra" (pide escribirla).
