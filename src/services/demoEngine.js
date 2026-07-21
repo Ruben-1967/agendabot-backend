@@ -67,7 +67,7 @@ function detectaIntencionReiniciar(texto, modoOperacion) {
 // Señal de compra mucho más fuerte que "cuánto cuesta" — va directo al
 // precio + link, sin pedir productos de ejemplo.
 function detectaIntencionContratarDirecta(texto) {
-  return /c[oó]mo (lo )?contrato|quiero contratar|inscribirme|comenzar (ya|ahora)|firmar( el)? contrato|d[oó]nde contrato/i.test(texto);
+  return /c[oó]mo (lo )?contrato|quiero contratar|me (gustar[ií]a|interesa) contratar|inscribirme|comenzar (ya|ahora)|firmar( el)? contrato|d[oó]nde contrato|contratar.*c[oó]mo (lo )?(hago|activo|empiezo)/i.test(texto);
 }
 
 // Detecta si el prospecto pregunta explícitamente por el panel de
