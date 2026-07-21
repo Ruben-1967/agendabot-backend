@@ -652,6 +652,14 @@ app.get('/contrato/:empresaId', async (req, res) => {
   res.send(renderFormulario(empresa));
 });
 
+// ------------------------------------------------------------
+// DEMO DEL PANEL DE ADMINISTRACIÓN — página estática enviada como link
+// desde la demo comercial (ver src/services/demoEngine.js).
+// ------------------------------------------------------------
+app.get('/demo/panel', (req, res) => {
+  res.send(renderPanelDemo());
+});
+
 app.post('/contrato/:empresaId/aceptar', async (req, res) => {
   try {
     const empresa = await prisma.empresa.findUnique({ where: { id: req.params.empresaId } });
