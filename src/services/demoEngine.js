@@ -190,17 +190,32 @@ function palabrasSignificativas(s) {
 
 function detectarServicioMencionado(texto, serviciosBase) {
   const textoNorm = normalizarTexto(texto);
+
+  // Paso 1: coincidencia completa — todas las palabras significativas del
+  // servicio están presentes (más preciso, ej. "examen de vista" con el
+  // servicio real "Examen de la vista").
   for (const servicio of serviciosBase) {
     const palabras = palabrasSignificativas(servicio);
     if (palabras.length > 0 && palabras.every((p) => textoNorm.includes(p))) {
       return servicio;
     }
   }
-  return null;
+
+  // Paso 2: coincidencia parcial — el cliente puede usar solo UNA palabra
+  // clave (ej. "examen" en vez del nombre completo). Buscamos servicios que
+  // contengan esa palabra como palabra completa. Si hay ambigüedad (dos
+  // servicios comparten la palabra), no elegimos por él — mejor volver a
+  // preguntar que agendar el servicio equivocado.
+  const candidatos = serviciosBase.filter((servicio) => {
+    const palabras = palabrasSignificativas(servicio);
+    return palabras.some((p) => new RegExp(`\\b${escaparRegex(p)}\\b`, 'i').test(textoNorm));
+  });
+
+  return candidatos.length === 1 ? candidatos[0] : null;
 }
 
 function detectaIntencionAgendarGenerico(texto) {
-  return /agendar|reservar|\bhora\b|\bcita\b|\bturno\b/i.test(texto);
+  return /agendar|reservar|\bhoras?\b|\bhorarios?\b|\bcita\b|\bturno\b/i.test(texto);
 }
 
 // Arma el interactivo de servicios como lista tocable, con "Otro/no lo
