@@ -76,6 +76,19 @@ function detectaIntencionVerPanel(texto) {
   return /panel|administraci[oó]n|administrador|backend|dashboard|c[oó]mo (lo )?administr|c[oó]mo (veo|gestiono|manejo) (mis|las) citas/i.test(texto);
 }
 
+// La frase sobre el uso de marca cambia según quién asignó esta demo:
+// - Un vendedor (demoAsignada.vendedorId presente) la personalizó para un
+//   prospecto puntual con seguimiento humano de por medio — puede usar el
+//   nombre real si el vendedor así lo decidió.
+// - Sin vendedor (null) — viene del menú genérico o de una carga masiva sin
+//   contacto previo (ej. base nacional de ópticas) — nunca se usa el nombre
+//   real, para no sentirse invasivo con alguien que nunca habló con nosotros.
+function fraseUsoMarca(demoAsignada) {
+  return demoAsignada.vendedorId
+    ? 'solo para esta prueba, no uso tu marca para nada más'
+    : 'solo para esta prueba, pero aquí iría tu marca y la identificación de tu sucursal, en caso de que tengas';
+}
+
 function historialAMensajes(historial) {
   const recortado = historial.slice(-40);
   const mensajes = [];
@@ -251,12 +264,13 @@ async function procesarMensajeDemo({ demoAsignada, telefonoCliente, mensaje, nom
         : (mensaje.text?.body || ''));
 
   // Reinicio manual de la demo, sin importar en qué paso esté hoy.
+  
   if (mensaje.type === 'text' && detectaIntencionReiniciar(textoEntrante, modoOperacion)) {
     const nombreParaSaludo = demoAsignada.nombreProspecto || nombreContacto;
     const respuestaTexto =
       `¡Dale! 🔄 Reiniciamos la demo desde cero.\n\n` +
       `¡Hola${nombreParaSaludo ? ` ${nombreParaSaludo}` : ''}! 👋 Soy el asistente de *Totemsystem*.\n\n` +
-      `Te voy a responder como si fuera *"${empresaDemo.nombre}"* — solo para esta prueba, no uso tu marca para nada más.\n\n` +
+      `Te voy a responder como si fuera *"${empresaDemo.nombre}"* — ${fraseUsoMarca(demoAsignada)}.\n\n` +
       `Pruébalo tú mismo — escríbeme algo, como si fueras un cliente tuyo 👇`;
 
     await prisma.demoAsignada.update({
@@ -315,11 +329,12 @@ async function procesarMensajeDemo({ demoAsignada, telefonoCliente, mensaje, nom
 
   if (!yaResuelto) {
     switch (paso) {
-      case PASOS.INICIO: {
+ 
+ case PASOS.INICIO: {
         const nombreParaSaludo = demoAsignada.nombreProspecto || nombreContacto;
         respuestaTexto =
           `¡Hola${nombreParaSaludo ? ` ${nombreParaSaludo}` : ''}! 👋 Soy el asistente de *Totemsystem*.\n\n` +
-          `Te voy a responder como si fuera *"${empresaDemo.nombre}"* — solo para esta prueba, no uso tu marca para nada más.\n\n` +
+          `Te voy a responder como si fuera *"${empresaDemo.nombre}"* — ${fraseUsoMarca(demoAsignada)}.\n\n` +
           `Pruébalo tú mismo — ` +
           `escríbeme algo, como si fueras un cliente tuyo 👇`;
         nuevoPaso = PASOS.SIMULACION_LIBRE;
