@@ -332,7 +332,14 @@ async function procesarMensajeDemo({ demoAsignada, telefonoCliente, mensaje, nom
           break;
         }
 
+case PASOS.SIMULACION_LIBRE: {
         const hablaDePagoDelNegocio = /medios?\s+de\s+pago|formas?\s+de\s+pago|plan(es)?\s+de\s+pago/i.test(textoEntrante);
+        const pareceQuererPrecio = !hablaDePagoDelNegocio &&
+          /precio|beneficios?|cu[aá]nto (sale|vale|cobra|cuesta|es)|tarifa|\bcosto\b|\bplan(es)?\b|contrat(ar|o)|cotiza|totemsystem/i.test(textoEntrante);
+
+        if (pareceQuererPrecio) {
+
+        const hablaDePagoDelNegocio = /medios?\s+de\s+pago|formas?\s+de\s+pago|plan(es)?\s+de\s+pago/i.test(textoEntrante);      
         const pareceQuererPrecio = !hablaDePagoDelNegocio &&
           /precio|beneficios?|cu[aá]nto (sale|vale|cobra|cuesta|es)|tarifa|\bcosto\b|\bplan(es)?\b|contrat(ar|o)|cotiza|totemsystem/i.test(textoEntrante);
 
