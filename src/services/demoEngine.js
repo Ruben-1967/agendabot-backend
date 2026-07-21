@@ -307,13 +307,11 @@ async function procesarMensajeDemo({ demoAsignada, telefonoCliente, mensaje, nom
     }
   }
 
-  if (!yaResuelto && horarioElegido && modoOperacion === 'AGENDAMIENTO') {
+if (!yaResuelto && horarioElegido && modoOperacion === 'AGENDAMIENTO') {
     nuevoCitaDemo = { ...(nuevoCitaDemo || {}), fecha: horarioElegido.fecha, hora: horarioElegido.hora };
     const fechaLegible = fechaLegibleDesdeISO(horarioElegido.fecha);
 
-    respuestaTexto =
-      `Perfecto, ${fechaLegible} a las ${horarioElegido.hora}. Para dejarlo agendado, dime tu *nombre completo* ` +
-      `y tu *edad*, separados por coma (ej. "Juan Pérez, 34").`;
+    respuestaTexto = `Perfecto, ${fechaLegible} a las ${horarioElegido.hora}. Para dejarlo agendado, dime tu *nombre completo*.`;
     nuevoPaso = PASOS.AGENDA_ESPERANDO_DATOS;
     yaResuelto = true;
   }
@@ -448,18 +446,16 @@ async function procesarMensajeDemo({ demoAsignada, telefonoCliente, mensaje, nom
         const edadCandidata = partes[partes.length - 1];
         const pareceValido = partes.length >= 2 && /^\d{1,3}$/.test(edadCandidata);
 
-        if (!pareceValido) {
-          respuestaTexto =
-            `Para dejar la cita agendada necesito tu *nombre completo* y tu *edad*, separados por coma ` +
-            `(ej. "Juan Pérez, 34"). ¿Me los compartes así?`;
+      case PASOS.AGENDA_ESPERANDO_DATOS: {
+        const nombreProspecto = textoEntrante.trim();
+
+        if (nombreProspecto.length < 2) {
+          respuestaTexto = 'No alcancé a leer bien tu nombre — ¿me lo repites?';
           nuevoPaso = PASOS.AGENDA_ESPERANDO_DATOS;
           break;
         }
 
-        const edadProspecto = edadCandidata;
-        const nombreProspecto = partes.slice(0, -1).join(', ');
-
-        nuevoCitaDemo = { ...(nuevoCitaDemo || {}), nombre: nombreProspecto, edad: edadProspecto };
+        nuevoCitaDemo = { ...(nuevoCitaDemo || {}), nombre: nombreProspecto };
         const fechaLegible = nuevoCitaDemo.fecha ? fechaLegibleDesdeISO(nuevoCitaDemo.fecha) : 'el día elegido';
 
         respuestaTexto =
@@ -467,8 +463,7 @@ async function procesarMensajeDemo({ demoAsignada, telefonoCliente, mensaje, nom
           `${nuevoCitaDemo.servicio ? `• Servicio: ${nuevoCitaDemo.servicio}\n` : ''}` +
           `• Día: ${fechaLegible}\n` +
           `• Hora: ${nuevoCitaDemo.hora || '-'}\n` +
-          `• Nombre: ${nombreProspecto}\n` +
-          `• Edad: ${edadProspecto}\n\n` +
+          `• Nombre: ${nombreProspecto}\n\n` +
           `✅ Listo, quedaste agendado.\n\n` +
           `Y algo que a los negocios les encanta: 24 horas antes te llegaría un recordatorio automático por este ` +
           `mismo WhatsApp. Si no puedes asistir, solo respondes "No" y tu cupo se libera al instante — y se le ` +
