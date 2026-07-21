@@ -2,6 +2,7 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const prisma = require('./lib/prisma');
+const crypto = require('crypto');
 const {
   sendWhatsAppTextMessage,
   sendWhatsAppInteractiveList,
@@ -44,8 +45,49 @@ const origenesPermitidos = process.env.PANEL_FRONTEND_URL
   : true;
 
 app.use(cors({ origin: origenesPermitidos }));
-app.use(express.json());
+app.use(express.json({
+  verify: (req, res, buf) => {
+    req.rawBody = buf;
+  },
+}));
 app.use(express.urlencoded({ extended: true }));
+
+// ------------------------------------------------------------
+// Verificación de firma de Meta (X-Hub-Signature-256) — confirma que el
+// webhook realmente viene de Meta y no de un tercero que descubrió la URL.
+// Se prueba contra los secretos de las 2 apps (producción y demos), porque
+// ambas comparten esta misma URL de webhook.
+// ------------------------------------------------------------
+function verificarFirmaWebhookWhatsApp(req, res, next) {
+  const headerFirma = req.header('x-hub-signature-256');
+  if (!headerFirma || !headerFirma.startsWith('sha256=')) {
+    console.warn('[SEGURIDAD] Webhook de WhatsApp sin firma X-Hub-Signature-256 — rechazado.');
+    return res.sendStatus(401);
+  }
+
+  const secretosAppMeta = [process.env.WHATSAPP_APP_SECRET, process.env.DEMO_WHATSAPP_APP_SECRET].filter(Boolean);
+  if (secretosAppMeta.length === 0) {
+    console.error('[SEGURIDAD] Ningún WHATSAPP_APP_SECRET configurado — no se puede verificar el webhook. Rechazando por seguridad.');
+    return res.sendStatus(401);
+  }
+
+  const firmaRecibida = Buffer.from(headerFirma.slice('sha256='.length), 'hex');
+
+  const esValida = secretosAppMeta.some((secreto) => {
+    const firmaCalculada = Buffer.from(
+      crypto.createHmac('sha256', secreto).update(req.rawBody).digest('hex'),
+      'hex'
+    );
+    return firmaCalculada.length === firmaRecibida.length && crypto.timingSafeEqual(firmaCalculada, firmaRecibida);
+  });
+
+  if (!esValida) {
+    console.warn('[SEGURIDAD] Firma de webhook de WhatsApp inválida — posible request falso, rechazado.');
+    return res.sendStatus(401);
+  }
+
+  next();
+}
 
 app.use('/auth', authRouter);
 app.use('/campanas', campanasRouter);
@@ -83,7 +125,7 @@ app.get('/webhook/whatsapp', (req, res) => {
 // ------------------------------------------------------------
 // WEBHOOK DE WHATSAPP — recepción de mensajes entrantes
 // ------------------------------------------------------------
-app.post('/webhook/whatsapp', async (req, res) => {
+app.post('/webhook/whatsapp', verificarFirmaWebhookWhatsApp, async (req, res) => {
   // Respondemos 200 de inmediato: Meta espera una respuesta rápida (<5s)
   // y reintenta / desactiva el webhook si tarda demasiado o falla seguido.
   res.sendStatus(200);
@@ -637,7 +679,6 @@ app.post('/contrato/:empresaId/aceptar', async (req, res) => {
 // Si TEST_ENDPOINT_SECRET no está configurado, el endpoint queda cerrado
 // por completo (fail-closed) en vez de quedar abierto por accidente.
 // ------------------------------------------------------------
-const crypto = require('crypto');
 
 function requireTestSecret(req, res, next) {
   const secretoEsperado = process.env.TEST_ENDPOINT_SECRET;
