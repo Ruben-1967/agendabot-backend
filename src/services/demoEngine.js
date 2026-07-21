@@ -193,6 +193,15 @@ function detectaIntencionAgendarGenerico(texto) {
   return /agendar|reservar|\bhora\b|\bcita\b|\bturno\b/i.test(texto);
 }
 
+// Señal de compra mucho más fuerte que "cuánto cuesta" — cuando el
+// prospecto ya quiere contratar directamente, hay que ir al precio + link
+// de una vez, sin pedirle ejemplos de productos como si quisiera
+// personalizar la demo primero (eso es fricción innecesaria cuando la
+// intención de compra ya es explícita).
+function detectaIntencionContratarDirecta(texto) {
+  return /c[oó]mo (lo )?contrato|quiero contratar|inscribirme|comenzar (ya|ahora)|firmar( el)? contrato|d[oó]nde contrato/i.test(texto);
+}
+
 // NUEVO: arma el interactivo de servicios como lista tocable, con "Otro/no
 // lo encuentro" al final — mismo patrón que el chatbot real.
 function interactivoListaServiciosDemo(serviciosBase) {
@@ -311,11 +320,24 @@ async function procesarMensajeDemo({ demoAsignada, telefonoCliente, mensaje, nom
       }
 
       case PASOS.SIMULACION_LIBRE: {
+        // Intención de contratar ya explícita — va directo al precio + link,
+        // sin pedir productos de ejemplo (esa personalización solo tiene
+        // sentido cuando el prospecto está evaluando, no cuando ya decidió).
+        if (detectaIntencionContratarDirecta(textoEntrante)) {
+          const items = carritoActual.length > 0 ? carritoActual.map((it) => `${it.cantidad}x ${it.nombre}`) : [];
+          respuestaTexto = construirMockupYPitch({
+            items, empresaDemo, modoOperacion, origenCarritoReal: carritoActual.length > 0,
+          });
+          nuevoPaso = PASOS.PREGUNTAS_ABIERTAS;
+          break;
+        }
+
         const hablaDePagoDelNegocio = /medios?\s+de\s+pago|formas?\s+de\s+pago|plan(es)?\s+de\s+pago/i.test(textoEntrante);
         const pareceQuererPrecio = !hablaDePagoDelNegocio &&
           /precio|beneficios?|cu[aá]nto (sale|vale|cobra|cuesta|es)|tarifa|\bcosto\b|\bplan(es)?\b|contrat(ar|o)|cotiza|totemsystem/i.test(textoEntrante);
 
         if (pareceQuererPrecio) {
+
           const esInequivoco = /totemsystem/i.test(textoEntrante);
 
           if (esInequivoco) {
@@ -499,9 +521,19 @@ async function procesarMensajeDemo({ demoAsignada, telefonoCliente, mensaje, nom
         break;
       }
 
-      case PASOS.PREGUNTAS_ABIERTAS:
+ case PASOS.PREGUNTAS_ABIERTAS:
       default: {
+        if (detectaIntencionContratarDirecta(textoEntrante)) {
+          const items = carritoActual.length > 0 ? carritoActual.map((it) => `${it.cantidad}x ${it.nombre}`) : [];
+          respuestaTexto = construirMockupYPitch({
+            items, empresaDemo, modoOperacion, origenCarritoReal: carritoActual.length > 0,
+          });
+          nuevoPaso = PASOS.PREGUNTAS_ABIERTAS;
+          break;
+        }
+
         if (modoOperacion === 'AGENDAMIENTO') {
+
           const servicioMencionado = detectarServicioMencionado(textoEntrante, serviciosBase);
 
           if (servicioMencionado) {
