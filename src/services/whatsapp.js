@@ -251,6 +251,26 @@ function decodificarFilaServicio(id) {
   return partes[1];
 }
 
+/**
+ * Codifica el ÍNDICE de un servicio dentro del arreglo serviciosBase del
+ * rubro (la demo no tiene Servicio reales en la base, solo strings
+ * sugeridos por RubroTemplate) — formato: "demoservicio|<indice>"
+ */
+function codificarFilaServicioDemo(indice) {
+  return `demoservicio|${indice}`;
+}
+
+function decodificarFilaServicioDemo(id) {
+  if (typeof id !== 'string') return null;
+  const partes = id.split('|');
+  if (partes.length !== 2 || partes[0] !== 'demoservicio') return null;
+  const indice = Number(partes[1]);
+  return Number.isInteger(indice) ? indice : null;
+}
+
+const ID_FILA_SERVICIO_OTRO_DEMO = 'demoservicio_otro';
+
+
 // Id fijo para la fila "Otro / no lo encuentro" en la lista de servicios —
 // no necesita decodificarse, se compara directo contra este valor.
 const ID_FILA_SERVICIO_OTRO = 'servicio_otro';
@@ -307,4 +327,10 @@ module.exports = {
   decodificarFilaCantidadDemo,
   codificarFilaRubroGenerico,
   decodificarFilaRubroGenerico,
+  codificarFilaServicio,
+  decodificarFilaServicio,
+  ID_FILA_SERVICIO_OTRO,
+  codificarFilaServicioDemo,
+  decodificarFilaServicioDemo,
+  ID_FILA_SERVICIO_OTRO_DEMO,
 };

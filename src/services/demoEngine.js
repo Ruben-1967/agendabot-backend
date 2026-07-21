@@ -10,13 +10,18 @@
 // IMPORTANTE: el estado propio de la demo (en qué paso va, historial de la
 // simulación, carrito o cita simulada) se guarda en el modelo DemoAsignada,
 // NO en Conversacion. El historial registra ambos lados de la conversación,
-// el servicio y el nombre/edad se VALIDAN antes de aceptarlos, y el mismo
-// teléfono puede pedir "reiniciar" la demo en cualquier momento.
+// el servicio y el nombre/edad se VALIDAN antes de aceptarlos, el mismo
+// teléfono puede pedir "reiniciar" la demo, y los servicios se muestran como
+// lista interactiva (botones) — igual que el chatbot real.
 
 const Anthropic = require('@anthropic-ai/sdk');
 const prisma = require('../lib/prisma');
 const { procesarMensajeCatalogoDemo } = require('./catalogoDemoEngine');
-const { decodificarFilaHorario } = require('./whatsapp');
+const {
+  decodificarFilaHorario,
+  decodificarFilaServicioDemo,
+  ID_FILA_SERVICIO_OTRO_DEMO,
+} = require('./whatsapp');
 const { fechaLegibleDesdeISO } = require('../lib/formatoFechas');
 const { generarProximosDiasSimulados } = require('../lib/agendaDemoSimulada');
 
@@ -188,6 +193,12 @@ function detectaIntencionAgendarGenerico(texto) {
   return /agendar|reservar|\bhora\b|\bcita\b|\bturno\b/i.test(texto);
 }
 
+// NUEVO: arma el interactivo de servicios como lista tocable, con "Otro/no
+// lo encuentro" al final — mismo patrón que el chatbot real.
+function interactivoListaServiciosDemo(serviciosBase) {
+  return { tipo: 'lista_servicios_demo', servicios: serviciosBase };
+}
+
 async function procesarMensajeDemo({ demoAsignada, telefonoCliente, mensaje, nombreContacto }) {
   const empresaDemo = demoAsignada.empresaDemo;
   const modoOperacion = empresaDemo.rubroTemplate.modoOperacion;
@@ -202,6 +213,10 @@ async function procesarMensajeDemo({ demoAsignada, telefonoCliente, mensaje, nom
     ? decodificarFilaHorario(mensaje.interactive?.list_reply?.id)
     : null;
 
+  const idFilaElegida = mensaje.type === 'interactive'
+    ? mensaje.interactive?.list_reply?.id
+    : null;
+
   const textoEntrante = horarioElegido
     ? `Confirmo que quiero agendar para el ${horarioElegido.fecha} a las ${horarioElegido.hora}.`
     : mensaje.type === 'button'
@@ -210,10 +225,9 @@ async function procesarMensajeDemo({ demoAsignada, telefonoCliente, mensaje, nom
         ? (mensaje.interactive?.list_reply?.title || mensaje.interactive?.button_reply?.title || '')
         : (mensaje.text?.body || ''));
 
-  const idFilaElegida = mensaje.type === 'interactive'
-    ? mensaje.interactive?.list_reply?.id
-    : null;
-
+  // NUEVO: reinicio manual de la demo, sin importar en qué paso esté hoy.
+  // Solo aplica a texto libre (no tiene sentido si viene de una selección
+  // de lista/botón).
   if (mensaje.type === 'text' && detectaIntencionReiniciar(textoEntrante, modoOperacion)) {
     const nombreParaSaludo = demoAsignada.nombreProspecto || nombreContacto;
     const respuestaTexto =
@@ -241,8 +255,38 @@ async function procesarMensajeDemo({ demoAsignada, telefonoCliente, mensaje, nom
   let interactivo = null;
   let nuevoPaso = paso;
   let nuevoCitaDemo = demoAsignada.citaDemoJson || null;
+  let yaResuelto = false;
 
-  if (horarioElegido && modoOperacion === 'AGENDAMIENTO') {
+  // ------------------------------------------------------------
+  // NUEVO: selección de un SERVICIO real de la lista tocable (o "Otro/no lo
+  // encuentro"), en modo AGENDAMIENTO. Se resuelve ANTES del switch de
+  // pasos, igual que ya se hace con la hora — porque puede llegar desde más
+  // de un paso distinto (SIMULACION_LIBRE, PREGUNTAS_ABIERTAS,
+  // AGENDA_ESPERANDO_SERVICIO).
+  // ------------------------------------------------------------
+  if (mensaje.type === 'interactive' && modoOperacion === 'AGENDAMIENTO') {
+    if (idFilaElegida === ID_FILA_SERVICIO_OTRO_DEMO) {
+      try {
+        respuestaTexto = await responderPreguntaSobreNegocio({ historial: nuevoHistorial, empresaDemo, serviciosBase });
+      } catch (error) {
+        console.error('[DEMO] Error respondiendo tras "otro/no lo encuentro":', error.message);
+        respuestaTexto = '¿En qué te puedo ayudar? Puedo contarte de nuestros servicios o agendarte una hora.';
+      }
+      nuevoPaso = PASOS.SIMULACION_LIBRE;
+      yaResuelto = true;
+    } else {
+      const indiceServicio = decodificarFilaServicioDemo(idFilaElegida);
+      if (indiceServicio != null && serviciosBase[indiceServicio]) {
+        nuevoCitaDemo = { servicio: serviciosBase[indiceServicio] };
+        respuestaTexto = '¡Perfecto! Estos son los próximos días disponibles:';
+        interactivo = { tipo: 'lista_dias', dias: generarProximosDiasSimulados() };
+        nuevoPaso = PASOS.SIMULACION_LIBRE;
+        yaResuelto = true;
+      }
+    }
+  }
+
+  if (!yaResuelto && horarioElegido && modoOperacion === 'AGENDAMIENTO') {
     nuevoCitaDemo = { ...(nuevoCitaDemo || {}), fecha: horarioElegido.fecha, hora: horarioElegido.hora };
     const fechaLegible = fechaLegibleDesdeISO(horarioElegido.fecha);
 
@@ -250,7 +294,10 @@ async function procesarMensajeDemo({ demoAsignada, telefonoCliente, mensaje, nom
       `Perfecto, ${fechaLegible} a las ${horarioElegido.hora}. Para dejarlo agendado, dime tu *nombre completo* ` +
       `y tu *edad*, separados por coma (ej. "Juan Pérez, 34").`;
     nuevoPaso = PASOS.AGENDA_ESPERANDO_DATOS;
-  } else {
+    yaResuelto = true;
+  }
+
+  if (!yaResuelto) {
     switch (paso) {
       case PASOS.INICIO: {
         const nombreParaSaludo = demoAsignada.nombreProspecto || nombreContacto;
@@ -315,7 +362,8 @@ async function procesarMensajeDemo({ demoAsignada, telefonoCliente, mensaje, nom
           }
 
           if (detectaIntencionAgendarGenerico(textoEntrante) && serviciosBase.length > 0) {
-            respuestaTexto = `¡Claro! ¿Para cuál de estos servicios?\n${serviciosBase.map((s) => `• ${s}`).join('\n')}`;
+            respuestaTexto = '¡Claro! ¿Para cuál de estos servicios? 👇';
+            interactivo = interactivoListaServiciosDemo(serviciosBase);
             nuevoPaso = PASOS.AGENDA_ESPERANDO_SERVICIO;
             break;
           }
@@ -349,7 +397,8 @@ async function procesarMensajeDemo({ demoAsignada, telefonoCliente, mensaje, nom
         const servicioMencionado = detectarServicioMencionado(textoEntrante, serviciosBase);
 
         if (!servicioMencionado) {
-          respuestaTexto = `No alcancé a reconocer ese servicio — ¿me escribes uno de estos tal cual?\n${serviciosBase.map((s) => `• ${s}`).join('\n')}`;
+          respuestaTexto = 'No alcancé a reconocer ese servicio — elige uno de estos 👇';
+          interactivo = interactivoListaServiciosDemo(serviciosBase);
           nuevoPaso = PASOS.AGENDA_ESPERANDO_SERVICIO;
           break;
         }
@@ -464,7 +513,8 @@ async function procesarMensajeDemo({ demoAsignada, telefonoCliente, mensaje, nom
           }
 
           if (detectaIntencionAgendarGenerico(textoEntrante) && serviciosBase.length > 0) {
-            respuestaTexto = `¡Claro! ¿Para cuál de estos servicios?\n${serviciosBase.map((s) => `• ${s}`).join('\n')}`;
+            respuestaTexto = '¡Claro! ¿Para cuál de estos servicios? 👇';
+            interactivo = interactivoListaServiciosDemo(serviciosBase);
             nuevoPaso = PASOS.AGENDA_ESPERANDO_SERVICIO;
             break;
           }

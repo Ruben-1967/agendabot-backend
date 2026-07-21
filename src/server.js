@@ -17,6 +17,8 @@ const {
   codificarFilaServicio,
   decodificarFilaServicio,
   ID_FILA_SERVICIO_OTRO,
+  codificarFilaServicioDemo,
+  ID_FILA_SERVICIO_OTRO_DEMO,
 } = require('./services/whatsapp');
 const { obtenerHorariosDisponibles } = require('./services/disponibilidad');
 const { fechaLegibleDesdeISO } = require('./lib/formatoFechas');
@@ -335,6 +337,19 @@ app.post('/webhook/whatsapp', verificarFirmaWebhookWhatsApp, async (req, res) =>
             id: codificarFilaHorario(interactivo.fecha, hora),
             titulo: hora,
           })),
+        });
+      } else if (interactivo?.tipo === 'lista_servicios_demo') {
+        await sendWhatsAppInteractiveList({
+          phoneNumberId,
+          to: telefonoCliente,
+          accessToken: accessTokenDemo,
+          textoCuerpo: respuestaTexto,
+          textoBoton: 'Ver servicios',
+          textoHeader: demoAsignada.empresaDemo.nombre?.slice(0, 60),
+          filas: [
+            ...interactivo.servicios.map((s, i) => ({ id: codificarFilaServicioDemo(i), titulo: s })),
+            { id: ID_FILA_SERVICIO_OTRO_DEMO, titulo: 'Otro / no lo encuentro', descripcion: 'Cuéntame qué necesitas' },
+          ],
         });
       } else if (interactivo?.tipo === 'lista_productos_demo') {
         await sendWhatsAppInteractiveList({
