@@ -39,22 +39,15 @@ async function obtenerTextoDePagina(url) {
       },
     });
 
+    if (!response.ok) {
+      console.warn(`[extraccionSitioWeb] ${url} respondió ${response.status} ${response.statusText}.`);
+      return null;
+    }
+
     const html = await response.text();
-
-    // DIAGNÓSTICO PURO — no cambia el comportamiento, solo deja ver en los
-    // logs de Render exactamente qué llegó de verdad, para decidir con
-    // datos reales si el problema es un bloqueo tipo Cloudflare, un error
-    // HTTP real, o una SPA sin contenido — en vez de seguir adivinando.
-    console.log(`[DIAGNOSTICO extraccionSitioWeb] URL: ${url}`);
-    console.log(`[DIAGNOSTICO extraccionSitioWeb] Status HTTP: ${response.status} ${response.statusText}`);
-    console.log(`[DIAGNOSTICO extraccionSitioWeb] Largo del HTML recibido: ${html.length} caracteres`);
-    console.log(`[DIAGNOSTICO extraccionSitioWeb] Primeros 300 caracteres:\n${html.slice(0, 300)}`);
-    console.log(`[DIAGNOSTICO extraccionSitioWeb] ¿Menciona "cloudflare" o "checking your browser"?: ${/cloudflare|checking your browser|cf-browser-verification/i.test(html)}`);
-
-    if (!response.ok) return null;
     return limpiarHtml(html);
   } catch (err) {
-    console.error(`[DIAGNOSTICO extraccionSitioWeb] Error de red en ${url}:`, err.message);
+    console.error(`[extraccionSitioWeb] No se pudo leer ${url}:`, err.message);
     return null;
   }
 }
