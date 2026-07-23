@@ -25,14 +25,6 @@ function normalizarTelefono(numeroIngresado, paisIso) {
   return numero.number.replace('+', '');
 }
 
-function normalizarSitioWeb(url) {
-  if (!url) return null;
-  const limpio = url.trim();
-  if (!limpio) return null;
-  return /^https?:\/\//i.test(limpio) ? limpio : `https://${limpio}`;
-}
-
-
 router.post('/prospectos', requireAuth, requireRole('VENDEDOR'), async (req, res) => {
   try {
     const { nombreNegocio, telefono, paisTelefono, nombreEncargado, rubro, sitioWeb } = req.body;
@@ -58,21 +50,23 @@ router.post('/prospectos', requireAuth, requireRole('VENDEDOR'), async (req, res
       return res.status(500).json({ error: `No existe RubroTemplate con clave "${claveRubro}"` });
     }
 
+    // Nota: como al eliminar una demo se "desocupa" el campo telefono (ver
+    // ruta DELETE más abajo), este findUnique naturalmente no encuentra
+    // demos eliminadas — el número real queda libre para asignarse de nuevo
+    // sin conflicto con el registro histórico.
     const demoExistente = await prisma.demoAsignada.findUnique({ where: { telefono: telefonoNormalizado } });
 
-    const sitioWebNormalizado = normalizarSitioWeb(sitioWeb);
-
     let infoExtraida = null;
-    if (sitioWebNormalizado) {
+    if (sitioWeb) {
       const rutas = claveRubro === 'catalogo_rotativo' ? RUTAS_CATALOGO_TIPICAS : undefined;
-      infoExtraida = await extraerInfoSitioWeb(sitioWebNormalizado, rutas);
+      infoExtraida = await extraerInfoSitioWeb(sitioWeb, rutas);
     }
 
     const datosEmpresa = {
       nombre: nombreNegocio,
       rubroTemplateId: rubroTemplate.id,
       esDemo: true,
-      sitioWeb: sitioWebNormalizado,
+      sitioWeb: sitioWeb || null,
       direccion: infoExtraida?.exito ? infoExtraida.direccion : null,
       informacionAdicional: infoExtraida?.exito ? infoExtraida.informacionAdicionalSugerida : null,
     };
@@ -93,9 +87,6 @@ router.post('/prospectos', requireAuth, requireRole('VENDEDOR'), async (req, res
           carritoDemoJson: [],
         },
       });
-      // Si estamos reconfigurando una demo existente, limpiamos productos
-      // viejos antes de cargar los nuevos (si el sitio web cambió, o si
-      // antes no tenía sitio y ahora sí).
       await prisma.producto.deleteMany({ where: { empresaId: empresaDemo.id } });
     } else {
       empresaDemo = await prisma.empresa.create({ data: datosEmpresa });
@@ -109,9 +100,6 @@ router.post('/prospectos', requireAuth, requireRole('VENDEDOR'), async (req, res
       });
     }
 
-    // Si es catálogo rotativo y la extracción trajo productos, los cargamos
-    // directo — esto es lo que hace que la demo pueda responder "menú" con
-    // algo real, en vez de quedar vacía.
     let productosCreados = 0;
     if (claveRubro === 'catalogo_rotativo' && infoExtraida?.exito && infoExtraida.productosSugeridos?.length > 0) {
       const productosValidos = infoExtraida.productosSugeridos.filter(
@@ -148,7 +136,7 @@ router.post('/prospectos', requireAuth, requireRole('VENDEDOR'), async (req, res
 router.get('/prospectos', requireAuth, requireRole('VENDEDOR'), async (req, res) => {
   try {
     const demos = await prisma.demoAsignada.findMany({
-      where: { vendedorId: req.usuario.vendedorId },
+      where: { vendedorId: req.usuario.vendedorId, eliminadoEn: null },
       include: { empresaDemo: { include: { rubroTemplate: true } } },
       orderBy: { creadoEn: 'desc' },
     });
@@ -172,6 +160,42 @@ router.get('/prospectos', requireAuth, requireRole('VENDEDOR'), async (req, res)
   } catch (error) {
     console.error('Error listando prospectos de demo:', error);
     res.status(500).json({ error: error.message });
+  }
+});
+
+// ------------------------------------------------------------
+// DELETE /demos/prospectos/:id — el vendedor "elimina" una demo. En
+// realidad es un soft-delete: se conserva la Empresa, el Producto, y todo
+// el historial de la simulación (útil para métricas de conversión más
+// adelante), pero el teléfono real queda libre de inmediato para una demo
+// nueva. Se logra guardando el teléfono real en `telefonoOriginal` y
+// reemplazando `telefono` por un valor único-pero-inofensivo, ya que ese
+// campo tiene una restricción de unicidad en la base.
+// ------------------------------------------------------------
+router.delete('/prospectos/:id', requireAuth, requireRole('VENDEDOR'), async (req, res) => {
+  try {
+    const demo = await prisma.demoAsignada.findUnique({ where: { id: req.params.id } });
+
+    if (!demo || demo.vendedorId !== req.usuario.vendedorId) {
+      return res.status(404).json({ error: 'Demo no encontrada' });
+    }
+    if (demo.eliminadoEn) {
+      return res.status(400).json({ error: 'Esta demo ya había sido eliminada' });
+    }
+
+    await prisma.demoAsignada.update({
+      where: { id: demo.id },
+      data: {
+        telefonoOriginal: demo.telefonoOriginal || demo.telefono,
+        telefono: `eliminado:${demo.id}`,
+        eliminadoEn: new Date(),
+      },
+    });
+
+    res.json({ ok: true });
+  } catch (error) {
+    console.error('Error eliminando (soft-delete) prospecto de demo:', error);
+    res.status(500).json({ error: 'Error al eliminar la demo' });
   }
 });
 
