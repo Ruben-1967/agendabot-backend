@@ -688,6 +688,10 @@ model DemoAsignada {
   actualizadoEn   DateTime @updatedAt
   vendedor        Vendedor? @relation(fields: [vendedorId], references: [id])
   vendedorId      String?
+  eliminadoEn         DateTime? // si no es null, esta demo fue "eliminada" por el vendedor (soft-delete)
+  telefonoOriginal    String?   // el teléfono real, conservado para historial/métricas después de liberar `telefono`
+
+
 
   paso                Int   @default(0)
   historialSimulacion Json?
