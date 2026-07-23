@@ -33,12 +33,13 @@ router.get('/config', async (req, res) => {
     });
     if (!empresa) return res.status(404).json({ error: 'Empresa no encontrada' });
 
-    res.json({
-      camposFicha: Array.isArray(empresa.rubroTemplate.camposFicha) ? empresa.rubroTemplate.camposFicha : [],
+res.json({
+      camposFicha: empresa.rubroTemplate.camposFicha || {},
       categoriasProductoSugeridas: Array.isArray(empresa.rubroTemplate.categoriasProductoSugeridas)
         ? empresa.rubroTemplate.categoriasProductoSugeridas
         : [],
     });
+
   } catch (error) {
     console.error('Error en GET /clientes/config:', error);
     res.status(500).json({ error: 'Error al obtener la configuración de clientes' });
