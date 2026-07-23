@@ -47,7 +47,7 @@ function validarPosicionVariables(texto) {
   return null; // sin problemas
 }
 
-async function crearPlantilla({ nombre, textoBody, botones, ejemplos }) {
+async function crearPlantilla({ nombre, textoBody, botones, ejemplos, categoria }) {
   const accessToken = process.env.WHATSAPP_ACCESS_TOKEN;
   const wabaId = process.env.WHATSAPP_WABA_ID;
 
@@ -93,10 +93,10 @@ async function crearPlantilla({ nombre, textoBody, botones, ejemplos }) {
       Authorization: `Bearer ${accessToken}`,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({
+ body: JSON.stringify({
       name: nombre,
       language: 'es',
-      category: 'UTILITY',
+      category: categoria || 'UTILITY',
       components,
     }),
   });
@@ -116,7 +116,7 @@ async function crearPlantilla({ nombre, textoBody, botones, ejemplos }) {
 // ------------------------------------------------------------
 // Lectura de argumentos de línea de comandos
 // ------------------------------------------------------------
-const [, , nombre, textoBody, botonesArg, ejemplosArg] = process.argv;
+const [, , nombre, textoBody, botonesArg, ejemplosArg, categoriaArg] = process.argv;
 
 if (!nombre || !textoBody) {
   console.log('Uso: node scripts/crear-plantilla.js <nombre> "<texto>" "<Boton1,Boton2>" ["<ej1>|<ej2>"]');
@@ -126,7 +126,7 @@ if (!nombre || !textoBody) {
 const botones = botonesArg ? botonesArg.split(',').map((b) => b.trim()) : [];
 const ejemplos = ejemplosArg ? ejemplosArg.split('|').map((e) => e.trim()) : null;
 
-crearPlantilla({ nombre, textoBody, botones, ejemplos }).catch((err) => {
+crearPlantilla({ nombre, textoBody, botones, ejemplos, categoria: categoriaArg }).catch((err) => {
   console.error('❌ Error:', err.message);
   process.exit(1);
 });
