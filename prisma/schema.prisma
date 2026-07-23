@@ -35,6 +35,7 @@ model RubroTemplate {
   serviciosBase Json     // lista de tipos de servicio sugeridos (ej. "Examen de la vista") o catálogo sugerido si es CATALOGO_ROTATIVO
   automatizacionesBase Json // reglas de automatización sugeridas (ej. recordatorio de control anual)
   creadoEn      DateTime @default(now())
+  categoriasProductoSugeridas Json? // arreglo de strings sugeridos al registrar una venta, ej. ["Lente monofocal", "Lente progresivo", ...] — arma el selector en el panel y el filtro de segmentación de campañas
 
   empresas Empresa[]
 }
@@ -361,6 +362,7 @@ model Venta {
   estadoPago  EstadoPagoVenta @default(PENDIENTE)
 
   fichaAsociadaId String? // referencia opcional a la receta/ficha vigente al momento de la venta
+  categoriaProducto String? // ej. "Lente monofocal", "Lente progresivo", "Lente de contacto", "Solo atención" — permite segmentar campañas por tipo de producto/servicio comprado, igual que productoId lo hace en el catálogo rotativo
 
   creadoEn  DateTime @default(now())
 
@@ -688,7 +690,7 @@ model DemoAsignada {
   actualizadoEn   DateTime @updatedAt
   vendedor        Vendedor? @relation(fields: [vendedorId], references: [id])
   vendedorId      String?
-  eliminadoEn         DateTime? // si no es null, esta demo fue "eliminada" por el vendedor (soft-delete)
+ eliminadoEn         DateTime? // si no es null, esta demo fue "eliminada" por el vendedor (soft-delete)
   telefonoOriginal    String?   // el teléfono real, conservado para historial/métricas después de liberar `telefono`
 
 
