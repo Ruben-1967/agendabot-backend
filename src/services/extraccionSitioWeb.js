@@ -31,12 +31,28 @@ function limpiarHtml(html) {
 
 async function obtenerTextoDePagina(url) {
   try {
-    const response = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' } });
-    if (!response.ok) return null;
+    const response = await fetch(url, {
+      headers: {
+        // Encabezados más parecidos a un navegador real — algunos sitios
+        // (ej. plataformas de e-commerce con protección anti-bots) rechazan
+        // requests que solo traen User-Agent, sin el resto de la huella de
+        // un navegador real.
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+        'Accept-Language': 'es-CL,es;q=0.9,en;q=0.8',
+      },
+    });
+    if (!response.ok) {
+      console.warn(`[extraccionSitioWeb] ${url} respondió ${response.status} ${response.statusText} — probablemente bloqueado o no encontrado.`);
+      return null;
+    }
     const html = await response.text();
+    if (html.length < 200) {
+      console.warn(`[extraccionSitioWeb] ${url} devolvió muy poco contenido (${html.length} caracteres) — posible bloqueo silencioso o sitio 100% dependiente de JavaScript.`);
+    }
     return limpiarHtml(html);
   } catch (err) {
-    console.error(`No se pudo leer ${url}:`, err.message);
+    console.error(`[extraccionSitioWeb] No se pudo leer ${url}:`, err.message);
     return null;
   }
 }
