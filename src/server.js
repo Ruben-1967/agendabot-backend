@@ -40,6 +40,7 @@ const demosRouter = require('./routes/demos');
 const { generarHorasSimuladasParaDia } = require('./lib/agendaDemoSimulada');
 const { RUBROS_MENU_GENERICO } = require('./lib/rubrosMenuGenerico');
 const { renderPanelDemo } = require('./services/panelDemoHtml');
+const { renderSitioNegocio } = require('./services/sitioNegocioHtml');
 
 const app = express();
 
@@ -724,6 +725,41 @@ app.post('/contrato/:empresaId/aceptar', async (req, res) => {
     res.status(500).send('Ocurrió un error al procesar la aceptación. Por favor intenta de nuevo.');
   }
 });
+
+// ------------------------------------------------------------
+// MINI-SITIO AUTOGENERADO POR NEGOCIO — funcionalidad adicional de
+// Totemsystem, sin depender de ninguna plataforma externa. Se arma 100%
+// con datos que el negocio ya carga en el panel.
+// ------------------------------------------------------------
+app.get('/sitio/:empresaId', async (req, res) => {
+  try {
+    const empresa = await prisma.empresa.findUnique({
+      where: { id: req.params.empresaId },
+      include: { rubroTemplate: true },
+    });
+
+    if (!empresa) {
+      return res.status(404).send('Negocio no encontrado');
+    }
+
+    const esAgendamiento = empresa.rubroTemplate.modoOperacion === 'AGENDAMIENTO';
+
+    const servicios = esAgendamiento
+      ? await prisma.servicio.findMany({ where: { empresaId: empresa.id, activo: true }, orderBy: { nombre: 'asc' } })
+      : [];
+
+    const productos = !esAgendamiento
+      ? await prisma.producto.findMany({ where: { empresaId: empresa.id, activo: true }, orderBy: { nombre: 'asc' }, take: 8 })
+      : [];
+
+    res.send(renderSitioNegocio({ empresa, servicios, productos, esAgendamiento }));
+  } catch (error) {
+    console.error('Error en GET /sitio/:empresaId:', error);
+    res.status(500).send('Ocurrió un error al cargar la página.');
+  }
+});
+
+
 
 // ------------------------------------------------------------
 // ENDPOINT DE PRUEBA — simula una conversación SIN pasar por WhatsApp.
