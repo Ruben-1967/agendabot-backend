@@ -15,7 +15,7 @@ const Anthropic = require('@anthropic-ai/sdk');
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 const MAX_PAGINAS_ADICIONALES = 3;
-const MAX_CARACTERES_POR_PAGINA = 6000;
+const MAX_CARACTERES_POR_PAGINA = 20000;
 
 function limpiarHtml(html) {
   return html
@@ -55,16 +55,6 @@ async function obtenerTextoDePagina(url) {
     return limpiarHtml(html);
   } catch (err) {
     console.error(`[DIAGNOSTICO extraccionSitioWeb] Error de red en ${url}:`, err.message);
-    return null;
-  }
-}
-    const html = await response.text();
-    if (html.length < 200) {
-      console.warn(`[extraccionSitioWeb] ${url} devolvió muy poco contenido (${html.length} caracteres) — posible bloqueo silencioso o sitio 100% dependiente de JavaScript.`);
-    }
-    return limpiarHtml(html);
-  } catch (err) {
-    console.error(`[extraccionSitioWeb] No se pudo leer ${url}:`, err.message);
     return null;
   }
 }
@@ -108,27 +98,27 @@ async function extraerInfoSitioWeb(urlPrincipal, rutasAdicionales = []) {
 "productosSugeridos" solo aplica si el sitio muestra un catálogo de productos individuales con precio (ej. tienda, panadería, restorán) — si el negocio ofrece servicios sin catálogo de productos (ej. óptica, clínica), deja "productosSugeridos" como arreglo vacío. El precio debe ser un número entero (sin símbolo de moneda ni puntos de miles). Extrae como máximo 15 productos representativos, no todos si hay muchos. Si no encuentras un dato, pon null (o arreglo vacío). NUNCA inventes información que no esté en el texto.`;
 
   try {
-  const response = await anthropic.messages.create({
-    model: 'claude-haiku-4-5-20251001',
-    max_tokens: 1500,
-    system: systemPrompt,
-    messages: [{ role: 'user', content: textoCompleto }],
-  });
+    const response = await anthropic.messages.create({
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 1500,
+      system: systemPrompt,
+      messages: [{ role: 'user', content: textoCompleto }],
+    });
 
-  const textBlock = response.content.find((b) => b.type === 'text');
-  const textoLimpio = textBlock.text
-    .trim()
-    .replace(/^```json\s*/i, '')
-    .replace(/^```\s*/i, '')
-    .replace(/```\s*$/i, '')
-    .trim();
+    const textBlock = response.content.find((b) => b.type === 'text');
+    const textoLimpio = textBlock.text
+      .trim()
+      .replace(/^```json\s*/i, '')
+      .replace(/^```\s*/i, '')
+      .replace(/```\s*$/i, '')
+      .trim();
 
-  const datos = JSON.parse(textoLimpio);
-  return { exito: true, ...datos };
-} catch (err) {
-  console.error('Error extrayendo/parseando información del sitio web:', err.message);
-  return { exito: false, error: 'No se pudo interpretar la información extraída.' };
-}
+    const datos = JSON.parse(textoLimpio);
+    return { exito: true, ...datos };
+  } catch (err) {
+    console.error('Error extrayendo/parseando información del sitio web:', err.message);
+    return { exito: false, error: 'No se pudo interpretar la información extraída.' };
+  }
 }
 
 module.exports = { extraerInfoSitioWeb };
