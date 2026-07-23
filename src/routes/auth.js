@@ -3,16 +3,15 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const prisma = require('../lib/prisma');
 const { requireAuth, JWT_SECRET } = require('../middleware/auth');
-
+const { limitadorLogin } = require('../middleware/rateLimiting');
 const router = express.Router();
-
 const TOKEN_EXPIRA_EN = '12h';
 
 // ------------------------------------------------------------
 // POST /auth/login
 // body: { email, password }
 // ------------------------------------------------------------
-router.post('/login', async (req, res) => {
+router.post('/login', limitadorLogin, async (req, res) => {
   try {
     const { email, password } = req.body;
 
