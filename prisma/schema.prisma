@@ -496,8 +496,8 @@ model CampanaEnvio {
   segmentoDias Int?              // ventana de tiempo a evaluar (ej. 30 = "últimos 30 días")
   segmentoMontoMinimoClp Int?    // debe haber gastado al menos esto en esa ventana (null = sin mínimo)
   segmentoProductoIds String[] @default([])   // debe haber comprado al menos uno de estos productos (vacío = cualquiera)
-
-  enviosRealizados EnvioRealizado[]
+  segmentoCategoriasProducto String[] @default([]) 
+  enviosRealizados EnvioRealizado[] // <- nueva
 
   @@index([empresaId])
 }
@@ -530,7 +530,7 @@ model EnvioRealizado {
   // historial de gasto, aunque la tarifa de Meta cambie más adelante.
   costoEstimadoClp Int?
 
-  mensajeDelDia String? @db.VarChar(80)
+  mensajeDelDia String? @db.VarChar(400)
 
   creadoEn    DateTime @default(now())
 
@@ -712,4 +712,5 @@ model Vendedor {
 
   demosCreadas DemoAsignada[]
 }
+
 
