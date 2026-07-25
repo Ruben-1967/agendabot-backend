@@ -713,4 +713,8 @@ model Vendedor {
   demosCreadas DemoAsignada[]
 }
 
-
+model Cliente {
+  // ... junto a optInCampanas
+  optInCampanasPreguntado Boolean @default(false)
+  optInPreguntaPendiente  Boolean @default(false)
+}
