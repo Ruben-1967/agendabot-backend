@@ -24,7 +24,8 @@
     "express": "^4.19.2",
     "express-rate-limit": "^8.6.0",
     "jsonwebtoken": "^9.0.3",
-    "libphonenumber-js": "^1.13.9"
+    "libphonenumber-js": "^1.13.9",
+    "node-cron": "^4.6.0"
   },
   "devDependencies": {
     "prisma": "^5.20.0"
