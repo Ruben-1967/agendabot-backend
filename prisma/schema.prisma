@@ -222,6 +222,14 @@ model Cliente {
   // No afecta su capacidad de escribir y recibir respuesta normalmente.
   optInCampanas Boolean @default(true)
 
+  // Opt-in embebido en la conversación natural (ver chatbotEngine.js):
+  // optInCampanasPreguntado -> ya se le hizo la pregunta alguna vez en su
+  // vida (independiente de la respuesta), para no volver a insistir nunca.
+  // optInPreguntaPendiente -> true solo mientras se espera su respuesta al
+  // turno inmediatamente siguiente a la pregunta.
+  optInCampanasPreguntado Boolean @default(false)
+  optInPreguntaPendiente  Boolean @default(false)
+
   // Control de recordatorios automáticos (evita reenviar el mismo aviso
   // repetidamente). Se agregarán más campos similares si se suman otros
   // tipos de recordatorio por rubro (ej. próxima sesión, mantención).
@@ -496,8 +504,9 @@ model CampanaEnvio {
   segmentoDias Int?              // ventana de tiempo a evaluar (ej. 30 = "últimos 30 días")
   segmentoMontoMinimoClp Int?    // debe haber gastado al menos esto en esa ventana (null = sin mínimo)
   segmentoProductoIds String[] @default([])   // debe haber comprado al menos uno de estos productos (vacío = cualquiera)
-  segmentoCategoriasProducto String[] @default([]) 
-  enviosRealizados EnvioRealizado[] // <- nueva
+  segmentoCategoriasProducto String[] @default([]) // equivalente para negocios reactivos (Venta.categoriaProducto)
+
+  enviosRealizados EnvioRealizado[]
 
   @@index([empresaId])
 }
@@ -711,10 +720,4 @@ model Vendedor {
   creadoEn     DateTime @default(now())
 
   demosCreadas DemoAsignada[]
-}
-
-model Cliente {
-  // ... junto a optInCampanas
-  optInCampanasPreguntado Boolean @default(false)
-  optInPreguntaPendiente  Boolean @default(false)
 }
