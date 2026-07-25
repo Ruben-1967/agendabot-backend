@@ -42,13 +42,15 @@ async function enviarPreguntasOptInPendientes() {
       const mensajes = Array.isArray(conversacion?.mensajes) ? conversacion.mensajes : [];
       if (mensajes.length === 0) continue;
 
-      const ultimoMensaje = mensajes[mensajes.length - 1];
-      // Si el último mensaje de la conversación no es del cliente (ej. ya
-      // le respondimos algo después), no interrumpimos a mitad de un flujo
-      // en curso — esperamos al próximo silencio real.
-      if (ultimoMensaje.rol !== 'usuario') continue;
+      // Buscamos el ÚLTIMO mensaje que sea específicamente del cliente
+      // (no el último del arreglo en general, que casi siempre es la
+      // respuesta del bot al turno más reciente) y medimos el silencio
+      // desde ahí — sin importar si ya le respondimos después.
+      const mensajesDelCliente = mensajes.filter((m) => m.rol === 'usuario');
+      if (mensajesDelCliente.length === 0) continue;
 
-      const timestampUltimo = new Date(ultimoMensaje.timestamp);
+      const ultimoMensajeCliente = mensajesDelCliente[mensajesDelCliente.length - 1];
+      const timestampUltimo = new Date(ultimoMensajeCliente.timestamp);
       if (timestampUltimo > limiteEspera) continue; // todavía no pasaron los 3 minutos de silencio
 
       const accessToken = cliente.empresa.whatsappToken || process.env.WHATSAPP_ACCESS_TOKEN;
