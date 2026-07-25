@@ -183,6 +183,79 @@ async function sendWhatsAppInteractiveList({
 }
 
 /**
+ * Envía un mensaje INTERACTIVO de botones de respuesta rápida (hasta 3
+ * botones). A diferencia de los botones QUICK_REPLY de una plantilla, este
+ * tipo no requiere aprobación de Meta — solo se puede enviar dentro de la
+ * ventana de servicio de 24h (después de que el cliente escribió algo),
+ * igual que sendWhatsAppInteractiveList.
+ *
+ * Al tocar un botón, el webhook recibe un mensaje tipo "interactive" con
+ * interactive.type === 'button_reply' y interactive.button_reply.id/title
+ * — estructura distinta a la de una lista (list_reply).
+ *
+ * @param {Object} params
+ * @param {string} params.phoneNumberId
+ * @param {string} params.to
+ * @param {string} params.accessToken
+ * @param {string} params.textoCuerpo - Mensaje principal.
+ * @param {{id: string, titulo: string}[]} params.botones - Máximo 3 botones.
+ * @param {string} [params.textoHeader] - Máx. 60 caracteres.
+ * @param {string} [params.textoFooter] - Máx. 60 caracteres.
+ */
+async function sendWhatsAppReplyButtons({
+  phoneNumberId,
+  to,
+  accessToken,
+  textoCuerpo,
+  botones,
+  textoHeader,
+  textoFooter,
+}) {
+  const url = `https://graph.facebook.com/${GRAPH_API_VERSION}/${phoneNumberId}/messages`;
+
+  const interactive = {
+    type: 'button',
+    body: { text: textoCuerpo },
+    action: {
+      buttons: (botones || []).slice(0, 3).map((boton) => ({
+        type: 'reply',
+        reply: { id: boton.id, title: boton.titulo.slice(0, 20) },
+      })),
+    },
+  };
+
+  if (textoHeader) {
+    interactive.header = { type: 'text', text: textoHeader.slice(0, 60) };
+  }
+  if (textoFooter) {
+    interactive.footer = { text: textoFooter.slice(0, 60) };
+  }
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${accessToken}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      messaging_product: 'whatsapp',
+      to,
+      type: 'interactive',
+      interactive,
+    }),
+  });
+
+  const data = await response.json();
+
+  if (!response.ok) {
+    console.error('Error enviando botones de WhatsApp:', JSON.stringify(data, null, 2));
+    throw new Error(`WhatsApp API error: ${data.error?.message || response.statusText}`);
+  }
+
+  return data;
+}
+
+/**
  * Codifica una fecha+hora en el id de fila que WhatsApp devuelve cuando el
  * cliente toca una opción de la lista interactiva de horarios de agendamiento.
  * Formato: "horario|YYYY-MM-DD|HH:MM"
@@ -317,6 +390,7 @@ module.exports = {
   sendWhatsAppTextMessage,
   sendWhatsAppTemplateMessage,
   sendWhatsAppInteractiveList,
+  sendWhatsAppReplyButtons,
   codificarFilaHorario,
   decodificarFilaHorario,
   codificarFilaDia,

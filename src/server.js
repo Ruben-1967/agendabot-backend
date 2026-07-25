@@ -42,6 +42,11 @@ const { RUBROS_MENU_GENERICO } = require('./lib/rubrosMenuGenerico');
 const { renderPanelDemo } = require('./services/panelDemoHtml');
 const { renderSitioNegocio } = require('./services/sitioNegocioHtml');
 
+// Job de opt-in de campañas (node-cron autoprogramado dentro de este mismo
+// proceso — ver src/jobs/enviarPreguntaOptIn.js). Requerirlo una sola vez
+// activa su cron.schedule interno.
+require('./jobs/enviarPreguntaOptIn');
+
 const app = express();
 
 // En desarrollo, si PANEL_FRONTEND_URL no está definida, se permite cualquier
@@ -435,6 +440,48 @@ app.post('/webhook/whatsapp', verificarFirmaWebhookWhatsApp, async (req, res) =>
       console.warn(`No se encontró ninguna Empresa para phone_number_id=${phoneNumberId}`);
       return;
     }
+
+    // ------------------------------------------------------------
+    // Opt-in de campañas embebido en la conversación: intercepta el clic
+    // en los botones Sí/No que manda src/jobs/enviarPreguntaOptIn.js —
+    // antes de cualquier otro flujo (agendamiento o catálogo rotativo),
+    // porque aplica por igual a ambos modos.
+    // ------------------------------------------------------------
+    if (mensaje.type === 'interactive' && mensaje.interactive?.type === 'button_reply') {
+      const botonId = mensaje.interactive.button_reply.id;
+
+      if (botonId === 'optin_si' || botonId === 'optin_no') {
+        const clienteOptIn = await prisma.cliente.findFirst({
+          where: { empresaId: empresa.id, telefono: telefonoCliente },
+        });
+
+        if (clienteOptIn) {
+          const respuestaSi = botonId === 'optin_si';
+
+          await prisma.cliente.update({
+            where: { id: clienteOptIn.id },
+            data: { optInCampanas: respuestaSi, optInPreguntaPendiente: false },
+          });
+
+          const accessTokenOptIn = empresa.whatsappToken || process.env.WHATSAPP_ACCESS_TOKEN;
+          if (accessTokenOptIn) {
+            await sendWhatsAppTextMessage({
+              phoneNumberId,
+              to: telefonoCliente,
+              accessToken: accessTokenOptIn,
+              text: respuestaSi
+                ? '¡Perfecto! 🙂'
+                : 'Entendido, no te enviaremos avisos de promociones. Igual puedes escribirnos cuando quieras.',
+            });
+          }
+
+          console.log(`[OPT-IN] ${telefonoCliente} respondió "${botonId}" (${empresa.nombre}).`);
+        }
+
+        return; // ya respondimos, no seguir a ningún otro flujo
+      }
+    }
+    // ---- fin bloque de opt-in ----
 
     // Rubros de catálogo rotativo (panadería, rotisería, etc.) usan un motor
     // de conversación distinto al de agendamiento — reacciona a botones y
