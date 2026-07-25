@@ -63,7 +63,7 @@ function construirTools(empresa, incluirMostrarServicios) {
     ...(incluirMostrarServicios ? [{
       name: 'mostrar_lista_servicios',
       description:
-        'Muestra al cliente la lista de servicios reales disponibles, como opciones tocables para elegir — usar en vez de preguntar el servicio en texto, cuando el cliente quiere agendar pero todavía no sabes cuál servicio específico necesita (no lo mencionó, o lo mencionó de forma ambigua/genérica y no calzó con ninguno).',
+        'Muestra al cliente la lista de servicios reales disponibles, como opciones tocables para elegir. Úsala SIEMPRE que el cliente pregunte qué servicios/atenciones ofrece el negocio — tanto si lo pregunta de forma informativa (ej. "servicios", "qué atienden", "qué hacen") como si quiere agendar y todavía no sabes cuál servicio específico necesita. En ambos casos, nunca respondas esa lista en texto plano.',
       input_schema: {
         type: 'object',
         properties: {},
@@ -198,13 +198,20 @@ async function generarRespuestaChatbot({ empresa, cliente, historial, mensajeEnt
   }
   if (empresa.informacionAdicional) {
     bloquesPersonalizacion.push(
-      `Información adicional que puedes citar TAL CUAL si el cliente pregunta (precios, promociones, qué incluye cada servicio, etc.) — no agregues ni inventes nada que no esté aquí:\n${empresa.informacionAdicional}`
+      `Información adicional que puedes citar TAL CUAL si el cliente pregunta (precios, promociones, qué incluye cada servicio, etc.) — no agregues ni inventes nada que no esté aquí. IMPORTANTE: esto es solo para responder preguntas puntuales, NUNCA para construir, completar ni ampliar la lista de servicios ofrecidos (ver SERVICIOS AGENDABLES arriba y las instrucciones sobre mostrar_lista_servicios):\n${empresa.informacionAdicional}`
     );
   }
 
+  // Si el negocio tiene Servicio reales cargados, CUALQUIER pregunta sobre
+  // qué servicios/atenciones ofrece (informativa o para agendar) debe
+  // resolverse llamando a la herramienta — nunca en texto libre, y nunca
+  // usando la información adicional para armar esa lista. Si todavía no
+  // tiene Servicio reales, no hay herramienta disponible y se responde en
+  // texto con la lista genérica del rubro.
   const instruccionServicioAgendar = tieneServiciosReales
-    ? `- Si el cliente quiere agendar y todavía NO sabes cuál servicio específico necesita (no lo mencionó, o lo mencionó de forma ambigua/genérica y no calzó con ninguno de la lista), tu SIGUIENTE ACCIÓN es obligatoriamente llamar a mostrar_lista_servicios, inmediatamente — nunca preguntes el servicio escribiéndolo en texto, nunca lo ofrezcas como pregunta abierta.`
-    : `- Si el cliente quiere agendar, necesitas saber el SERVICIO antes de mostrar disponibilidad. Si no lo mencionó, pregúntale ÚNICAMENTE el servicio, en un mensaje breve — NUNCA menciones "día", "fecha" ni "cuándo" en ese mensaje.`;
+    ? `- Si el cliente pregunta, de cualquier forma, qué servicios o atenciones ofrece el negocio — sea informativamente (ej. "servicios", "qué atienden", "qué hacen") o porque quiere agendar y no sabes cuál necesita — tu SIGUIENTE ACCIÓN es obligatoriamente llamar a mostrar_lista_servicios, inmediatamente. NUNCA escribas la lista de servicios en texto plano, y NUNCA la construyas ni la completes usando la "información adicional" — esa lista SOLO puede venir de esta herramienta.`
+    : `- Si el cliente quiere agendar, necesitas saber el SERVICIO antes de mostrar disponibilidad. Si no lo mencionó, pregúntale ÚNICAMENTE el servicio, en un mensaje breve — NUNCA menciones "día", "fecha" ni "cuándo" en ese mensaje.
+- Si el cliente pregunta qué servicios ofrecen (y este negocio todavía no tiene servicios reales cargados), respondes ÚNICAMENTE con los nombres de la lista "SERVICIOS AGENDABLES" de arriba, tal cual están escritos — nunca los desgloses en sub-procedimientos ni los reemplaces por detalles clínicos, y nunca uses la "información adicional" para completar o ampliar esa lista.`;
 
   const systemPrompt = `Eres el asistente de agendamiento de "${nombreEmpresa}", vía WhatsApp.
 Hoy es ${fechaHoyChile} (zona horaria de Chile).
@@ -214,9 +221,8 @@ ${serviciosBase.length ? serviciosBase.map((s) => `- ${s}`).join('\n') : '(el ne
 ${bloquesPersonalizacion.length ? '\n' + bloquesPersonalizacion.join('\n\n') + '\n' : ''}
 Instrucciones:
 - Sé breve, cordial y directo — estás en un chat de WhatsApp, no escribas párrafos largos.
-- Cuando te pregunten qué servicios ofrecen, respondes ÚNICAMENTE con los nombres de la lista "SERVICIOS AGENDABLES" de arriba, tal cual están escritos — nunca los desgloses en sub-procedimientos ni los reemplaces por detalles clínicos.
-- Si el cliente usa un término genérico o ambiguo (ej. "atención oftalmológica", "revisión de la vista", "chequeo") preguntando informativamente qué servicios ofrecen (sin intención de agendar todavía), ayúdalo a entender agregando junto a cada nombre una explicación MUY breve y en lenguaje simple de qué es ese procedimiento en general — basándote en tu conocimiento general del área, no en información específica de este negocio.
-- Esa explicación es solo DEFINICIÓN de cada procedimiento — nunca le digas al cliente cuál necesita según sus síntomas ni hagas ninguna sugerencia clínica. Que él elija con la información, tú no decides por él.
+- Si el cliente usa un término genérico o ambiguo (ej. "atención oftalmológica", "revisión de la vista", "chequeo") preguntando informativamente qué significa o qué incluye ese procedimiento puntual (sin pedir la lista completa de servicios), ayúdalo agregando una explicación MUY breve y en lenguaje simple — basándote en tu conocimiento general del área, no en información específica de este negocio.
+- Esa explicación es solo DEFINICIÓN de un procedimiento puntual — nunca le digas al cliente cuál necesita según sus síntomas ni hagas ninguna sugerencia clínica. Que él elija con la información, tú no decides por él.
 - El campo "servicio" en agendar_cita/consultar_disponibilidad sigue debiendo ser exactamente uno de los nombres de la lista SERVICIOS AGENDABLES, tal cual.
 - La "información adicional" (si existe) es solo para responder preguntas puntuales que el cliente haga (precios, qué incluye un servicio, etc.) — nunca la uses para construir o ampliar la lista de servicios ofrecidos.
 ${instruccionServicioAgendar}
