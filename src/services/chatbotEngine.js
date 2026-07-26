@@ -1,6 +1,37 @@
 const prisma = require('../lib/prisma');
 const { generarRespuestaChatbot } = require('./claude');
 
+// Frases genéricas que preguntan por la lista de servicios, normalizadas
+// (sin tildes, minúsculas, sin signos de puntuación). Si el mensaje del
+// cliente calza EXACTO con alguna de estas, respondemos directo con la
+// lista real de servicios como botones — sin pasar por Claude — porque
+// confiarle esta pregunta al modelo ha resultado en que a veces arma la
+// lista mezclando contenido de "informacionAdicional" en vez de usar
+// únicamente los Servicio reales (ver systemPrompt en claude.js, que sigue
+// reforzando esto para el resto de formulaciones no cubiertas acá).
+const FRASES_PREGUNTA_SERVICIOS = new Set([
+  'servicios',
+  'que servicios',
+  'que servicios ofrecen',
+  'que servicios tienen',
+  'que servicios hacen',
+  'cuales son sus servicios',
+  'cuales son los servicios',
+  'que atienden',
+  'que hacen',
+  'que ofrecen',
+  'que servicios ofrecen ustedes',
+]);
+
+function normalizarTexto(texto) {
+  return (texto || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '') // quita tildes
+    .replace(/[¿?¡!.,]/g, '')
+    .trim();
+}
+
 /**
  * Procesa un mensaje entrante de un cliente para una empresa dada:
  * busca/crea el Cliente y la Conversacion, genera la respuesta con Claude
@@ -36,19 +67,45 @@ async function procesarMensajeEntrante({ empresa, telefonoCliente, textoEntrante
     where: { empresaId: empresa.id, telefono: telefonoCliente },
   });
 
-const historialPrevio = Array.isArray(conversacion?.mensajes) ? conversacion.mensajes : [];
+  const historialPrevio = Array.isArray(conversacion?.mensajes) ? conversacion.mensajes : [];
 
-  // 3. Generar la respuesta con Claude (puede usar herramientas de agenda).
-  // Puede venir acompañada de "interactivo" cuando hay horarios reales para
-  // mostrar como lista tocable de WhatsApp, en vez de solo texto.
-  const { texto: respuestaTexto, interactivo } = await generarRespuestaChatbot({
-    empresa,
-    cliente,
-    historial: historialPrevio,
-    mensajeEntrante: textoEntrante,
-  });
+  let respuestaTexto;
+  let interactivo = null;
 
-  // 4. Guardar el intercambio en la Conversacion. Guardamos siempre la
+  // 3. Interceptor determinístico: si el mensaje es una pregunta genérica
+  // por los servicios y la empresa tiene Servicio reales cargados,
+  // respondemos directo con la lista real como botones, sin pasar por
+  // Claude en absoluto para este turno.
+  const textoNormalizado = normalizarTexto(textoEntrante);
+  if (FRASES_PREGUNTA_SERVICIOS.has(textoNormalizado)) {
+    const serviciosReales = await prisma.servicio.findMany({
+      where: { empresaId: empresa.id, activo: true },
+      orderBy: { nombre: 'asc' },
+    });
+
+    if (serviciosReales.length > 0) {
+      respuestaTexto = 'Estos son nuestros servicios 👇';
+      interactivo = {
+        tipo: 'lista_servicios',
+        servicios: serviciosReales.map((s) => ({ id: s.id, nombre: s.nombre })),
+      };
+    }
+  }
+
+  // 4. Si el interceptor no aplicó (no coincidió la frase, o la empresa no
+  // tiene servicios reales todavía), seguimos el flujo normal con Claude.
+  if (respuestaTexto === undefined) {
+    const resultadoClaude = await generarRespuestaChatbot({
+      empresa,
+      cliente,
+      historial: historialPrevio,
+      mensajeEntrante: textoEntrante,
+    });
+    respuestaTexto = resultadoClaude.texto;
+    interactivo = resultadoClaude.interactivo;
+  }
+
+  // 5. Guardar el intercambio en la Conversacion. Guardamos siempre la
   // versión en texto (incluso cuando se mostró como lista interactiva) para
   // que el siguiente turno de Claude tenga el contexto completo.
   const mensajesActualizados = [
