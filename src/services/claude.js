@@ -245,6 +245,8 @@ ${empresa.requiereRut ? '- Este negocio EXIGE RUT para agendar. Antes de llamar 
     { role: 'user', content: mensajeEntrante },
   ];
 
+  console.log(`[DIAG] mensajeEntrante="${mensajeEntrante}" | historial.length=${historial.length}`);
+
   const contexto = { empresa, cliente, recurso, serviciosReales };
 
   // Bucle de tool use: Claude puede pedir usar una herramienta varias veces
@@ -261,12 +263,15 @@ ${empresa.requiereRut ? '- Este negocio EXIGE RUT para agendar. Antes de llamar 
 
     if (response.stop_reason !== 'tool_use') {
       const textBlock = response.content.find((b) => b.type === 'text');
+      console.log(`[DIAG] stop_reason="${response.stop_reason}" (sin tool_use) | texto="${textBlock?.text}"`);
       return { texto: textBlock ? textBlock.text : 'Disculpa, ¿puedes repetir tu mensaje?', interactivo: null };
     }
 
     // Guardamos el turno del asistente (incluye los tool_use blocks) y
     // ejecutamos cada herramienta pedida, devolviendo el resultado.
     messages.push({ role: 'assistant', content: response.content });
+
+    console.log(`[DIAG] tool_use pedido(s): ${response.content.filter((b) => b.type === 'tool_use').map((b) => b.name).join(', ') || '(ninguno)'}`);
 
     const toolResults = [];
     let horariosParaMostrar = null;
