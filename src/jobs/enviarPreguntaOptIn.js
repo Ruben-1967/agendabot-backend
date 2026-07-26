@@ -1,7 +1,7 @@
 // src/jobs/enviarPreguntaOptIn.js
 //
 // Envía la pregunta de opt-in de campañas (botones Sí/No) a clientes que
-// llevan ~3 minutos de silencio desde su último mensaje y todavía no han
+// llevan ~30 segundos de silencio desde su último mensaje y todavía no han
 // sido preguntados nunca. Aplica por igual a empresas de AGENDAMIENTO y
 // CATALOGO_ROTATIVO — no se filtra por rubro.
 //
@@ -14,11 +14,11 @@ const cron = require('node-cron');
 const prisma = require('../lib/prisma');
 const { sendWhatsAppReplyButtons } = require('../services/whatsapp');
 
-const MINUTOS_ESPERA = 3;
+const SEGUNDOS_ESPERA = 30;
 const TEXTO_PREGUNTA = '¿Quieres que te avisemos por acá de promociones y novedades?';
 
 async function enviarPreguntasOptInPendientes() {
-  const limiteEspera = new Date(Date.now() - MINUTOS_ESPERA * 60 * 1000);
+  const limiteEspera = new Date(Date.now() - SEGUNDOS_ESPERA * 1000);
 
   // Candidatos: cualquier Cliente de una empresa real (no demo), con
   // WhatsApp conectado, que nunca haya sido preguntado.
@@ -51,7 +51,7 @@ async function enviarPreguntasOptInPendientes() {
 
       const ultimoMensajeCliente = mensajesDelCliente[mensajesDelCliente.length - 1];
       const timestampUltimo = new Date(ultimoMensajeCliente.timestamp);
-      if (timestampUltimo > limiteEspera) continue; // todavía no pasaron los 3 minutos de silencio
+      if (timestampUltimo > limiteEspera) continue; // todavía no pasaron los 30 segundos de silencio
 
       const accessToken = cliente.empresa.whatsappToken || process.env.WHATSAPP_ACCESS_TOKEN;
       if (!accessToken) continue;
@@ -95,13 +95,15 @@ async function enviarPreguntasOptInPendientes() {
   }
 }
 
-// Corre cada 2 minutos — suficiente granularidad para un objetivo de ~3 min de silencio.
-cron.schedule('*/2 * * * *', () => {
+// Corre cada 20 segundos — necesario para respetar un objetivo de silencio
+// de solo 30 segundos sin agregar demasiado retraso extra por el propio
+// ciclo del cron.
+cron.schedule('*/20 * * * * *', () => {
   enviarPreguntasOptInPendientes().catch((error) => {
     console.error('[OPT-IN] Error en el ciclo del job de opt-in:', error);
   });
 });
 
-console.log('[OPT-IN] Job de preguntas de opt-in programado (cada 2 minutos).');
+console.log('[OPT-IN] Job de preguntas de opt-in programado (cada 20 segundos).');
 
 module.exports = { enviarPreguntasOptInPendientes };
