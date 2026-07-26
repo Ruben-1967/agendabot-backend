@@ -27,6 +27,11 @@ function construirTools(empresa, incluirMostrarServicios) {
   const agendarCitaRequired = ['fecha', 'hora', 'servicio'];
 
   if (empresa.requiereRut) {
+    agendarCitaProperties.nombre = {
+      type: 'string',
+      description: "Nombre completo del cliente, tal como él lo dice explícitamente en la conversación — NUNCA asumas el nombre de perfil de WhatsApp del contacto, este negocio exige preguntarlo directamente.",
+    };
+    agendarCitaRequired.push('nombre');
     agendarCitaProperties.rut = {
       type: 'string',
       description: "RUT del cliente (con guión, ej. '12345678-9'). Este negocio exige RUT para agendar.",
@@ -73,7 +78,7 @@ function construirTools(empresa, incluirMostrarServicios) {
     {
       name: 'agendar_cita',
       description: empresa.requiereRut
-        ? 'Crea una cita real en el sistema para el cliente actual, en una fecha y hora específicas que ya se confirmó que están disponibles. Solo usar después de que el cliente haya confirmado explícitamente fecha, hora, servicio Y RUT — este negocio exige RUT para agendar.'
+        ? 'Crea una cita real en el sistema para el cliente actual, en una fecha y hora específicas que ya se confirmó que están disponibles. Solo usar después de que el cliente haya confirmado explícitamente fecha, hora, servicio, nombre completo Y RUT — este negocio exige nombre y RUT para agendar (nunca asumas el nombre del perfil de WhatsApp).'
         : 'Crea una cita real en el sistema para el cliente actual, en una fecha y hora específicas que ya se confirmó que están disponibles. Solo usar después de que el cliente haya confirmado explícitamente fecha, hora y servicio.',
       input_schema: {
         type: 'object',
@@ -115,16 +120,24 @@ async function ejecutarHerramienta(nombre, input, contexto) {
       return { error: 'Esta empresa no tiene un recurso agendable configurado todavía.' };
     }
 
-    // Si la empresa exige RUT, el schema de la herramienta ya lo marca como
-    // required — esto es un resguardo extra por si Claude igual la llama sin
-    // el campo. Si viene un RUT, lo guardamos en el Cliente (se sobreescribe
-    // solo si venía vacío o distinto, así queda actualizado a futuro).
+    // Si la empresa exige RUT (y, junto con eso, nombre explícito), el
+    // schema de la herramienta ya los marca como required — esto es un
+    // resguardo extra por si Claude igual la llama sin alguno de los dos
+    // campos. Si vienen, los guardamos en el Cliente (se sobreescriben si
+    // venían vacíos o distintos, así queda actualizado a futuro) — nunca
+    // confiamos en el nombre de perfil de WhatsApp para este caso.
     if (empresa.requiereRut) {
       if (!input.rut) {
         return { error: 'Este negocio exige RUT para agendar. Pide el RUT del cliente antes de reintentar.' };
       }
-      if (cliente.rut !== input.rut) {
-        await prisma.cliente.update({ where: { id: cliente.id }, data: { rut: input.rut } });
+      if (!input.nombre) {
+        return { error: 'Este negocio exige el nombre completo del cliente para agendar. Pídeselo explícitamente antes de reintentar — no asumas el nombre de perfil de WhatsApp.' };
+      }
+      if (cliente.rut !== input.rut || cliente.nombre !== input.nombre) {
+        await prisma.cliente.update({
+          where: { id: cliente.id },
+          data: { rut: input.rut, nombre: input.nombre },
+        });
       }
     }
 
@@ -231,7 +244,7 @@ ${instruccionServicioAgendar}
   - Si el cliente NO ha mencionado ningún día todavía, usa consultar_proximos_dias_disponibles, inmediatamente, sin preguntar antes si quiere verlos.
 - Tienes PROHIBIDO escribir frases como "¿qué día te gustaría?", "¿prefieres que te muestre los días disponibles?" o similares — esa decisión la tomas tú llamando a la herramienta correspondiente, nunca preguntándola en texto.
 - NUNCA inventes horas ni días disponibles.
-${empresa.requiereRut ? '- Este negocio EXIGE RUT para agendar. Antes de llamar a agendar_cita, además de fecha/hora/servicio, pide el RUT del cliente si aún no lo tienes en la conversación.\n' : ''}- Una vez que el cliente confirme fecha, hora${empresa.requiereRut ? ', servicio y RUT' : ' y servicio'} específicos, usa agendar_cita para crear la cita de verdad. El campo "servicio" debe ser exactamente uno de los nombres de la lista SERVICIOS AGENDABLES.
+${empresa.requiereRut ? '- Este negocio EXIGE nombre completo y RUT para agendar. Antes de llamar a agendar_cita, además de fecha/hora/servicio, pide el RUT del cliente Y su nombre completo si aún no los tienes en la conversación — NUNCA asumas el nombre a partir del perfil de WhatsApp del contacto, siempre pregúntalo explícitamente.\n' : ''}- Una vez que el cliente confirme fecha, hora${empresa.requiereRut ? ', servicio, nombre y RUT' : ' y servicio'} específicos, usa agendar_cita para crear la cita de verdad. El campo "servicio" debe ser exactamente uno de los nombres de la lista SERVICIOS AGENDABLES.
 - Si agendar_cita falla porque el horario ya no está disponible, discúlpate y ofrece consultar otra hora.
 - Cuando confirmes una cita agendada, NUNCA muestres el "citaId" (es un identificador interno de la base de datos, sin ningún valor para el cliente) — el resumen debe incluir solo servicio, fecha, hora, y dirección si corresponde.
 - Si el cliente pregunta algo que no está cubierto en la información de este mensaje (precios, condiciones, detalles clínicos), no inventes: dile que lo puede confirmar directamente con el negocio.
@@ -244,8 +257,6 @@ ${empresa.requiereRut ? '- Este negocio EXIGE RUT para agendar. Antes de llamar 
     })),
     { role: 'user', content: mensajeEntrante },
   ];
-
-  console.log(`[DIAG] mensajeEntrante="${mensajeEntrante}" | historial.length=${historial.length}`);
 
   const contexto = { empresa, cliente, recurso, serviciosReales };
 
@@ -263,15 +274,12 @@ ${empresa.requiereRut ? '- Este negocio EXIGE RUT para agendar. Antes de llamar 
 
     if (response.stop_reason !== 'tool_use') {
       const textBlock = response.content.find((b) => b.type === 'text');
-      console.log(`[DIAG] stop_reason="${response.stop_reason}" (sin tool_use) | texto="${textBlock?.text}"`);
       return { texto: textBlock ? textBlock.text : 'Disculpa, ¿puedes repetir tu mensaje?', interactivo: null };
     }
 
     // Guardamos el turno del asistente (incluye los tool_use blocks) y
     // ejecutamos cada herramienta pedida, devolviendo el resultado.
     messages.push({ role: 'assistant', content: response.content });
-
-    console.log(`[DIAG] tool_use pedido(s): ${response.content.filter((b) => b.type === 'tool_use').map((b) => b.name).join(', ') || '(ninguno)'}`);
 
     const toolResults = [];
     let horariosParaMostrar = null;
