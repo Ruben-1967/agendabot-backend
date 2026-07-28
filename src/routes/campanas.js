@@ -50,7 +50,7 @@ router.get('/', async (req, res) => {
           take: 1,
         },
       },
-      orderBy: { nombre: 'asc' },
+      orderBy: { creadoEn: 'desc' },
     });
 
     res.json({
