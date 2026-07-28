@@ -6,12 +6,17 @@
 // sirve para cualquier rubro sin código distinto por caso.
 //
 // GET  /clientes/config        -> camposFicha y categorías sugeridas del rubro de la empresa
+// GET  /clientes/segmentacion  -> soporta AMBOS modos (ver más abajo)
 // GET  /clientes                -> listado con resumen de compras
 // GET  /clientes/:id            -> detalle + historial de ventas
 // POST /clientes                -> crear
 // PATCH /clientes/:id           -> editar (datos base + fichaJson)
 // POST /clientes/:id/ventas     -> registrar una venta/atención nueva
-// GET  /clientes/segmentacion   -> igual que antes, ahora soporta AMBOS modos
+//
+// IMPORTANTE: /segmentacion debe declararse ANTES que /:id — si no,
+// Express interpreta "segmentacion" como un id de cliente y la ruta
+// correcta nunca se alcanza (bug real encontrado y corregido el 26 de
+// julio, probaba "Cliente no encontrado" en vez de segmentar).
 
 const express = require('express');
 const router = express.Router();
@@ -43,6 +48,163 @@ res.json({
   } catch (error) {
     console.error('Error en GET /clientes/config:', error);
     res.status(500).json({ error: 'Error al obtener la configuración de clientes' });
+  }
+});
+
+// ------------------------------------------------------------
+// GET /clientes/segmentacion — soporta los 2 modos de operación:
+// - CATALOGO_ROTATIVO: vía Pedido/PedidoItem/Producto
+// - AGENDAMIENTO: vía Venta (categoriaProducto en vez de productoId)
+//
+// Declarada ANTES de /:id a propósito — ver nota al inicio del archivo.
+// ------------------------------------------------------------
+router.get('/segmentacion', async (req, res) => {
+  try {
+    const empresaId = req.usuario.empresaId;
+    const empresa = await prisma.empresa.findUnique({
+      where: { id: empresaId },
+      include: { rubroTemplate: true },
+    });
+    if (!empresa) return res.status(404).json({ error: 'Empresa no encontrada' });
+
+    const dias = parseInt(req.query.dias) || 30;
+    const montoMinimo = req.query.montoMinimo ? parseFloat(req.query.montoMinimo) : null;
+    const minPedidos = req.query.minPedidos ? parseInt(req.query.minPedidos) : null;
+    const productoId = req.query.productoId || null; // catálogo rotativo
+    const categoriaProducto = req.query.categoriaProducto || null; // reactivos
+    const diasSinComprar = req.query.diasSinComprar ? parseInt(req.query.diasSinComprar) : null;
+
+    const fechaInicioPeriodo = new Date();
+    fechaInicioPeriodo.setDate(fechaInicioPeriodo.getDate() - dias);
+    const hoy = new Date();
+
+    if (empresa.rubroTemplate.modoOperacion === 'CATALOGO_ROTATIVO') {
+      // ---- Lógica original, sin cambios, vía Pedido ----
+      const clientes = await prisma.cliente.findMany({
+        where: { empresaId },
+        include: {
+          pedidos: {
+            where: { creadoEn: { gte: fechaInicioPeriodo }, estado: { not: 'CANCELADO' } },
+            include: { items: { include: { producto: true } } },
+          },
+        },
+      });
+
+      const ultimasCompras = await prisma.pedido.groupBy({
+        by: ['clienteId'],
+        where: { clienteId: { in: clientes.map((c) => c.id) }, estado: { not: 'CANCELADO' } },
+        _max: { creadoEn: true },
+      });
+      const mapaUltimaCompra = new Map(ultimasCompras.map((u) => [u.clienteId, u._max.creadoEn]));
+
+      let segmentados = clientes.map((c) => {
+        const totalGastado = c.pedidos.reduce(
+          (sp, p) => sp + p.items.reduce((si, i) => si + i.cantidad * i.precioUnitario, 0),
+          0
+        );
+        const numPedidos = c.pedidos.length;
+        const conteoProductos = {};
+        c.pedidos.forEach((p) =>
+          p.items.forEach((i) => {
+            if (!conteoProductos[i.productoId]) conteoProductos[i.productoId] = { nombre: i.producto.nombre, cantidad: 0 };
+            conteoProductos[i.productoId].cantidad += i.cantidad;
+          })
+        );
+        const topEntry = Object.entries(conteoProductos).sort((a, b) => b[1].cantidad - a[1].cantidad)[0];
+        const comproProductoFiltrado = productoId
+          ? c.pedidos.some((p) => p.items.some((i) => i.productoId === productoId))
+          : true;
+        const ultimaCompraFecha = mapaUltimaCompra.get(c.id) || null;
+        const diasDesdeUltimaCompra = ultimaCompraFecha
+          ? Math.floor((hoy - new Date(ultimaCompraFecha)) / (1000 * 60 * 60 * 24))
+          : null;
+
+        return {
+          clienteId: c.id,
+          nombre: c.nombre,
+          telefono: c.telefono,
+          numPedidos,
+          totalGastado,
+          productoTopId: topEntry ? topEntry[0] : null,
+          productoTopNombre: topEntry ? topEntry[1].nombre : null,
+          ultimaCompraFecha,
+          diasDesdeUltimaCompra,
+          _comproProductoFiltrado: comproProductoFiltrado,
+        };
+      });
+
+      if (montoMinimo !== null) segmentados = segmentados.filter((c) => c.totalGastado >= montoMinimo);
+      if (minPedidos !== null) segmentados = segmentados.filter((c) => c.numPedidos >= minPedidos);
+      if (productoId) segmentados = segmentados.filter((c) => c._comproProductoFiltrado);
+      if (diasSinComprar !== null) {
+        segmentados = segmentados.filter((c) => c.diasDesdeUltimaCompra === null || c.diasDesdeUltimaCompra >= diasSinComprar);
+      }
+      segmentados = segmentados.map(({ _comproProductoFiltrado, ...resto }) => resto);
+
+      return res.json({ periodoDias: dias, totalClientes: segmentados.length, clientes: segmentados });
+    }
+
+    // ---- Modo AGENDAMIENTO: vía Venta, con categoriaProducto ----
+    const clientes = await prisma.cliente.findMany({
+      where: { empresaId },
+      include: {
+        ventas: {
+          where: { creadoEn: { gte: fechaInicioPeriodo } },
+          orderBy: { creadoEn: 'desc' },
+        },
+      },
+    });
+
+    const ultimasVentas = await prisma.venta.groupBy({
+      by: ['clienteId'],
+      where: { clienteId: { in: clientes.map((c) => c.id) } },
+      _max: { creadoEn: true },
+    });
+    const mapaUltimaVenta = new Map(ultimasVentas.map((u) => [u.clienteId, u._max.creadoEn]));
+
+    let segmentados = clientes.map((c) => {
+      const totalGastado = c.ventas.reduce((acc, v) => acc + v.monto, 0);
+      const numVentas = c.ventas.length;
+      const conteoCategorias = {};
+      c.ventas.forEach((v) => {
+        if (!v.categoriaProducto) return;
+        conteoCategorias[v.categoriaProducto] = (conteoCategorias[v.categoriaProducto] || 0) + 1;
+      });
+      const topEntry = Object.entries(conteoCategorias).sort((a, b) => b[1] - a[1])[0];
+      const comproCategoriaFiltrada = categoriaProducto
+        ? c.ventas.some((v) => v.categoriaProducto === categoriaProducto)
+        : true;
+      const ultimaCompraFecha = mapaUltimaVenta.get(c.id) || null;
+      const diasDesdeUltimaCompra = ultimaCompraFecha
+        ? Math.floor((hoy - new Date(ultimaCompraFecha)) / (1000 * 60 * 60 * 24))
+        : null;
+
+      return {
+        clienteId: c.id,
+        nombre: c.nombre,
+        telefono: c.telefono,
+        numPedidos: numVentas, // mismo nombre de campo que el panel ya espera
+        totalGastado,
+        productoTopId: null,
+        productoTopNombre: topEntry ? topEntry[0] : null,
+        ultimaCompraFecha,
+        diasDesdeUltimaCompra,
+        _comproCategoriaFiltrada: comproCategoriaFiltrada,
+      };
+    });
+
+    if (montoMinimo !== null) segmentados = segmentados.filter((c) => c.totalGastado >= montoMinimo);
+    if (minPedidos !== null) segmentados = segmentados.filter((c) => c.numPedidos >= minPedidos);
+    if (categoriaProducto) segmentados = segmentados.filter((c) => c._comproCategoriaFiltrada);
+    if (diasSinComprar !== null) {
+      segmentados = segmentados.filter((c) => c.diasDesdeUltimaCompra === null || c.diasDesdeUltimaCompra >= diasSinComprar);
+    }
+    segmentados = segmentados.map(({ _comproCategoriaFiltrada, ...resto }) => resto);
+
+    res.json({ periodoDias: dias, totalClientes: segmentados.length, clientes: segmentados });
+  } catch (error) {
+    console.error('Error en /clientes/segmentacion:', error);
+    res.status(500).json({ error: 'Error al calcular la segmentación de clientes' });
   }
 });
 
@@ -196,161 +358,6 @@ router.post('/:id/ventas', async (req, res) => {
   } catch (error) {
     console.error('Error registrando venta:', error);
     res.status(500).json({ error: 'Error al registrar la venta' });
-  }
-});
-
-// ------------------------------------------------------------
-// GET /clientes/segmentacion — ahora soporta los 2 modos de operación:
-// - CATALOGO_ROTATIVO: igual que antes, vía Pedido/PedidoItem/Producto
-// - AGENDAMIENTO: nuevo, vía Venta (categoriaProducto en vez de productoId)
-// ------------------------------------------------------------
-router.get('/segmentacion', async (req, res) => {
-  try {
-    const empresaId = req.usuario.empresaId;
-    const empresa = await prisma.empresa.findUnique({
-      where: { id: empresaId },
-      include: { rubroTemplate: true },
-    });
-    if (!empresa) return res.status(404).json({ error: 'Empresa no encontrada' });
-
-    const dias = parseInt(req.query.dias) || 30;
-    const montoMinimo = req.query.montoMinimo ? parseFloat(req.query.montoMinimo) : null;
-    const minPedidos = req.query.minPedidos ? parseInt(req.query.minPedidos) : null;
-    const productoId = req.query.productoId || null; // catálogo rotativo
-    const categoriaProducto = req.query.categoriaProducto || null; // reactivos
-    const diasSinComprar = req.query.diasSinComprar ? parseInt(req.query.diasSinComprar) : null;
-
-    const fechaInicioPeriodo = new Date();
-    fechaInicioPeriodo.setDate(fechaInicioPeriodo.getDate() - dias);
-    const hoy = new Date();
-
-    if (empresa.rubroTemplate.modoOperacion === 'CATALOGO_ROTATIVO') {
-      // ---- Lógica original, sin cambios, vía Pedido ----
-      const clientes = await prisma.cliente.findMany({
-        where: { empresaId },
-        include: {
-          pedidos: {
-            where: { creadoEn: { gte: fechaInicioPeriodo }, estado: { not: 'CANCELADO' } },
-            include: { items: { include: { producto: true } } },
-          },
-        },
-      });
-
-      const ultimasCompras = await prisma.pedido.groupBy({
-        by: ['clienteId'],
-        where: { clienteId: { in: clientes.map((c) => c.id) }, estado: { not: 'CANCELADO' } },
-        _max: { creadoEn: true },
-      });
-      const mapaUltimaCompra = new Map(ultimasCompras.map((u) => [u.clienteId, u._max.creadoEn]));
-
-      let segmentados = clientes.map((c) => {
-        const totalGastado = c.pedidos.reduce(
-          (sp, p) => sp + p.items.reduce((si, i) => si + i.cantidad * i.precioUnitario, 0),
-          0
-        );
-        const numPedidos = c.pedidos.length;
-        const conteoProductos = {};
-        c.pedidos.forEach((p) =>
-          p.items.forEach((i) => {
-            if (!conteoProductos[i.productoId]) conteoProductos[i.productoId] = { nombre: i.producto.nombre, cantidad: 0 };
-            conteoProductos[i.productoId].cantidad += i.cantidad;
-          })
-        );
-        const topEntry = Object.entries(conteoProductos).sort((a, b) => b[1].cantidad - a[1].cantidad)[0];
-        const comproProductoFiltrado = productoId
-          ? c.pedidos.some((p) => p.items.some((i) => i.productoId === productoId))
-          : true;
-        const ultimaCompraFecha = mapaUltimaCompra.get(c.id) || null;
-        const diasDesdeUltimaCompra = ultimaCompraFecha
-          ? Math.floor((hoy - new Date(ultimaCompraFecha)) / (1000 * 60 * 60 * 24))
-          : null;
-
-        return {
-          clienteId: c.id,
-          nombre: c.nombre,
-          telefono: c.telefono,
-          numPedidos,
-          totalGastado,
-          productoTopId: topEntry ? topEntry[0] : null,
-          productoTopNombre: topEntry ? topEntry[1].nombre : null,
-          ultimaCompraFecha,
-          diasDesdeUltimaCompra,
-          _comproProductoFiltrado: comproProductoFiltrado,
-        };
-      });
-
-      if (montoMinimo !== null) segmentados = segmentados.filter((c) => c.totalGastado >= montoMinimo);
-      if (minPedidos !== null) segmentados = segmentados.filter((c) => c.numPedidos >= minPedidos);
-      if (productoId) segmentados = segmentados.filter((c) => c._comproProductoFiltrado);
-      if (diasSinComprar !== null) {
-        segmentados = segmentados.filter((c) => c.diasDesdeUltimaCompra === null || c.diasDesdeUltimaCompra >= diasSinComprar);
-      }
-      segmentados = segmentados.map(({ _comproProductoFiltrado, ...resto }) => resto);
-
-      return res.json({ periodoDias: dias, totalClientes: segmentados.length, clientes: segmentados });
-    }
-
-    // ---- Modo AGENDAMIENTO: vía Venta, con categoriaProducto ----
-    const clientes = await prisma.cliente.findMany({
-      where: { empresaId },
-      include: {
-        ventas: {
-          where: { creadoEn: { gte: fechaInicioPeriodo } },
-          orderBy: { creadoEn: 'desc' },
-        },
-      },
-    });
-
-    const ultimasVentas = await prisma.venta.groupBy({
-      by: ['clienteId'],
-      where: { clienteId: { in: clientes.map((c) => c.id) } },
-      _max: { creadoEn: true },
-    });
-    const mapaUltimaVenta = new Map(ultimasVentas.map((u) => [u.clienteId, u._max.creadoEn]));
-
-    let segmentados = clientes.map((c) => {
-      const totalGastado = c.ventas.reduce((acc, v) => acc + v.monto, 0);
-      const numVentas = c.ventas.length;
-      const conteoCategorias = {};
-      c.ventas.forEach((v) => {
-        if (!v.categoriaProducto) return;
-        conteoCategorias[v.categoriaProducto] = (conteoCategorias[v.categoriaProducto] || 0) + 1;
-      });
-      const topEntry = Object.entries(conteoCategorias).sort((a, b) => b[1] - a[1])[0];
-      const comproCategoriaFiltrada = categoriaProducto
-        ? c.ventas.some((v) => v.categoriaProducto === categoriaProducto)
-        : true;
-      const ultimaCompraFecha = mapaUltimaVenta.get(c.id) || null;
-      const diasDesdeUltimaCompra = ultimaCompraFecha
-        ? Math.floor((hoy - new Date(ultimaCompraFecha)) / (1000 * 60 * 60 * 24))
-        : null;
-
-      return {
-        clienteId: c.id,
-        nombre: c.nombre,
-        telefono: c.telefono,
-        numPedidos: numVentas, // mismo nombre de campo que el panel ya espera
-        totalGastado,
-        productoTopId: null,
-        productoTopNombre: topEntry ? topEntry[0] : null,
-        ultimaCompraFecha,
-        diasDesdeUltimaCompra,
-        _comproCategoriaFiltrada: comproCategoriaFiltrada,
-      };
-    });
-
-    if (montoMinimo !== null) segmentados = segmentados.filter((c) => c.totalGastado >= montoMinimo);
-    if (minPedidos !== null) segmentados = segmentados.filter((c) => c.numPedidos >= minPedidos);
-    if (categoriaProducto) segmentados = segmentados.filter((c) => c._comproCategoriaFiltrada);
-    if (diasSinComprar !== null) {
-      segmentados = segmentados.filter((c) => c.diasDesdeUltimaCompra === null || c.diasDesdeUltimaCompra >= diasSinComprar);
-    }
-    segmentados = segmentados.map(({ _comproCategoriaFiltrada, ...resto }) => resto);
-
-    res.json({ periodoDias: dias, totalClientes: segmentados.length, clientes: segmentados });
-  } catch (error) {
-    console.error('Error en /clientes/segmentacion:', error);
-    res.status(500).json({ error: 'Error al calcular la segmentación de clientes' });
   }
 });
 
