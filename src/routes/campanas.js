@@ -15,6 +15,15 @@ router.use(requireAuth, requireRole('ADMIN'));
 const LIMITE_MENSAJE_CATALOGO = 80;
 const LIMITE_MENSAJE_AGENDAMIENTO = 400;
 
+// Los negocios de AGENDAMIENTO (reactivos) siempre usan esta misma plantilla
+// genérica de Meta — el contenido no depende de nada específico del negocio
+// (solo nombre/empresa/mensaje), así que no tiene sentido que el usuario la
+// escriba a mano y arriesgue un typo. Se fuerza en el backend (crear, editar
+// y enviar), no solo se oculta en el frontend — así ninguna campaña
+// reactiva, ni siquiera una ya creada con un valor viejo/equivocado, puede
+// terminar apuntando a otra cosa.
+const PLANTILLA_REACTIVO_FIJA = 'campana_negocio_reactivo';
+
 function inicioDeHoy() {
   const hoy = new Date();
   hoy.setHours(0, 0, 0, 0);
@@ -30,6 +39,9 @@ function finDeHoy() {
 // GET /campanas — lista de campañas de la empresa, con el envío de HOY si ya existe
 router.get('/', async (req, res) => {
   try {
+    const modoOperacion = await obtenerModoOperacion(req.usuario.empresaId);
+    const esCatalogo = modoOperacion === 'CATALOGO_ROTATIVO';
+
     const campanas = await prisma.campanaEnvio.findMany({
       where: { empresaId: req.usuario.empresaId },
       include: {
@@ -44,6 +56,9 @@ router.get('/', async (req, res) => {
     res.json({
       campanas: campanas.map((c) => ({
         ...c,
+        // En reactivos, siempre se muestra/usa la plantilla fija — corrige
+        // en la lectura cualquier valor viejo que haya quedado guardado.
+        plantillaWhatsapp: esCatalogo ? c.plantillaWhatsapp : PLANTILLA_REACTIVO_FIJA,
         envioDeHoy: c.enviosRealizados[0] || null,
         enviosRealizados: undefined,
       })),
@@ -82,8 +97,14 @@ router.post('/', async (req, res) => {
       segmentoProductoIds, segmentoCategoriasProducto,
     } = req.body;
 
-    if (!nombre || !Array.isArray(diasSemana) || !hora || !plantillaWhatsapp) {
-      return res.status(400).json({ error: 'Faltan campos: nombre, diasSemana, hora, plantillaWhatsapp' });
+    const modoOperacion = await obtenerModoOperacion(req.usuario.empresaId);
+    const esCatalogo = modoOperacion === 'CATALOGO_ROTATIVO';
+
+    // En catálogo rotativo, cada negocio puede tener su propia plantilla
+    // ("Ver el menú de hoy", etc.) — sigue siendo obligatorio escribirla. En
+    // agendamiento, la plantilla es siempre la misma y nunca se pide.
+    if (!nombre || !Array.isArray(diasSemana) || !hora || (esCatalogo && !plantillaWhatsapp)) {
+      return res.status(400).json({ error: 'Faltan campos: nombre, diasSemana, hora' + (esCatalogo ? ', plantillaWhatsapp' : '') });
     }
 
     const campana = await prisma.campanaEnvio.create({
@@ -92,7 +113,7 @@ router.post('/', async (req, res) => {
         nombre,
         diasSemana: diasSemana.map(Number),
         hora,
-        plantillaWhatsapp,
+        plantillaWhatsapp: esCatalogo ? plantillaWhatsapp : PLANTILLA_REACTIVO_FIJA,
         segmentada: Boolean(segmentada),
         segmentoDias: segmentada ? (Number(segmentoDias) || 30) : null,
         segmentoMontoMinimoClp: segmentada && segmentoMontoMinimoClp ? Number(segmentoMontoMinimoClp) : null,
@@ -122,13 +143,19 @@ router.patch('/:id', async (req, res) => {
       segmentoProductoIds, segmentoCategoriasProducto,
     } = req.body;
 
+    const modoOperacion = await obtenerModoOperacion(req.usuario.empresaId);
+    const esCatalogo = modoOperacion === 'CATALOGO_ROTATIVO';
+
     const actualizada = await prisma.campanaEnvio.update({
       where: { id: campana.id },
       data: {
         ...(nombre !== undefined && { nombre }),
         ...(diasSemana !== undefined && { diasSemana: diasSemana.map(Number) }),
         ...(hora !== undefined && { hora }),
-        ...(plantillaWhatsapp !== undefined && { plantillaWhatsapp }),
+        // En reactivos, la plantilla es siempre PLANTILLA_REACTIVO_FIJA —
+        // se ignora cualquier valor que venga del frontend, aunque exista.
+        ...(esCatalogo && plantillaWhatsapp !== undefined && { plantillaWhatsapp }),
+        ...(!esCatalogo && { plantillaWhatsapp: PLANTILLA_REACTIVO_FIJA }),
         ...(activa !== undefined && { activa: Boolean(activa) }),
         ...(segmentada !== undefined && { segmentada: Boolean(segmentada) }),
         ...(segmentoDias !== undefined && { segmentoDias: segmentoDias ? Number(segmentoDias) : null }),
@@ -327,7 +354,7 @@ router.post('/:campanaId/envios/:envioId/enviar', async (req, res) => {
           phoneNumberId: empresa.whatsappNumeroId,
           to: cliente.telefono,
           accessToken,
-          templateName: envio.campana.plantillaWhatsapp,
+          templateName: esCatalogo ? envio.campana.plantillaWhatsapp : PLANTILLA_REACTIVO_FIJA,
           variables: variablesTemplate.map((fn) => fn(cliente)),
         });
         enviados++;
