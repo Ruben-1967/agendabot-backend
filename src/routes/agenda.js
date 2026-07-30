@@ -406,4 +406,41 @@ router.delete('/bloqueos/:id', requireRole('ADMIN'), async (req, res) => {
   }
 });
 
+// ============================================================
+// PATCH /agenda/citas/:id/estado — cambiar estado de una cita
+// body: { estado: 'CONFIRMADA' | 'COMPLETADA' | 'CANCELADA' | 'NO_ASISTIO' }
+// ============================================================
+router.patch('/citas/:id/estado', requireRole('ADMIN', 'RECEPCION'), async (req, res) => {
+  try {
+    const { estado } = req.body;
+    const citaId = req.params.id;
+    const empresaId = req.usuario.empresaId;
+
+    // Validar que el estado sea válido
+    const estadosValidos = ['CONFIRMADA', 'COMPLETADA', 'CANCELADA', 'NO_ASISTIO', 'PENDIENTE'];
+    if (!estadosValidos.includes(estado)) {
+      return res.status(400).json({ error: `Estado inválido. Debe ser uno de: ${estadosValidos.join(', ')}` });
+    }
+
+    // Actualizar la cita
+    const cita = await prisma.cita.update({
+      where: { id: citaId },
+      data: { estado },
+      include: {
+        cliente: {
+          select: { id: true, nombre: true, telefono: true }
+        },
+        servicio: true,
+        recurso: true,
+      },
+    });
+
+    res.json({ cita });
+  } catch (error) {
+    console.error('Error en PATCH /agenda/citas/:id/estado:', error);
+    res.status(500).json({ error: 'Error al actualizar estado de cita' });
+  }
+});
+
+
 module.exports = router;
