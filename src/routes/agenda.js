@@ -12,6 +12,7 @@
 // punto a extender primero.
 //
 // GET    /agenda                  -> recurso (con horarios y bloqueos) + servicios
+// GET    /agenda/dashboard/:empresaId -> resumen de citas del día + agenda
 // PUT    /agenda/recurso           -> crea o actualiza el RecursoAgendable base
 // PUT    /agenda/horarios          -> reemplaza el horario semanal completo
 // POST   /agenda/bloqueos          -> crea un bloqueo (vacaciones, feriado, etc.)
@@ -25,7 +26,8 @@ const { requireAuth, requireRole } = require('../middleware/auth');
 const REGEX_HORA = /^([01]\d|2[0-3]):([0-5]\d)$/;
 
 function horaAMinutos(horaStr) {
-  const [h, m] = horaStr.split(':').map(Number);
+  const h = parseInt(horaStr.split(':')[0], 10);
+  const m = parseInt(horaStr.split(':')[1], 10);
   return h * 60 + m;
 }
 
@@ -56,6 +58,147 @@ router.get('/', requireRole('ADMIN', 'RECEPCION'), async (req, res) => {
   } catch (error) {
     console.error('Error en GET /agenda:', error);
     res.status(500).json({ error: 'Error al obtener la configuración de agenda' });
+  }
+});
+
+// ------------------------------------------------------------
+// GET /agenda/dashboard/:empresaId — resumen de citas del día
+// (citasHoy, confirmadas, listaEspera, asistencia 30 días) + detalle
+// de agenda del día completo con cards colapsables.
+// ------------------------------------------------------------
+router.get('/dashboard/:empresaId', requireRole('ADMIN', 'RECEPCION'), async (req, res) => {
+  try {
+    const { empresaId } = req.params;
+
+    // Validar que el usuario pertenece a esta empresa
+    if (req.usuario.empresaId !== empresaId) {
+      return res.status(403).json({ error: 'No autorizado' });
+    }
+
+    // Calcular "hoy" en zona horaria Chile
+    const ahora = new Date();
+    const formatter = new Intl.DateTimeFormat('es-CL', {
+      timeZone: 'America/Santiago',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    });
+    const partes = formatter.format(ahora).split('/');
+    const dia = partes[0];
+    const mes = partes[1];
+    const año = partes[2];
+    const hoyChile = new Date(`${año}-${mes}-${dia}T00:00:00Z`);
+    const mañanaChile = new Date(hoyChile.getTime() + 24 * 60 * 60 * 1000);
+
+    // 1. CITAS HOY (todas las del día, sin filtrar por estado)
+    const citasHoy = await prisma.cita.count({
+      where: {
+        empresaId,
+        fechaHoraInicio: {
+          gte: hoyChile,
+          lt: mañanaChile,
+        },
+      },
+    });
+
+    // 2. CONFIRMADAS (solo CONFIRMADA hoy)
+    const confirmadas = await prisma.cita.count({
+      where: {
+        empresaId,
+        estado: 'CONFIRMADA',
+        fechaHoraInicio: {
+          gte: hoyChile,
+          lt: mañanaChile,
+        },
+      },
+    });
+
+    // 3. LISTA DE ESPERA
+    const listaEspera = await prisma.listaEspera.count({
+      where: {
+        empresaId,
+        estado: 'ESPERANDO',
+      },
+    });
+
+    // 4. ASISTENCIA ÚLTIMOS 30 DÍAS
+    const hace30Dias = new Date(hoyChile.getTime() - 30 * 24 * 60 * 60 * 1000);
+    const completadas = await prisma.cita.count({
+      where: {
+        empresaId,
+        estado: 'COMPLETADA',
+        fechaHoraInicio: {
+          gte: hace30Dias,
+          lt: mañanaChile,
+        },
+      },
+    });
+    const noAsistio = await prisma.cita.count({
+      where: {
+        empresaId,
+        estado: 'NO_ASISTIO',
+        fechaHoraInicio: {
+          gte: hace30Dias,
+          lt: mañanaChile,
+        },
+      },
+    });
+    const asistencia30dias = completadas + noAsistio > 0
+      ? Math.round((completadas / (completadas + noAsistio)) * 100)
+      : 0;
+
+    // 5. AGENDA DEL DÍA (detalle completo)
+    const agendaHoy = await prisma.cita.findMany({
+      where: {
+        empresaId,
+        fechaHoraInicio: {
+          gte: hoyChile,
+          lt: mañanaChile,
+        },
+      },
+      include: {
+        cliente: true,
+        servicio: true,
+        recurso: true,
+      },
+      orderBy: {
+        fechaHoraInicio: 'asc',
+      },
+    });
+
+    // Formatear agenda con horas en Chile
+    const agendaFormato = agendaHoy.map((cita) => {
+      const formatterHora = new Intl.DateTimeFormat('es-CL', {
+        timeZone: 'America/Santiago',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false,
+      });
+      const hora = formatterHora.format(cita.fechaHoraInicio);
+
+      return {
+        id: cita.id,
+        hora,
+        nombre: cita.cliente?.nombre || 'Sin asignar',
+        servicio: cita.servicio?.nombre || 'Sin especificar',
+        profesional: cita.recurso?.nombre || 'Sin asignar',
+        estado: cita.estado,
+        telefono: cita.cliente?.telefono || null,
+        rut: cita.cliente?.rut || null,
+        notas: null,
+      };
+    });
+
+    res.json({
+      citasHoy,
+      confirmadas,
+      listaEspera,
+      asistencia30dias,
+      agendaHoy: agendaFormato,
+    });
+  } catch (error) {
+    console.error('Error en GET /agenda/dashboard/:empresaId:', error);
+    res.status(500).json({ error: 'Error interno del servidor' });
   }
 });
 
