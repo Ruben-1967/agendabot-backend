@@ -151,24 +151,31 @@ const mañanaChile = horaChileAFechaUTC(hoyChileISO, '23:59');
       ? Math.round((completadas / (completadas + noAsistio)) * 100)
       : 0;
 
-    // 5. AGENDA DEL DÍA (detalle completo)
-    const agendaHoy = await prisma.cita.findMany({
-      where: {
-        empresaId,
-        fechaHoraInicio: {
-          gte: hoyChile,
-          lt: mañanaChile,
-        },
+   // 5. AGENDA DEL DÍA (detalle completo)
+const agendaHoy = await prisma.cita.findMany({
+  where: {
+    empresaId,
+    fechaHoraInicio: {
+      gte: hoyChile,
+      lt: mañanaChile,
+    },
+  },
+  include: {
+    cliente: {
+      select: {
+        id: true,
+        nombre: true,
+        telefono: true,
+        fichaJson: true,
       },
-      include: {
-        //cliente: true,
-        servicio: true,
-        recurso: true,
-      },
-      orderBy: {
-        fechaHoraInicio: 'asc',
-      },
-    });
+    },
+    servicio: true,
+    recurso: true,
+  },
+  orderBy: {
+    fechaHoraInicio: 'asc',
+  },
+});
 
     // Formatear agenda con horas en Chile
     const agendaFormato = agendaHoy.map((cita) => {
