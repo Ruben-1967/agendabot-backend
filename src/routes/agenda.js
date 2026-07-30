@@ -22,6 +22,7 @@ const express = require('express');
 const router = express.Router();
 const prisma = require('../lib/prisma');
 const { requireAuth, requireRole } = require('../middleware/auth');
+const { horaChileAFechaUTC } = require('../lib/horaChile');
 
 const REGEX_HORA = /^([01]\d|2[0-3]):([0-5]\d)$/;
 
@@ -75,20 +76,23 @@ router.get('/dashboard/:empresaId', requireRole('ADMIN', 'RECEPCION'), async (re
       return res.status(403).json({ error: 'No autorizado' });
     }
 
-    // Calcular "hoy" en zona horaria Chile
-    const ahora = new Date();
-    const formatter = new Intl.DateTimeFormat('es-CL', {
-      timeZone: 'America/Santiago',
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-    });
-    const partes = formatter.format(ahora).split('/');
-    const dia = partes[0];
-    const mes = partes[1];
-    const año = partes[2];
-    const hoyChile = new Date(`${año}-${mes}-${dia}T00:00:00Z`);
-    const mañanaChile = new Date(hoyChile.getTime() + 24 * 60 * 60 * 1000);
+// Calcular "hoy" en zona horaria Chile usando formatToParts (sin asumir orden)
+const ahora = new Date();
+const formatter = new Intl.DateTimeFormat('es-CL', {
+  timeZone: 'America/Santiago',
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+});
+
+const parts = formatter.formatToParts(ahora);
+const year = parts.find(p => p.type === 'year').value;
+const month = parts.find(p => p.type === 'month').value;
+const day = parts.find(p => p.type === 'day').value;
+
+const hoyChileISO = `${year}-${month}-${day}`;
+const hoyChile = horaChileAFechaUTC(hoyChileISO, '00:00');
+const mañanaChile = horaChileAFechaUTC(hoyChileISO, '23:59');
 
     // 1. CITAS HOY (todas las del día, sin filtrar por estado)
     const citasHoy = await prisma.cita.count({
