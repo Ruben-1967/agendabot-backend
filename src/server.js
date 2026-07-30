@@ -48,6 +48,8 @@ const { renderSitioNegocio } = require('./services/sitioNegocioHtml');
 require('./jobs/enviarPreguntaOptIn');
 
 const app = express();
+// ← AGREGA ESTA LÍNEA:
+app.set('trust proxy', 1);
 
 // En desarrollo, si PANEL_FRONTEND_URL no está definida, se permite cualquier
 // origen para no bloquear pruebas locales. En producción, definir esa env var
