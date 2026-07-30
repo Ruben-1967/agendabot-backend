@@ -157,7 +157,7 @@ router.get('/dashboard/:empresaId', requireRole('ADMIN', 'RECEPCION'), async (re
         },
       },
       include: {
-        cliente: true,
+        //cliente: true,
         servicio: true,
         recurso: true,
       },
