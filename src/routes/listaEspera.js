@@ -8,10 +8,15 @@ router.get('/:empresaId', requireAuth, async (req, res) => {
   try {
     const { empresaId } = req.params;
 
+    console.log('[LISTA-ESPERA] GET request para empresaId:', empresaId);
+    console.log('[LISTA-ESPERA] Usuario:', req.user?.empresaId);
+
     if (req.user.empresaId !== empresaId) {
+      console.log('[LISTA-ESPERA] No autorizado');
       return res.status(403).json({ error: 'No autorizado' });
     }
 
+    console.log('[LISTA-ESPERA] Ejecutando findMany...');
     const listaEspera = await prisma.listaEspera.findMany({
       where: { empresaId },
       include: {
@@ -27,6 +32,8 @@ router.get('/:empresaId', requireAuth, async (req, res) => {
       orderBy: { creadoEn: 'asc' },
     });
 
+    console.log('[LISTA-ESPERA] findMany exitoso, registros:', listaEspera.length);
+
     const listaConPosicion = listaEspera.map((item, index) => ({
       ...item,
       posicion: index + 1,
@@ -37,6 +44,8 @@ router.get('/:empresaId', requireAuth, async (req, res) => {
       listaEspera: listaConPosicion,
     });
   } catch (err) {
+    console.error('[LISTA-ESPERA] ERROR CAPTURADO:', err.message);
+    console.error('[LISTA-ESPERA] Stack:', err.stack);
     res.status(500).json({ error: err.message });
   }
 });
