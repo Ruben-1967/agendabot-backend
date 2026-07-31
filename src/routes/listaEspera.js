@@ -10,7 +10,7 @@ router.get('/:empresaId', requireAuth, async (req, res) => {
     const { empresaId } = req.params;
 
     // Verificar autorización
-    if (!req.user || req.user.empresaId !== empresaId) {
+    if (!req.usuario || req.usuario.empresaId !== empresaId) {
       return res.status(403).json({ error: 'No autorizado para esta empresa' });
     }
 
@@ -59,7 +59,7 @@ router.post('/', requireAuth, async (req, res) => {
       return res.status(400).json({ error: 'empresaId y clienteId requeridos' });
     }
 
-    if (!req.user || req.user.empresaId !== empresaId) {
+    if (!req.usuario || req.usuario.empresaId !== empresaId) {
       return res.status(403).json({ error: 'No autorizado' });
     }
 
@@ -98,7 +98,7 @@ router.delete('/:id', requireAuth, async (req, res) => {
       return res.status(404).json({ error: 'No encontrado' });
     }
 
-    if (!req.user || req.user.empresaId !== registro.empresaId) {
+    if (!req.usuario || req.usuario.empresaId !== registro.empresaId) {
       return res.status(403).json({ error: 'No autorizado' });
     }
 
@@ -136,7 +136,7 @@ router.patch('/:id/estado', requireAuth, async (req, res) => {
       return res.status(404).json({ error: 'No encontrado' });
     }
 
-    if (!req.user || req.user.empresaId !== registro.empresaId) {
+    if (!req.usuario || req.usuario.empresaId !== registro.empresaId) {
       return res.status(403).json({ error: 'No autorizado' });
     }
 
