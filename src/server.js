@@ -115,6 +115,9 @@ app.use('/servicios', serviciosRouter);
 app.use('/auth-vendedor', authVendedorRouter);
 app.use('/demos', demosRouter);
 
+// Rutas de Lista de Espera
+const listaEsperaRouter = require('./routes/listaEspera');
+app.use('/lista-espera', listaEsperaRouter);
 
 app.get('/', (req, res) => {
   res.json({ status: 'ok', app: 'AgendaBot backend' });
