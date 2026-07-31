@@ -98,12 +98,12 @@ async function enviarPreguntasOptInPendientes() {
 // Corre cada 20 segundos — necesario para respetar un objetivo de silencio
 // de solo 30 segundos sin agregar demasiado retraso extra por el propio
 // ciclo del cron.
-cron.schedule('*/20 * * * * *', () => {
+cron.schedule('*/5 * * * *', () => {  // Cada 5 minutos
   enviarPreguntasOptInPendientes().catch((error) => {
     console.error('[OPT-IN] Error en el ciclo del job de opt-in:', error);
   });
 });
 
-console.log('[OPT-IN] Job de preguntas de opt-in programado (cada 20 segundos).');
+console.log('[OPT-IN] Job de preguntas de opt-in programado (cada 5 minutos).');
 
 module.exports = { enviarPreguntasOptInPendientes };
