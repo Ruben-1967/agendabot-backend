@@ -1,24 +1,25 @@
 const express = require('express');
-const { requireAuth } = require('../middleware/auth');
-const router = express.Router();
 const prisma = require('../lib/prisma');
+const { requireAuth } = require('../middleware/auth');
 
-// GET /lista-espera/:empresaId
+const router = express.Router();
+
+// GET /lista-espera/:empresaId - Traer clientes en lista de espera
 router.get('/:empresaId', requireAuth, async (req, res) => {
   try {
     const { empresaId } = req.params;
 
-    console.log('[LISTA-ESPERA] GET request para empresaId:', empresaId);
-    console.log('[LISTA-ESPERA] Usuario:', req.user?.empresaId);
-
-    if (req.user.empresaId !== empresaId) {
-      console.log('[LISTA-ESPERA] No autorizado');
-      return res.status(403).json({ error: 'No autorizado' });
+    // Verificar autorización
+    if (!req.user || req.user.empresaId !== empresaId) {
+      return res.status(403).json({ error: 'No autorizado para esta empresa' });
     }
 
-    console.log('[LISTA-ESPERA] Ejecutando findMany...');
+    // Obtener lista de espera
     const listaEspera = await prisma.listaEspera.findMany({
-      where: { empresaId },
+      where: {
+        empresaId: empresaId,
+        estado: { not: 'CANCELADO' }
+      },
       include: {
         cliente: {
           select: {
@@ -32,11 +33,11 @@ router.get('/:empresaId', requireAuth, async (req, res) => {
       orderBy: { creadoEn: 'asc' },
     });
 
-    console.log('[LISTA-ESPERA] findMany exitoso, registros:', listaEspera.length);
-
+    // Agregar posición
     const listaConPosicion = listaEspera.map((item, index) => ({
       ...item,
       posicion: index + 1,
+      diasEsperando: Math.floor((Date.now() - new Date(item.creadoEn).getTime()) / (1000 * 60 * 60 * 24))
     }));
 
     res.json({
@@ -44,74 +45,47 @@ router.get('/:empresaId', requireAuth, async (req, res) => {
       listaEspera: listaConPosicion,
     });
   } catch (err) {
-    console.error('[LISTA-ESPERA] ERROR CAPTURADO:', err.message);
-    console.error('[LISTA-ESPERA] Stack:', err.stack);
-    res.status(500).json({ error: err.message });
+    console.error('[LISTA-ESPERA] Error:', err);
+    res.status(500).json({ error: 'Error al cargar lista de espera' });
   }
 });
 
-// POST /lista-espera
+// POST /lista-espera - Agregar cliente a lista
 router.post('/', requireAuth, async (req, res) => {
   try {
-    const { empresaId, clienteId, preferenciaRecursoId, preferenciaFranja } = req.body;
+    const { empresaId, clienteId, preferenciaFranja } = req.body;
 
     if (!empresaId || !clienteId) {
       return res.status(400).json({ error: 'empresaId y clienteId requeridos' });
     }
 
-    if (req.user.empresaId !== empresaId) {
+    if (!req.user || req.user.empresaId !== empresaId) {
       return res.status(403).json({ error: 'No autorizado' });
     }
 
-    const cliente = await prisma.cliente.findUnique({
-      where: { id: clienteId },
-    });
-
-    if (!cliente || cliente.empresaId !== empresaId) {
-      return res.status(404).json({ error: 'Cliente no encontrado' });
-    }
-
-    const yaEnLista = await prisma.listaEspera.findFirst({
-      where: {
-        empresaId,
-        clienteId,
-        estado: { not: 'CANCELADO' },
-      },
-    });
-
-    if (yaEnLista) {
-      return res.status(409).json({ error: 'Cliente ya en lista de espera' });
-    }
-
-    const nuevoRegistro = await prisma.listaEspera.create({
+    const registro = await prisma.listaEspera.create({
       data: {
         empresaId,
         clienteId,
-        preferenciaRecursoId: preferenciaRecursoId || null,
         preferenciaFranja: preferenciaFranja || null,
         estado: 'ESPERANDO',
       },
       include: {
-        cliente: {
-          select: {
-            id: true,
-            nombre: true,
-            telefono: true,
-          },
-        },
+        cliente: true,
       },
     });
 
     res.status(201).json({
       message: 'Cliente agregado a lista de espera',
-      listaEspera: nuevoRegistro,
+      listaEspera: registro,
     });
   } catch (err) {
+    console.error('[LISTA-ESPERA] Error POST:', err);
     res.status(500).json({ error: err.message });
   }
 });
 
-// DELETE /lista-espera/:id
+// DELETE /lista-espera/:id - Remover de lista
 router.delete('/:id', requireAuth, async (req, res) => {
   try {
     const { id } = req.params;
@@ -124,7 +98,7 @@ router.delete('/:id', requireAuth, async (req, res) => {
       return res.status(404).json({ error: 'No encontrado' });
     }
 
-    if (req.user.empresaId !== registro.empresaId) {
+    if (!req.user || req.user.empresaId !== registro.empresaId) {
       return res.status(403).json({ error: 'No autorizado' });
     }
 
@@ -138,11 +112,12 @@ router.delete('/:id', requireAuth, async (req, res) => {
       listaEspera: actualizado,
     });
   } catch (err) {
+    console.error('[LISTA-ESPERA] Error DELETE:', err);
     res.status(500).json({ error: err.message });
   }
 });
 
-// PATCH /lista-espera/:id/estado
+// PATCH /lista-espera/:id/estado - Cambiar estado
 router.patch('/:id/estado', requireAuth, async (req, res) => {
   try {
     const { id } = req.params;
@@ -161,7 +136,7 @@ router.patch('/:id/estado', requireAuth, async (req, res) => {
       return res.status(404).json({ error: 'No encontrado' });
     }
 
-    if (req.user.empresaId !== registro.empresaId) {
+    if (!req.user || req.user.empresaId !== registro.empresaId) {
       return res.status(403).json({ error: 'No autorizado' });
     }
 
@@ -169,7 +144,7 @@ router.patch('/:id/estado', requireAuth, async (req, res) => {
       where: { id },
       data: {
         estado: nuevoEstado,
-        ofrecidoEn: nuevoEstado === 'OFRECIDO' ? new Date() : registro.ofrecidoEn,
+        ofrecidoEn: nuevoEstado === 'OFRECIDO' ? new Date() : undefined,
       },
     });
 
@@ -178,62 +153,7 @@ router.patch('/:id/estado', requireAuth, async (req, res) => {
       listaEspera: actualizado,
     });
   } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// POST /lista-espera/:id/agendar
-router.post('/:id/agendar', requireAuth, async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { fechaHoraInicio, fechaHoraFin, recursoAgendableId, servicioId } = req.body;
-
-    if (!fechaHoraInicio || !fechaHoraFin || !recursoAgendableId) {
-      return res.status(400).json({ error: 'Faltan datos requeridos' });
-    }
-
-    const registro = await prisma.listaEspera.findUnique({
-      where: { id },
-    });
-
-    if (!registro) {
-      return res.status(404).json({ error: 'No encontrado' });
-    }
-
-    if (req.user.empresaId !== registro.empresaId) {
-      return res.status(403).json({ error: 'No autorizado' });
-    }
-
-    const resultado = await prisma.$transaction(async (tx) => {
-      const cita = await tx.cita.create({
-        data: {
-          empresaId: registro.empresaId,
-          recursoAgendableId,
-          servicioId: servicioId || null,
-          clienteId: registro.clienteId,
-          fechaHoraInicio: new Date(fechaHoraInicio),
-          fechaHoraFin: new Date(fechaHoraFin),
-          estado: 'CONFIRMADA',
-          origenCanal: 'panel',
-          creadoEn: new Date(),
-          actualizadoEn: new Date(),
-        },
-      });
-
-      const listaActualizada = await tx.listaEspera.update({
-        where: { id },
-        data: { estado: 'CONFIRMADO' },
-      });
-
-      return { cita, listaEspera: listaActualizada };
-    });
-
-    res.json({
-      message: 'Cliente agendado desde lista de espera',
-      cita: resultado.cita,
-      listaEspera: resultado.listaEspera,
-    });
-  } catch (err) {
+    console.error('[LISTA-ESPERA] Error PATCH:', err);
     res.status(500).json({ error: err.message });
   }
 });
