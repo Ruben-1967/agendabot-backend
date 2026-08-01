@@ -19,7 +19,8 @@ const { obtenerDisponibilidad, validarSlot } = require('../lib/disponibilidadSer
  * - fechaDesde: YYYY-MM-DD (default: hoy)
  * - fechaHasta: YYYY-MM-DD (default: hoy + 30 días)
  */
-router.get('/:recursoId', requireAuth, async (req, res) => {
+// router.get('/:recursoId', requireAuth, async (req, res) => {
+router.get('/:recursoId', async (req, res) => {  // Comentá requireAuth
   try {
     const { recursoId } = req.params;
     const { fechaDesde, fechaHasta } = req.query;
