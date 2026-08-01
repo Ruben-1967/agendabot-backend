@@ -105,6 +105,18 @@ function verificarFirmaWebhookWhatsApp(req, res, next) {
   next();
 }
 
+const cors = require('cors');
+
+app.use(cors({
+  origin: [
+    'https://agendabot-panel.onrender.com',
+    'http://localhost:5173', // desarrollo local
+  ],
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+}));
+
 app.use('/auth', authRouter);
 app.use('/campanas', campanasRouter);
 app.use('/productos', productosRouter);
