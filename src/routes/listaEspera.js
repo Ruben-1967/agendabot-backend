@@ -158,4 +158,110 @@ router.patch('/:id/estado', requireAuth, async (req, res) => {
   }
 });
 
+// POST /lista-espera/:id/agendar - Agendar paciente desde lista de espera
+router.post('/:id/agendar', requireAuth, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { fecha, hora, profesionalId } = req.body;
+
+    if (!fecha || !hora) {
+      return res.status(400).json({ error: 'Falta fecha u hora' });
+    }
+
+    // Obtener el registro de lista de espera
+    const listaEsperaItem = await prisma.listaEspera.findUnique({
+      where: { id },
+      include: { cliente: true },
+    });
+
+    if (!listaEsperaItem) {
+      return res.status(404).json({ error: 'Registro no encontrado en lista de espera' });
+    }
+
+    // Validar autorización
+    if (!req.usuario || req.usuario.empresaId !== listaEsperaItem.empresaId) {
+      return res.status(403).json({ error: 'No autorizado' });
+    }
+
+    // Obtener recurso agendable (usar preferenciaRecursoId o el primero disponible)
+    let recursoId = listaEsperaItem.preferenciaRecursoId;
+    
+    if (!recursoId) {
+      const recursoDefault = await prisma.recursoAgendable.findFirst({
+        where: { empresaId: listaEsperaItem.empresaId },
+        select: { id: true },
+      });
+      if (!recursoDefault) {
+        return res.status(400).json({ error: 'No hay recurso agendable disponible' });
+      }
+      recursoId = recursoDefault.id;
+    }
+
+    // Obtener recurso con duración
+    const recurso = await prisma.recursoAgendable.findUnique({
+      where: { id: recursoId },
+      select: { duracionCitaMinutos: true },
+    });
+
+    if (!recurso) {
+      return res.status(404).json({ error: 'Recurso no encontrado' });
+    }
+
+    // Parsear fecha y hora
+    const [año, mes, día] = fecha.split('-').map(Number);
+    const [horaNum, minNum] = hora.split(':').map(Number);
+
+    const fechaHoraInicio = new Date(año, mes - 1, día, horaNum, minNum, 0);
+    const fechaHoraFin = new Date(
+      fechaHoraInicio.getTime() + (recurso.duracionCitaMinutos || 30) * 60 * 1000
+    );
+
+    // Verificar que no haya conflicto con otras citas
+    const conflicto = await prisma.cita.findFirst({
+      where: {
+        recursoAgendableId: recursoId,
+        estado: { not: 'CANCELADA' },
+        fechaHoraInicio: { lt: fechaHoraFin },
+        fechaHoraFin: { gt: fechaHoraInicio },
+      },
+    });
+
+    if (conflicto) {
+      return res.status(400).json({ error: 'Hay un conflicto con otra cita en ese horario' });
+    }
+
+    // Crear la cita
+    const cita = await prisma.cita.create({
+      data: {
+        empresaId: listaEsperaItem.empresaId,
+        clienteId: listaEsperaItem.clienteId,
+        recursoAgendableId: recursoId,
+        fechaHoraInicio,
+        fechaHoraFin,
+        profesionalAsignadoId: profesionalId || null,
+        estado: 'CONFIRMADA',
+        origenCanal: 'panel',
+      },
+      include: {
+        cliente: true,
+        recurso: true,
+      },
+    });
+
+    // Actualizar lista de espera a CONFIRMADO
+    await prisma.listaEspera.update({
+      where: { id },
+      data: { estado: 'CONFIRMADO' },
+    });
+
+    res.json({
+      message: 'Paciente agendado correctamente',
+      cita,
+    });
+  } catch (error) {
+    console.error('Error en POST /lista-espera/:id/agendar:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 module.exports = router;

@@ -442,5 +442,78 @@ router.patch('/citas/:id/estado', requireRole('ADMIN', 'RECEPCION'), async (req,
   }
 });
 
+// POST /agenda/citas/:id/reagendar
+// Reagenda una cita a una nueva fecha/hora
+router.post('/citas/:id/reagendar', requireRole('ADMIN', 'RECEPCION'), async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { nuevaFecha, nuevaHora, profesionalId } = req.body;
+
+    if (!nuevaFecha || !nuevaHora) {
+      return res.status(400).json({ error: 'Falta nuevaFecha o nuevaHora' });
+    }
+
+    // Obtener la cita
+    const cita = await prisma.cita.findUnique({
+      where: { id },
+      include: { recurso: true, cliente: true },
+    });
+
+    if (!cita) {
+      return res.status(404).json({ error: 'Cita no encontrada' });
+    }
+
+    // Validar que pertenezca a la empresa del usuario
+    if (cita.empresa.id !== req.usuario.empresaId) {
+      return res.status(403).json({ error: 'No tienes permiso' });
+    }
+
+    // Parsear la nueva fecha/hora
+    const [año, mes, día] = nuevaFecha.split('-').map(Number);
+    const [hora, minutos] = nuevaHora.split(':').map(Number);
+
+    const nuevaFechaHoraInicio = new Date(año, mes - 1, día, hora, minutos, 0);
+    const nuevaFechaHoraFin = new Date(
+      nuevaFechaHoraInicio.getTime() + (cita.recurso.duracionCitaMinutos || 30) * 60 * 1000
+    );
+
+    // Verificar que no haya conflicto con otras citas
+    const conflicto = await prisma.cita.findFirst({
+      where: {
+        id: { not: id },
+        recursoAgendableId: cita.recursoAgendableId,
+        estado: { not: 'CANCELADA' },
+        fechaHoraInicio: { lt: nuevaFechaHoraFin },
+        fechaHoraFin: { gt: nuevaFechaHoraInicio },
+      },
+    });
+
+    if (conflicto) {
+      return res.status(400).json({ error: 'Hay un conflicto con otra cita en ese horario' });
+    }
+
+    // Actualizar la cita
+    const citaActualizada = await prisma.cita.update({
+      where: { id },
+      data: {
+        fechaHoraInicio: nuevaFechaHoraInicio,
+        fechaHoraFin: nuevaFechaHoraFin,
+        profesionalAsignadoId: profesionalId || null,
+      },
+      include: {
+        cliente: true,
+        recurso: true,
+      },
+    });
+
+    res.json({
+      message: 'Cita reagendada correctamente',
+      cita: citaActualizada,
+    });
+  } catch (error) {
+    console.error('Error en POST /agenda/citas/:id/reagendar:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
 
 module.exports = router;
