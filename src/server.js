@@ -118,7 +118,7 @@ app.use('/auth-vendedor', authVendedorRouter);
 app.use('/demos', demosRouter);
 app.use('/lista-espera', listaEsperaRouter);
 app.use('/conversaciones', conversacionesRouter);
-
+app.use('/disponibilidad', require('./routes/disponibilidad'));
 
 
 app.get('/', (req, res) => {
