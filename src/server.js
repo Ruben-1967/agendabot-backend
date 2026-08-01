@@ -41,6 +41,8 @@ const { generarHorasSimuladasParaDia } = require('./lib/agendaDemoSimulada');
 const { RUBROS_MENU_GENERICO } = require('./lib/rubrosMenuGenerico');
 const { renderPanelDemo } = require('./services/panelDemoHtml');
 const { renderSitioNegocio } = require('./services/sitioNegocioHtml');
+const listaEsperaRouter = require('./routes/listaEspera');
+const conversacionesRouter = require('./routes/conversaciones');
 
 // Job de opt-in de campañas (node-cron autoprogramado dentro de este mismo
 // proceso — ver src/jobs/enviarPreguntaOptIn.js). Requerirlo una sola vez
@@ -114,10 +116,10 @@ app.use('/agenda', agendaRouter);
 app.use('/servicios', serviciosRouter);
 app.use('/auth-vendedor', authVendedorRouter);
 app.use('/demos', demosRouter);
-
-// Rutas de Lista de Espera
-const listaEsperaRouter = require('./routes/listaEspera');
 app.use('/lista-espera', listaEsperaRouter);
+app.use('/conversaciones', conversacionesRouter);
+
+
 
 app.get('/', (req, res) => {
   res.json({ status: 'ok', app: 'AgendaBot backend' });

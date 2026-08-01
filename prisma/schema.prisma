@@ -12,15 +12,7 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-// ------------------------------------------------------------
 // RUBROS Y PLANTILLAS
-// Define qué campos captura la "ficha de cliente" de cada rubro
-// (receta óptica, ficha estética, ficha de equipo, etc.)
-// ------------------------------------------------------------
-
-// AGENDAMIENTO: el cliente escribe primero y agenda un horario (óptica, estética, etc.)
-// CATALOGO_ROTATIVO: el negocio inicia el contacto ofreciendo un catálogo que cambia
-// seguido (panadería, rotisería, viandas, verdulería, carnicería, meal prep, etc.)
 enum ModoOperacionRubro {
   AGENDAMIENTO
   CATALOGO_ROTATIVO
@@ -28,56 +20,47 @@ enum ModoOperacionRubro {
 
 model RubroTemplate {
   id            String   @id @default(uuid())
-  clave         String   @unique // "optica", "centro_estetico", "salud_independiente", "mantencion_tecnica", "panaderia_gourmet", "otro"
+  clave         String   @unique
   nombre        String
   modoOperacion ModoOperacionRubro @default(AGENDAMIENTO)
-  camposFicha   Json     // definición de los campos de la ficha de cliente para este rubro
-  serviciosBase Json     // lista de tipos de servicio sugeridos (ej. "Examen de la vista") o catálogo sugerido si es CATALOGO_ROTATIVO
-  automatizacionesBase Json // reglas de automatización sugeridas (ej. recordatorio de control anual)
+  camposFicha   Json
+  serviciosBase Json
+  automatizacionesBase Json
   creadoEn      DateTime @default(now())
-  categoriasProductoSugeridas Json? // arreglo de strings sugeridos al registrar una venta, ej. ["Lente monofocal", "Lente progresivo", ...] — arma el selector en el panel y el filtro de segmentación de campañas
+  categoriasProductoSugeridas Json?
 
   empresas Empresa[]
 }
 
-// ------------------------------------------------------------
 // EMPRESAS (TENANTS)
-// Cada cliente de AgendaBot es una Empresa (Ahorróptica, etc.)
-// ------------------------------------------------------------
 model Empresa {
   id              String   @id @default(uuid())
-  nombre          String   // "Ahorróptica"
-  sucursal        String?  // "Sucursal Lautaro"
+  nombre          String
+  sucursal        String?
   rut             String?
   telefonoContacto String?
-
 
   rubroTemplate   RubroTemplate @relation(fields: [rubroTemplateId], references: [id])
   rubroTemplateId String
 
-  logoUrl         String? // URL del logo del negocio (para el panel, el chatbot, y la futura landing page)
-
-  // Personalización del negocio — pensado para que cada empresa lo cargue
-  // ella misma vía el panel de "Información del negocio" (pendiente de UI),
-  // en vez de que MultiDigital lo cargue a mano por script.
-  direccion         String? // dirección real, usada en confirmaciones/recordatorios del bot
-  notaAgendamiento  String? // texto libre que el bot puede citar sobre políticas de agendamiento (ej. "cupos limitados, avisar con anticipación si no puede asistir")
-  informacionAdicional String? @db.Text // FAQ/precios/promociones que el bot puede citar TAL CUAL — nunca debe inventar nada fuera de esto
-  requiereRut       Boolean @default(false) // si true, agendar_cita exige RUT del cliente antes de crear la cita
-   sitioWeb        String? // URL del sitio web, si tiene — usado para extracción asistida de información
-
-  // WhatsApp Business propio del cliente (no de MultiDigital)
-  whatsappNumeroId String? // phone_number_id de Meta
-  whatsappWabaId   String? // ID de la WhatsApp Business Account
-  whatsappToken    String? // token de acceso (almacenar cifrado en producción)
+  logoUrl         String?
+  whatsappNumeroId String?
+  whatsappWabaId   String?
+  whatsappToken    String?
 
   googleCalendarId    String?
-  googleRefreshToken  String? // almacenar cifrado en producción
+  googleRefreshToken  String?
+
+  direccion         String?
+  notaAgendamiento  String?
+  informacionAdicional String? @db.Text
+  requiereRut       Boolean @default(false)
+  sitioWeb        String?
 
   creadoEn        DateTime @default(now())
 
   usuarios        Usuario[]
-  recursos        RecursoAgendable[]
+  recursosAgendables RecursoAgendable[]
   clientes        Cliente[]
   servicios       Servicio[]
   citas           Cita[]
@@ -85,31 +68,29 @@ model Empresa {
   conversaciones  Conversacion[]
   ventas          Venta[]
   suscripcion     Suscripcion?
-  contratosAceptados ContratoAceptado[]
+  contratos       ContratoAceptado[]
 
-  // Catálogo rotativo (panadería, rotisería, viandas, etc.)
   productos       Producto[]
   campanasEnvio   CampanaEnvio[]
   pedidos         Pedido[]
-
-  // Créditos prepagados de campaña
+  
   billeteraCreditos      BilleteraCreditos?
   ordenesCompraCreditos  OrdenCompraCreditos[]
 
-  // Demos comerciales
   esDemo         Boolean @default(false)
   demosAsignadas DemoAsignada[]
+
+  profesionales   Profesional[]
+  bloqueosProfesional BloqueoProfesional[]
 
   @@index([rubroTemplateId])
 }
 
-// ------------------------------------------------------------
-// USUARIOS DEL PANEL (staff de cada empresa)
-// ------------------------------------------------------------
+// USUARIOS DEL PANEL
 enum RolUsuario {
-  ADMIN       // dueño/administrador de la empresa cliente
-  RECEPCION   // solo agenda, sin ver datos clínicos
-  PROFESIONAL // ve su propia disponibilidad y ficha clínica de sus clientes
+  ADMIN
+  RECEPCION
+  PROFESIONAL
 }
 
 model Usuario {
@@ -122,7 +103,6 @@ model Usuario {
   passwordHash String
   rol       RolUsuario
 
-  // Si el usuario es un profesional, se vincula a su recurso agendable
   recursoAgendable   RecursoAgendable? @relation(fields: [recursoAgendableId], references: [id])
   recursoAgendableId String?
 
@@ -131,19 +111,42 @@ model Usuario {
   @@index([empresaId])
 }
 
-// ------------------------------------------------------------
-// RECURSOS AGENDABLES (profesionales, boxes, máquinas, etc.)
-// ------------------------------------------------------------
+// PROFESIONALES (NUEVO - OPCIÓN C)
+model Profesional {
+  id            String   @id @default(uuid())
+  empresa       Empresa  @relation(fields: [empresaId], references: [id])
+  empresaId     String
+
+  nombre        String
+  especialidad  String?
+  email         String?
+  telefono      String?
+  activo        Boolean  @default(true)
+
+  recursosAgendables RecursoAgendable[]
+  citasAsignadas     Cita[]
+  bloqueosProfesional BloqueoProfesional[]
+
+  creadoEn      DateTime @default(now())
+  actualizadoEn DateTime @updatedAt
+
+  @@index([empresaId])
+}
+
+// RECURSOS AGENDABLES
 model RecursoAgendable {
   id        String   @id @default(uuid())
   empresa   Empresa  @relation(fields: [empresaId], references: [id])
   empresaId String
 
-  nombre    String   // "Dra. Camila Reyes"
-  tipo      String   @default("profesional") // "profesional" | "box" | "equipo"
+  nombre    String
+  tipo      String   @default("profesional")
+
+  profesionalId String?
+  profesional   Profesional? @relation(fields: [profesionalId], references: [id])
 
   duracionCitaMinutos   Int @default(30)
-  anticipacionMinimaMin Int @default(120) // minutos mínimos antes de poder agendar
+  anticipacionMinimaMin Int @default(120)
   horizonteAgendaDias   Int @default(28)
 
   horarios     HorarioSemanal[]
@@ -152,6 +155,7 @@ model RecursoAgendable {
   usuarios     Usuario[]
 
   @@index([empresaId])
+  @@index([profesionalId])
 }
 
 model HorarioSemanal {
@@ -159,9 +163,9 @@ model HorarioSemanal {
   recurso            RecursoAgendable @relation(fields: [recursoAgendableId], references: [id])
   recursoAgendableId String
 
-  diaSemana  Int      // 0 = domingo ... 6 = sábado
-  horaInicio String   // "09:00"
-  horaFin    String   // "13:00"
+  diaSemana  Int
+  horaInicio String
+  horaFin    String
   activo     Boolean  @default(true)
 
   @@index([recursoAgendableId])
@@ -179,15 +183,29 @@ model Bloqueo {
   @@index([recursoAgendableId])
 }
 
-// ------------------------------------------------------------
-// SERVICIOS (tipos de atención que ofrece cada empresa)
-// ------------------------------------------------------------
+// BLOQUEOS DE PROFESIONAL
+model BloqueoProfesional {
+  id              String   @id @default(uuid())
+  profesional     Profesional @relation(fields: [profesionalId], references: [id])
+  profesionalId   String
+  empresa         Empresa @relation(fields: [empresaId], references: [id])
+  empresaId       String
+
+  fechaInicio DateTime
+  fechaFin    DateTime
+  motivo      String?
+
+  @@index([profesionalId])
+  @@index([empresaId])
+}
+
+// SERVICIOS
 model Servicio {
   id        String   @id @default(uuid())
   empresa   Empresa  @relation(fields: [empresaId], references: [id])
   empresaId String
 
-  nombre    String   // "Examen de la vista", "Limpieza facial", "Mantención preventiva"
+  nombre    String
   duracionMinutos Int?
   activo    Boolean  @default(true)
 
@@ -196,9 +214,7 @@ model Servicio {
   @@index([empresaId])
 }
 
-// ------------------------------------------------------------
-// CLIENTES / PACIENTES (genérico, ficha configurable por rubro)
-// ------------------------------------------------------------
+// CLIENTES
 model Cliente {
   id        String   @id @default(uuid())
   empresa   Empresa  @relation(fields: [empresaId], references: [id])
@@ -210,29 +226,15 @@ model Cliente {
   email     String?
   fechaNacimiento DateTime?
 
-  // Datos específicos del rubro (receta óptica, ficha estética, ficha de equipo, etc.)
-  // La estructura de este JSON la define RubroTemplate.camposFicha
-  // Los campos "clínicos" dentro de fichaJson deben filtrarse por rol al leer (RECEPCION no los ve)
   fichaJson Json?
 
   consentimientoDatos Boolean @default(false)
   consentimientoFecha DateTime?
 
-  // Si es false, se excluye de los envíos masivos de campañas (catálogo rotativo).
-  // No afecta su capacidad de escribir y recibir respuesta normalmente.
   optInCampanas Boolean @default(true)
-
-  // Opt-in embebido en la conversación natural (ver chatbotEngine.js):
-  // optInCampanasPreguntado -> ya se le hizo la pregunta alguna vez en su
-  // vida (independiente de la respuesta), para no volver a insistir nunca.
-  // optInPreguntaPendiente -> true solo mientras se espera su respuesta al
-  // turno inmediatamente siguiente a la pregunta.
   optInCampanasPreguntado Boolean @default(false)
   optInPreguntaPendiente  Boolean @default(false)
 
-  // Control de recordatorios automáticos (evita reenviar el mismo aviso
-  // repetidamente). Se agregarán más campos similares si se suman otros
-  // tipos de recordatorio por rubro (ej. próxima sesión, mantención).
   recordatorioControlAnualEnviadoEn DateTime?
 
   creadoEn  DateTime @default(now())
@@ -247,9 +249,7 @@ model Cliente {
   @@index([telefono])
 }
 
-// ------------------------------------------------------------
 // CITAS
-// ------------------------------------------------------------
 enum EstadoCita {
   PENDIENTE
   CONFIRMADA
@@ -272,21 +272,20 @@ model Cita {
   servicio  Servicio? @relation(fields: [servicioId], references: [id])
   servicioId String?
 
+  profesionalAsignado Profesional? @relation(fields: [profesionalAsignadoId], references: [id])
+  profesionalAsignadoId String?
+
   fechaHoraInicio DateTime
   fechaHoraFin    DateTime
   estado    EstadoCita @default(PENDIENTE)
 
-  // Control del recordatorio de confirmación (24h antes, luego cada 1h,
-  // hasta 3 intentos — ver src/jobs/confirmarCitasProximas.js). No confundir
-  // con recordatorioControlAnualEnviadoEn en Cliente, que es un recordatorio
-  // anual distinto (control de la vista), no de una cita puntual.
   confirmacionIntentos      Int      @default(0)
   confirmacionUltimoEnvioEn DateTime?
   canceladaPorNoConfirmar   Boolean  @default(false)
 
-  googleEventId String? // id del evento creado en Google Calendar
+  googleEventId String?
 
-  origenCanal String @default("whatsapp") // "whatsapp" | "panel" | "widget"
+  origenCanal String @default("whatsapp")
 
   creadoEn  DateTime @default(now())
   actualizadoEn DateTime @updatedAt
@@ -294,11 +293,10 @@ model Cita {
   @@index([empresaId, fechaHoraInicio])
   @@index([clienteId])
   @@index([recursoAgendableId])
+  @@index([profesionalAsignadoId])
 }
 
-// ------------------------------------------------------------
 // LISTA DE ESPERA
-// ------------------------------------------------------------
 enum EstadoListaEspera {
   ESPERANDO
   OFRECIDO
@@ -315,8 +313,8 @@ model ListaEspera {
   cliente   Cliente  @relation(fields: [clienteId], references: [id])
   clienteId String
 
-  preferenciaRecursoId String?  // null = cualquier profesional
-  preferenciaFranja    String?  // ej. "AM", "PM", "esta semana"
+  preferenciaRecursoId String?
+  preferenciaFranja    String?
 
   estado    EstadoListaEspera @default(ESPERANDO)
   ofrecidoEn DateTime?
@@ -327,9 +325,7 @@ model ListaEspera {
   @@index([empresaId])
 }
 
-// ------------------------------------------------------------
-// CONVERSACIONES DE WHATSAPP (historial + estado del chatbot)
-// ------------------------------------------------------------
+// CONVERSACIONES
 model Conversacion {
   id        String   @id @default(uuid())
   empresa   Empresa  @relation(fields: [empresaId], references: [id])
@@ -338,8 +334,8 @@ model Conversacion {
   cliente   Cliente? @relation(fields: [clienteId], references: [id])
   clienteId String?
 
-  telefono  String   // número del paciente, por si aún no existe como Cliente
-  mensajes  Json      // arreglo de {rol, contenido, timestamp}
+  telefono  String
+  mensajes  Json
   escaladoAHumano Boolean @default(false)
 
   actualizadoEn DateTime @updatedAt
@@ -349,9 +345,7 @@ model Conversacion {
   @@index([telefono])
 }
 
-// ------------------------------------------------------------
-// VENTAS (compras del cliente: armazones, sesiones, mantenciones, etc.)
-// ------------------------------------------------------------
+// VENTAS
 enum EstadoPagoVenta {
   PAGADO
   PENDIENTE
@@ -365,12 +359,12 @@ model Venta {
   cliente   Cliente  @relation(fields: [clienteId], references: [id])
   clienteId String
 
-  descripcion String  // "Armazón Ray-Ban + cristales progresivos"
-  monto       Int     // en CLP
+  descripcion String
+  monto       Int
   estadoPago  EstadoPagoVenta @default(PENDIENTE)
 
-  fichaAsociadaId String? // referencia opcional a la receta/ficha vigente al momento de la venta
-  categoriaProducto String? // ej. "Lente monofocal", "Lente progresivo", "Lente de contacto", "Solo atención" — permite segmentar campañas por tipo de producto/servicio comprado, igual que productoId lo hace en el catálogo rotativo
+  fichaAsociadaId String?
+  categoriaProducto String?
 
   creadoEn  DateTime @default(now())
 
@@ -378,14 +372,12 @@ model Venta {
   @@index([clienteId])
 }
 
-// ------------------------------------------------------------
-// SUSCRIPCIÓN Y FACTURACIÓN
-// ------------------------------------------------------------
+// SUSCRIPCIÓN
 enum PlanSuscripcion {
   PLAN_A
   PLAN_B
   PLAN_C
-  PLAN_INICIO_LEGACY // condiciones especiales de Ahorróptica, pre-grilla A/B/C
+  PLAN_INICIO_LEGACY
 }
 
 enum EstadoSuscripcion {
@@ -403,10 +395,10 @@ model Suscripcion {
   plan      PlanSuscripcion
   estado    EstadoSuscripcion @default(PENDIENTE_PAGO)
 
-  tokenFlow String?  // token de tarjeta tokenizada en Flow
+  tokenFlow String?
 
   fechaInicio           DateTime @default(now())
-  fechaCambioPrecio     DateTime? // fechaInicio + 6 meses, para planes con promo inicial
+  fechaCambioPrecio     DateTime?
   montoMensualActual    Int
   citasIncluidas        Int
   precioCitaExcedente   Int
@@ -441,7 +433,7 @@ model Pago {
 
   tipo           TipoPago
   monto          Int
-  valorUfDelDia  Float?   // solo si tipo = HOSTING
+  valorUfDelDia  Float?
   estado         EstadoPago
   flowOrderId    String?
   boletaFolio    String?
@@ -451,22 +443,17 @@ model Pago {
   @@index([suscripcionId])
 }
 
-// ------------------------------------------------------------
-// CATÁLOGO ROTATIVO (panadería, rotisería, viandas, verdulería,
-// carnicería, meal prep, etc.) — el negocio ofrece proactivamente
-// un catálogo que cambia seguido, en vez de esperar que el cliente
-// pida hora. Ver ModoOperacionRubro.
-// ------------------------------------------------------------
+// CATÁLOGO ROTATIVO
 model Producto {
   id          String   @id @default(uuid())
   empresa     Empresa  @relation(fields: [empresaId], references: [id])
   empresaId   String
 
-  nombre      String    // "Croissant", "Roll de canela", "Pan ciabatta"
+  nombre      String
   descripcion String?
-  precio      Int       // CLP
-  unidad      String   @default("unidad") // "unidad" | "kg" | "docena" | "porción"
-  activo      Boolean  @default(true) // disponible en el catálogo general del negocio
+  precio      Int
+  unidad      String   @default("unidad")
+  activo      Boolean  @default(true)
 
   creadoEn    DateTime @default(now())
 
@@ -475,36 +462,25 @@ model Producto {
   @@index([empresaId])
 }
 
-// Configuración de CUÁNDO se dispara la preparación de un envío.
-// El disparo en la hora configurada solo crea un EnvioRealizado en
-// estado BORRADOR — el panadero elige los productos de ese envío
-// específico y lo envía manualmente desde el panel.
 model CampanaEnvio {
   id          String   @id @default(uuid())
   empresa     Empresa  @relation(fields: [empresaId], references: [id])
   empresaId   String
 
-  nombre      String    // "Panes de la mañana"
-  diasSemana  Int[]     // 0 = domingo ... 6 = sábado. Ej. [1,3,5] = lun/mié/vie
-  hora        String    // "08:00", hora local de la empresa
+  nombre      String
+  diasSemana  Int[]
+  hora        String
 
-  // Nombre exacto de la plantilla de WhatsApp aprobada en Meta que abre
-  // la conversación (con botón de respuesta rápida "Ver el menú de hoy").
   plantillaWhatsapp String
 
   activa      Boolean  @default(true)
   creadoEn    DateTime @default(now())
 
-  // Segmentación: si está activa, el envío no va a TODOS los clientes con
-  // optInCampanas=true, sino solo a quienes cumplan el historial de compra
-  // definido acá — reduce el costo real de Meta al no mandarle a quien no
-  // le interesa, y sirve para ofertas dirigidas ("solo a quienes ya
-  // compraron ciabatta antes").
   segmentada Boolean @default(false)
-  segmentoDias Int?              // ventana de tiempo a evaluar (ej. 30 = "últimos 30 días")
-  segmentoMontoMinimoClp Int?    // debe haber gastado al menos esto en esa ventana (null = sin mínimo)
-  segmentoProductoIds String[] @default([])   // debe haber comprado al menos uno de estos productos (vacío = cualquiera)
-  segmentoCategoriasProducto String[] @default([]) // equivalente para negocios reactivos (Venta.categoriaProducto)
+  segmentoDias Int?
+  segmentoMontoMinimoClp Int?
+  segmentoProductoIds String[] @default([])
+  segmentoCategoriasProducto String[] @default([])
 
   enviosRealizados EnvioRealizado[]
 
@@ -512,31 +488,24 @@ model CampanaEnvio {
 }
 
 enum EstadoEnvioRealizado {
-  BORRADOR  // creado por el cron a la hora programada, esperando que el panadero elija productos
-  ENVIADO   // el panadero ya eligió productos y se disparó el mensaje a los clientes
+  BORRADOR
+  ENVIADO
   CANCELADO
 }
 
-// Snapshot de CADA disparo real de una campaña — permite trazabilidad
-// (qué se ofreció y a cuántos) y agrupar los pedidos de ese envío.
 model EnvioRealizado {
   id          String   @id @default(uuid())
   campana     CampanaEnvio @relation(fields: [campanaId], references: [id])
   campanaId   String
 
-  fechaProgramada DateTime // el día para el que se preparó (para no duplicar el mismo día)
+  fechaProgramada DateTime
   estado      EstadoEnvioRealizado @default(BORRADOR)
 
-  // Snapshot de qué productos y precios se ofrecieron en este envío específico
-  // (arreglo de { productoId, nombre, precio, unidad }). Se llena al enviar.
   productosOfrecidosJson Json?
 
   fechaHoraEnvio    DateTime?
   destinatariosCount Int?
 
-  // Costo real estimado en CLP de este envío (destinatariosCount × tarifa
-  // Meta vigente al momento de enviar). Se guarda al enviar para llevar
-  // historial de gasto, aunque la tarifa de Meta cambie más adelante.
   costoEstimadoClp Int?
 
   mensajeDelDia String? @db.VarChar(400)
@@ -572,9 +541,6 @@ model Pedido {
   fechaRetiro DateTime?
   notas       String?
 
-  // Cuando el cliente elige un producto de la lista, queda acá mientras
-  // el bot espera que responda "¿cuántos quieres?". Null cuando no hay
-  // ninguna pregunta de cantidad pendiente.
   productoPendienteId String?
 
   creadoEn    DateTime @default(now())
@@ -596,21 +562,19 @@ model PedidoItem {
   productoId  String
 
   cantidad    Int      @default(1)
-  precioUnitario Int   // copiado al momento del pedido, no referencia flotante al precio actual
+  precioUnitario Int
 
   @@index([pedidoId])
   @@index([productoId])
 }
 
-// ------------------------------------------------------------
-// CONTRATO DE ACEPTACIÓN (registro legal del clickwrap)
-// ------------------------------------------------------------
+// CONTRATO
 model ContratoAceptado {
   id            String   @id @default(uuid())
   empresa       Empresa  @relation(fields: [empresaId], references: [id])
   empresaId     String
 
-  versionContrato String  // ej. "plan-inicio-v1"
+  versionContrato String
   aceptoTerminos      Boolean
   aceptoDatosPacientes Boolean
 
@@ -624,16 +588,12 @@ model ContratoAceptado {
   @@index([empresaId])
 }
 
-// ------------------------------------------------------------
-// CRÉDITOS PREPAGADOS DE CAMPAÑA (catálogo rotativo)
-// Cada crédito = 1 mensaje de categoría Marketing enviado a 1 cliente.
-// Precio de venta: $149 CLP/crédito (cubre costo real Meta $78,49 + IVA + margen).
-// ------------------------------------------------------------
+// CRÉDITOS
 model BilleteraCreditos {
   id            String   @id @default(cuid())
   empresaId     String   @unique
   empresa       Empresa  @relation(fields: [empresaId], references: [id])
-  saldoActual   Int      @default(0) // en créditos, no en CLP
+  saldoActual   Int      @default(0)
   creadoEn      DateTime @default(now())
   actualizadoEn DateTime @updatedAt
 
@@ -645,31 +605,28 @@ model MovimientoCredito {
   billeteraId   String
   billetera     BilleteraCreditos   @relation(fields: [billeteraId], references: [id])
   tipo          TipoMovimientoCredito
-  cantidad      Int                 // positivo en COMPRA, negativo en CONSUMO/AJUSTE_NEGATIVO
-  saldoResultante Int               // saldo de la billetera justo después de este movimiento (auditoría)
-  montoClp      Int?                // solo aplica a COMPRA — cuánto pagó realmente en CLP
-  campanaEnvioId String?            // referencia opcional al EnvioRealizado que gatilló el consumo
-  nota          String?             // ej. "Compra paquete 500 créditos", "Envío campaña Roll de canela 14/07"
+  cantidad      Int
+  saldoResultante Int
+  montoClp      Int?
+  campanaEnvioId String?
+  nota          String?
   creadoEn      DateTime            @default(now())
 }
 
 enum TipoMovimientoCredito {
-  COMPRA           // el cliente compró créditos (vía Flow.cl u otro medio)
-  CONSUMO          // se descontaron créditos por un envío real de campaña
-  AJUSTE_MANUAL    // corrección manual (ej. reembolso por error nuestro), positivo o negativo
+  COMPRA
+  CONSUMO
+  AJUSTE_MANUAL
 }
 
-// Registro de cada intento de compra de créditos, desde que el cliente ingresa
-// la cantidad hasta que Flow.cl confirma (o no) el pago. Sirve para conciliar
-// el webhook y para no perder rastro de compras que quedan a medias.
 model OrdenCompraCreditos {
   id              String    @id @default(cuid())
   empresaId       String
   empresa         Empresa   @relation(fields: [empresaId], references: [id])
-  cantidadCreditos Int      // ingresada libremente por el cliente, mínimo 50
+  cantidadCreditos Int
   montoClp        Int
   estado          EstadoOrdenCredito @default(PENDIENTE)
-  flowToken       String?   @unique // token de Flow.cl, una vez integrado el SDK real
+  flowToken       String?   @unique
   creadoEn        DateTime  @default(now())
   actualizadoEn   DateTime  @updatedAt
 }
@@ -681,14 +638,7 @@ enum EstadoOrdenCredito {
   EXPIRADA
 }
 
-// ------------------------------------------------------------
-// DEMOS COMERCIALES
-// Vincula el teléfono de un prospecto con la Empresa de demo que debe
-// simular el bot, cuando el mensaje llega al número dedicado a demos
-// (no a un número real de cliente). El estado de la conversación de
-// demo (en qué paso va, historial de la simulación) vive acá mismo,
-// separado por completo del modelo Conversacion que usa el motor real.
-// ------------------------------------------------------------
+// DEMOS
 model DemoAsignada {
   id              String   @id @default(cuid())
   telefono        String   @unique
@@ -699,16 +649,14 @@ model DemoAsignada {
   actualizadoEn   DateTime @updatedAt
   vendedor        Vendedor? @relation(fields: [vendedorId], references: [id])
   vendedorId      String?
- eliminadoEn         DateTime? // si no es null, esta demo fue "eliminada" por el vendedor (soft-delete)
-  telefonoOriginal    String?   // el teléfono real, conservado para historial/métricas después de liberar `telefono`
-
-
+  eliminadoEn         DateTime?
+  telefonoOriginal    String?
 
   paso                Int   @default(0)
   historialSimulacion Json?
-  carritoDemoJson     Json? // productos seleccionados en la simulación de catálogo: [{productoId, nombre, precio, cantidad}]
-  citaDemoJson        Json? // simulación de la cita elegida en la demo de agendamiento: {servicio, fecha, hora, nombre, edad}
-  checkoutDemoJson    Json? // estado del checkout simulado en la demo de catálogo: {paso, productoPendienteId, nombre, formaPago, tipoEntrega, direccion}
+  carritoDemoJson     Json?
+  citaDemoJson        Json?
+  checkoutDemoJson    Json?
 }
 
 model Vendedor {
