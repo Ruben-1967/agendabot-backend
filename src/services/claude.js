@@ -177,6 +177,17 @@ async function ejecutarHerramienta(nombre, input, contexto) {
  * @param {string} params.mensajeEntrante - Texto del cliente.
  * @returns {Promise<{texto: string, interactivo: Object|null}>}
  */
+/**
+ * Genera la respuesta del chatbot, permitiéndole usar herramientas reales
+ * (consultar disponibilidad, agendar cita) antes de responder en texto.
+ *
+ * @param {Object} params
+ * @param {Object} params.empresa - Empresa (con rubroTemplate incluido).
+ * @param {Object} params.cliente - Cliente asociado a esta conversación.
+ * @param {Array}  params.historial - Mensajes previos [{rol, contenido}].
+ * @param {string} params.mensajeEntrante - Texto del cliente.
+ * @returns {Promise<{texto: string, interactivo: Object|null}>}
+ */
 async function generarRespuestaChatbot({ empresa, cliente, historial, mensajeEntrante }) {
   const nombreEmpresa = empresa.sucursal ? `${empresa.nombre} (${empresa.sucursal})` : empresa.nombre;
 
@@ -202,6 +213,14 @@ async function generarRespuestaChatbot({ empresa, cliente, historial, mensajeEnt
 
   const tools = construirTools(empresa, tieneServiciosReales);
 
+  // Leer el tono de comunicación (default "Neutral")
+  const tono = empresa.tonoComunicacion || 'Neutral';
+  const instruccionesTono = {
+    'Formal': 'Mantén un tono profesional y respetuoso. Usa usted, estructura las frases con cuidado, sé conciso y formal.',
+    'Neutral': 'Usa un tono equilibrado — profesional pero cercano, tuteo es OK, sé breve y directo.',
+    'Informal': 'Usa un tono conversacional y cercano. Sé amigable, puedes usar emojis ocasionales (no abuses), sé relajado pero siempre profesional.',
+  };
+
   const bloquesPersonalizacion = [];
   if (empresa.direccion) {
     bloquesPersonalizacion.push(`Dirección del negocio: ${empresa.direccion}`);
@@ -211,7 +230,7 @@ async function generarRespuestaChatbot({ empresa, cliente, historial, mensajeEnt
   }
   if (empresa.informacionAdicional) {
     bloquesPersonalizacion.push(
-      `Información adicional que puedes citar TAL CUAL si el cliente pregunta (precios, promociones, qué incluye cada servicio, etc.) — no agregues ni inventes nada que no esté aquí. IMPORTANTE: esto es solo para responder preguntas puntuales, NUNCA para construir, completar ni ampliar la lista de servicios ofrecidos (ver SERVICIOS AGENDABLES arriba y las instrucciones sobre mostrar_lista_servicios):\n${empresa.informacionAdicional}`
+      `Información adicional que puedes citar interpretando su contenido según el TONO DE COMUNICACIÓN especificado más abajo (precios, promociones, qué incluye cada servicio, etc.) — no agregues ni inventes nada que no esté aquí. IMPORTANTE: esto es solo para responder preguntas puntuales, NUNCA para construir, completar ni ampliar la lista de servicios ofrecidos (ver SERVICIOS AGENDABLES arriba y las instrucciones sobre mostrar_lista_servicios):\n${empresa.informacionAdicional}`
     );
   }
 
@@ -228,6 +247,10 @@ async function generarRespuestaChatbot({ empresa, cliente, historial, mensajeEnt
 
   const systemPrompt = `Eres el asistente de agendamiento de "${nombreEmpresa}", vía WhatsApp.
 Hoy es ${fechaHoyChile} (zona horaria de Chile).
+
+TONO DE COMUNICACIÓN:
+${instruccionesTono[tono] || instruccionesTono['Neutral']}
+Este tono aplica a TODA tu comunicación, incluida la interpretación de la "información adicional" que pueda estar cargada. Cuando cites información sobre precios, promociones o detalles del servicio, adáptalo al tono especificado sin cambiar su contenido.
 
 SERVICIOS AGENDABLES (la única lista válida para ofrecer o agendar — nunca agregues, separes ni inventes otros, aunque la información adicional mencione procedimientos o exámenes relacionados):
 ${serviciosBase.length ? serviciosBase.map((s) => `- ${s}`).join('\n') : '(el negocio no ha cargado servicios todavía — dile al cliente que consulte directamente)'}
