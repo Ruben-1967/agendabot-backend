@@ -60,7 +60,6 @@ const origenesPermitidos = process.env.PANEL_FRONTEND_URL
   ? process.env.PANEL_FRONTEND_URL.split(',').map((s) => s.trim())
   : true;
 
-app.use(cors({ origin: origenesPermitidos }));
 app.use(express.json({
   verify: (req, res, buf) => {
     req.rawBody = buf;
@@ -106,10 +105,7 @@ function verificarFirmaWebhookWhatsApp(req, res, next) {
 }
 
 app.use(cors({
-  origin: [
-    'https://agendabot-panel.onrender.com',
-    'http://localhost:5173', // desarrollo local
-  ],
+ origin: origenesPermitidos,
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
