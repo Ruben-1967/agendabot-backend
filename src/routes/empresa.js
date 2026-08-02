@@ -29,6 +29,7 @@ router.get('/info', requireAuth, requireRole('ADMIN'), async (req, res) => {
         notaAgendamiento: true,
         informacionAdicional: true,
         requiereRut: true,
+        tonoComunicacion: true,
       },
     });
 
