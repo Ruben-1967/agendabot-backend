@@ -13,6 +13,7 @@ const router = express.Router();
 const prisma = require('../lib/prisma');
 const { requireAuth, requireRole } = require('../middleware/auth');
 const flowClient = require('../services/flowClient');
+console.log('flowClient cargado:', Object.keys(flowClient));
 
 /**
  * GET /suscripcion/estado
@@ -109,16 +110,14 @@ router.post('/elegir-plan', async (req, res) => {
       empresa.telefonoContacto || '+56900000000'
     );
 
-    // Guardar la orden pendiente en BD
     await prisma.historialSuscripcion.create({
-      data: {
-        empresaId,
-        planNuevo: plan,
-        montoMensual: flowClient.PLANES[plan].precio,
-        flowSuscripcionId: ordenFlow.token,
-        fechaProximoCobro: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // 30 días
-      },
-    });
+  data: {
+    empresaId,
+    planNuevo: plan,
+    montoMensual: flowClient.PLANES[plan].precio,
+    flowSuscripcionId: ordenFlow.token,
+  },
+});
 
     res.json({
       plan,
