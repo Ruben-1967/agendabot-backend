@@ -94,8 +94,7 @@ router.post('/elegir-plan', async (req, res) => {
   select: {
     id: true,
     nombre: true,
-    estadoSuscripcion: true,
-  },
+      },
 });
 
     if (!empresa) {
