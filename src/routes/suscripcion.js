@@ -90,44 +90,59 @@ router.post('/elegir-plan', async (req, res) => {
 
     // Validar que la empresa existe
     const empresa = await prisma.empresa.findUnique({
-  where: { id: empresaId },
-  select: {
-    id: true,
-    nombre: true,
+      where: { id: empresaId },
+      select: {
+        id: true,
+        nombre: true,
       },
-});
+    });
 
     if (!empresa) {
       return res.status(404).json({ error: 'Empresa no encontrada' });
     }
 
     // Crear orden en Flow
+    console.log('[DEBUG] Parámetros para Flow:', {
+      plan,
+      empresaId,
+      email: empresa.nombre,
+      telefono: '+56912345678'
+    });
+
     try {
-  console.log('[DEBUG] Parámetros para Flow:', {
-    plan,
-    empresaId,
-    email: empresa.nombre,
-    telefono: '?'
-  });
-  
-  const ordenFlow = await flowClient.crearSuscripcionPlan(
-    plan,
-    empresaId,
-    'contacto@test.cl',  // Email hardcodeado por ahora
-    '+56912345678'       // Teléfono hardcodeado por ahora
-  );
-  
-  console.log('[DEBUG] Orden creada en Flow:', ordenFlow);
-  
-  res.json({
-    plan,
-    urlPago: ordenFlow.url,
-    monto: flowClient.PLANES[plan].precio,
-  });
-} catch (error) {
-  console.error('[ERROR] Fallo creando orden Flow:', error.message, error.response?.data);
-  res.status(500).json({ error: 'Error al crear orden de pago: ' + error.message });
-}
+      const ordenFlow = await flowClient.crearSuscripcionPlan(
+        plan,
+        empresaId,
+        'contacto@test.cl',
+        '+56912345678'
+      );
+
+      console.log('[DEBUG] Orden creada en Flow:', ordenFlow);
+
+      // Guardar la orden pendiente en BD
+      await prisma.historialSuscripcion.create({
+        data: {
+          empresaId,
+          planNuevo: plan,
+          montoMensual: flowClient.PLANES[plan].precio,
+          flowSuscripcionId: ordenFlow.token,
+        },
+      });
+
+      res.json({
+        plan,
+        urlPago: ordenFlow.url,
+        monto: flowClient.PLANES[plan].precio,
+      });
+    } catch (error) {
+      console.error('[ERROR] Fallo creando orden Flow:', error.message, error.response?.data);
+      res.status(500).json({ error: 'Error al crear orden de pago: ' + error.message });
+    }
+  } catch (error) {
+    console.error('Error en POST /suscripcion/elegir-plan:', error);
+    res.status(500).json({ error: 'Error al procesar solicitud' });
+  }
+});
 
 /**
  * POST /suscripcion/flow-webhook-plan
@@ -154,19 +169,19 @@ router.post('/flow-webhook-plan', async (req, res) => {
     const estadoFlow = await flowClient.consultarEstado(token);
 
     // Buscar orden pendiente
-    const historialsuscripcion = await prisma.historialSuscripcion.findFirst({
+    const historialSuscripcion = await prisma.historialSuscripcion.findFirst({
       where: { flowSuscripcionId: token },
       include: { empresa: true },
     });
 
-    if (!historialsuscripcion) {
+    if (!historialSuscripcion) {
       console.error('[webhook] Suscripción no encontrada para token:', token);
       return res.status(404).send('Suscripción no encontrada');
     }
 
-    const { empresaId, planNuevo } = historialsuscripcion;
+    const { empresaId, planNuevo } = historialSuscripcion;
 
-    // Transacción: actualizar estado de empresa + crear historial
+    // Transacción: actualizar estado de empresa
     await prisma.$transaction(async (tx) => {
       const fechaVencimiento = new Date();
       fechaVencimiento.setMonth(fechaVencimiento.getMonth() + 1);
@@ -178,8 +193,8 @@ router.post('/flow-webhook-plan', async (req, res) => {
           planActivo: planNuevo,
           fechaVencimientoPago: fechaVencimiento,
           flowSuscripcionId: token,
-          pruebahasta: null, // Termina la prueba
-          diasAdvertenciaEnviados: 0, // Reset
+          pruebahasta: null,
+          diasAdvertenciaEnviados: 0,
         },
       });
     });
@@ -218,7 +233,7 @@ router.post('/flow-webhook-creditos', async (req, res) => {
 
     if (!orden) {
       console.warn('[webhook-creditos] Orden no encontrada para token:', token);
-      return res.status(404).send('OK'); // Silencioso, Flow puede reintentar
+      return res.status(404).send('OK');
     }
 
     // Procesar créditos
