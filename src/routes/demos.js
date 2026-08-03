@@ -216,7 +216,7 @@ router.delete('/prospectos/:id', requireAuth, requireRole('VENDEDOR'), async (re
  * POST /demos/convertir-a-cliente-real
  * Convierte un prospecto de demo en cliente real con período de prueba de 5 días
  */
-router.post('/convertir-a-cliente-real', requireAuth, requireRole('VENDEDOR'), async (req, res) => {
+router.post('/convertir-a-cliente-real', async (req, res) => {
   try {
     const { nombreNegocio, rubro, telefonoWhatsApp, correoContacto, sitioWeb } = req.body;
 
