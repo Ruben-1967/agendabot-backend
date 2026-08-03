@@ -72,4 +72,68 @@ router.get('/me', requireAuth, async (req, res) => {
   res.json({ usuario: req.usuario });
 });
 
+// ------------------------------------------------------------
+// POST /auth/cambiar-contraseña — NUEVO
+// body: { passwordActual, passwordNueva, passwordConfirmar }
+// Requiere autenticación
+// ------------------------------------------------------------
+router.post('/cambiar-contraseña', requireAuth, async (req, res) => {
+  try {
+    const { passwordActual, passwordNueva, passwordConfirmar } = req.body;
+    const usuarioId = req.usuario.userId;
+
+    // Validar campos
+    if (!passwordActual || !passwordNueva || !passwordConfirmar) {
+      return res.status(400).json({ error: 'Faltan campos requeridos' });
+    }
+
+    // Validar que las nuevas contraseñas coincidan
+    if (passwordNueva !== passwordConfirmar) {
+      return res.status(400).json({ error: 'Las contraseñas nuevas no coinciden' });
+    }
+
+    // Validar longitud mínima
+    if (passwordNueva.length < 8) {
+      return res.status(400).json({ error: 'La contraseña debe tener al menos 8 caracteres' });
+    }
+
+    // Validar que no sea igual a la actual
+    if (passwordActual === passwordNueva) {
+      return res.status(400).json({ error: 'La contraseña nueva debe ser diferente' });
+    }
+
+    // Obtener usuario
+    const usuario = await prisma.usuario.findUnique({
+      where: { id: usuarioId },
+    });
+
+    if (!usuario) {
+      return res.status(404).json({ error: 'Usuario no encontrado' });
+    }
+
+    // Verificar contraseña actual
+    const passwordValida = await bcrypt.compare(passwordActual, usuario.passwordHash);
+    if (!passwordValida) {
+      return res.status(401).json({ error: 'La contraseña actual es incorrecta' });
+    }
+
+    // Hashear nueva contraseña
+    const nuevoHash = await bcrypt.hash(passwordNueva, 10);
+
+    // Actualizar en BD
+    await prisma.usuario.update({
+      where: { id: usuarioId },
+      data: { passwordHash: nuevoHash },
+    });
+
+    res.json({
+      success: true,
+      mensaje: 'Contraseña actualizada exitosamente',
+    });
+  } catch (error) {
+    console.error('Error en /auth/cambiar-contraseña:', error);
+    res.status(500).json({ error: 'Error al cambiar contraseña' });
+  }
+});
+
 module.exports = router;
