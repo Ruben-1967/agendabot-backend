@@ -2,7 +2,7 @@
  * src/routes/suscripcion.js
  *
  * Endpoints para:
- * - Elegir plan post-prueba
+ * - Elegir plan post-prueba (con o sin autenticación)
  * - Crear orden en Flow
  * - Webhook de confirmación
  * - Consultar estado de suscripción
@@ -16,7 +16,7 @@ const flowClient = require('../services/flowClient');
 
 /**
  * GET /suscripcion/estado
- * Consulta el estado actual de la suscripción de una empresa
+ * Consulta el estado actual de la suscripción de una empresa (requiere autenticación)
  */
 router.get('/estado', requireAuth, requireRole('ADMIN'), async (req, res) => {
   try {
@@ -60,18 +60,34 @@ router.get('/estado', requireAuth, requireRole('ADMIN'), async (req, res) => {
 
 /**
  * POST /suscripcion/elegir-plan
- * Body: { plan: 'A' | 'B' | 'C' }
+ * Body: { plan: 'A' | 'B' | 'C', empresaId?: 'xxx' }
+ * Funciona CON token (usuario autenticado) o SIN token + empresaId (nuevo cliente)
  * Crea una orden en Flow y devuelve URL de redirección
  */
-router.post('/elegir-plan', requireAuth, requireRole('ADMIN'), async (req, res) => {
+router.post('/elegir-plan', async (req, res) => {
   try {
-    const empresaId = req.usuario.empresaId;
-    const { plan } = req.body;
+    const { plan, empresaId: empresaIdBody } = req.body;
+    const authHeader = req.headers.authorization;
+    const token = authHeader ? authHeader.replace('Bearer ', '') : null;
 
+    // Determinar empresaId: del JWT o del body
+    let empresaId;
+    if (req.usuario && req.usuario.empresaId) {
+      // Usuario autenticado: usar su empresaId del JWT
+      empresaId = req.usuario.empresaId;
+    } else if (empresaIdBody) {
+      // Nuevo cliente: pasar empresaId en body
+      empresaId = empresaIdBody;
+    } else {
+      return res.status(400).json({ error: 'Falta empresaId o autenticación' });
+    }
+
+    // Validar plan
     if (!['A', 'B', 'C'].includes(plan)) {
       return res.status(400).json({ error: 'Plan inválido' });
     }
 
+    // Validar que la empresa existe
     const empresa = await prisma.empresa.findUnique({
       where: { id: empresaId },
       select: {
@@ -209,7 +225,7 @@ router.post('/flow-webhook-creditos', async (req, res) => {
       return res.status(404).send('OK'); // Silencioso, Flow puede reintentar
     }
 
-    // Procesar créditos (ver billetera.js para lógica completa)
+    // Procesar créditos
     await prisma.$transaction(async (tx) => {
       let billetera = await tx.billeteraCreditos.findUnique({
         where: { empresaId: orden.empresaId },
