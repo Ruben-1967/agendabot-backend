@@ -102,32 +102,32 @@ router.post('/elegir-plan', async (req, res) => {
     }
 
     // Crear orden en Flow
-    const ordenFlow = await flowClient.crearSuscripcionPlan(
-      plan,
-      empresaId,
-      empresa.correoContacto || 'contacto@totemsystem.cl',
-      empresa.telefonoContacto || '+56900000000'
-    );
-
-    await prisma.historialSuscripcion.create({
-  data: {
+    try {
+  console.log('[DEBUG] Parámetros para Flow:', {
+    plan,
     empresaId,
-    planNuevo: plan,
-    montoMensual: flowClient.PLANES[plan].precio,
-    flowSuscripcionId: ordenFlow.token,
-  },
-});
-
-    res.json({
-      plan,
-      urlPago: ordenFlow.url,
-      monto: flowClient.PLANES[plan].precio,
-    });
-  } catch (error) {
-    console.error('Error en POST /suscripcion/elegir-plan:', error);
-    res.status(500).json({ error: 'Error al crear orden de pago' });
-  }
-});
+    email: empresa.nombre,
+    telefono: '?'
+  });
+  
+  const ordenFlow = await flowClient.crearSuscripcionPlan(
+    plan,
+    empresaId,
+    'contacto@test.cl',  // Email hardcodeado por ahora
+    '+56912345678'       // Teléfono hardcodeado por ahora
+  );
+  
+  console.log('[DEBUG] Orden creada en Flow:', ordenFlow);
+  
+  res.json({
+    plan,
+    urlPago: ordenFlow.url,
+    monto: flowClient.PLANES[plan].precio,
+  });
+} catch (error) {
+  console.error('[ERROR] Fallo creando orden Flow:', error.message, error.response?.data);
+  res.status(500).json({ error: 'Error al crear orden de pago: ' + error.message });
+}
 
 /**
  * POST /suscripcion/flow-webhook-plan
