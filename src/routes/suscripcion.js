@@ -39,7 +39,7 @@ router.get('/estado', requireAuth, requireRole('ADMIN'), async (req, res) => {
     }
 
     const hoy = new Date();
-    const diasPara Vencer = empresa.pruebahasta
+    const diasParaVencer = empresa.pruebahasta
       ? Math.ceil((empresa.pruebahasta - hoy) / (1000 * 60 * 60 * 24))
       : null;
 
