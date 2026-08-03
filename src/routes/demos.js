@@ -239,17 +239,14 @@ router.post('/convertir-a-cliente-real', async (req, res) => {
 
     // Crear empresa REAL con período de prueba
     const nuevaEmpresa = await prisma.$transaction(async (tx) => {
+    
       const empresa = await tx.empresa.create({
-        data: {
-          nombre: nombreNegocio,
-          rubroTemplateId: rubro,
-          telefonoContacto: telefonoWhatsApp,
-          correoContacto: correoContacto || 'contacto@totemsystem.cl',
-          
-          // Período de prueba de 5 días
-          pruebahasta: new Date(Date.now() + 5 * 24 * 60 * 60 * 1000),
-        },
-      });
+  data: {
+    nombre: nombreNegocio,
+    rubroTemplateId: rubro,
+    pruebahasta: new Date(Date.now() + 5 * 24 * 60 * 60 * 1000),
+  },
+});
 
       // Si hay sitio web, intentar extraer servicios
       let serviciosCreados = [];
