@@ -89,15 +89,13 @@ router.post('/elegir-plan', async (req, res) => {
 
     // Validar que la empresa existe
     const empresa = await prisma.empresa.findUnique({
-      where: { id: empresaId },
-      select: {
-        id: true,
-        nombre: true,
-        telefonoContacto: true,
-        correoContacto: true,
-        estadoSuscripcion: true,
-      },
-    });
+  where: { id: empresaId },
+  select: {
+    id: true,
+    nombre: true,
+    estadoSuscripcion: true,
+  },
+});
 
     if (!empresa) {
       return res.status(404).json({ error: 'Empresa no encontrada' });
