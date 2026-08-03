@@ -238,65 +238,29 @@ router.post('/convertir-a-cliente-real', async (req, res) => {
     }
 
     // Crear empresa REAL con período de prueba
-    const nuevaEmpresa = await prisma.$transaction(async (tx) => {
-    
-      const empresa = await tx.empresa.create({
-  data: {
-    nombre: nombreNegocio,
-    rubroTemplateId: rubro,
-    pruebahasta: new Date(Date.now() + 5 * 24 * 60 * 60 * 1000),
-  },
+const nuevaEmpresa = await prisma.$transaction(async (tx) => {
+  const empresa = await tx.empresa.create({
+    data: {
+      nombre: nombreNegocio,
+      rubroTemplateId: rubro,
+      pruebahasta: new Date(Date.now() + 5 * 24 * 60 * 60 * 1000),
+    },
+  });
+
+  return empresa;
 });
 
-      // Si hay sitio web, intentar extraer servicios
-      let serviciosCreados = [];
-      if (sitioWeb) {
-        try {
-          const { extraerInfoSitioWeb } = require('../services/extraccionSitioWeb');
-          const infoExtraida = await extraerInfoSitioWeb(sitioWeb);
-
-          if (infoExtraida.exito && infoExtraida.serviciosSugeridos?.length > 0) {
-            for (const nombreServicio of infoExtraida.serviciosSugeridos) {
-              const servicio = await tx.servicio.create({
-                data: {
-                  empresaId: empresa.id,
-                  nombre: nombreServicio,
-                  duracion: 60,
-                  activo: true,
-                },
-              });
-              serviciosCreados.push(servicio);
-            }
-
-            if (infoExtraida.informacionAdicionalSugerida) {
-              await tx.empresa.update({
-                where: { id: empresa.id },
-                data: {
-                  informacionAdicional: infoExtraida.informacionAdicionalSugerida,
-                  direccion: infoExtraida.direccion || null,
-                },
-              });
-            }
-          }
-        } catch (errExtraccion) {
-          console.warn('[convertir] Extracción de sitio falló:', errExtraccion.message);
-        }
-      }
-
-      return { empresa, serviciosCreados };
-    });
-
-    res.json({
-      empresaId: nuevaEmpresa.empresa.id,
-      mensaje: 'Empresa creada con período de prueba de 5 días',
-      pruebahasta: nuevaEmpresa.empresa.pruebahasta,
-      serviciosCreados: nuevaEmpresa.serviciosCreados.length,
-      proximoPaso: 'Accede al panel y conecta tu número de WhatsApp vía OAuth',
-    });
-  } catch (error) {
-    console.error('Error en POST /demos/convertir-a-cliente-real:', error);
-    res.status(500).json({ error: 'Error al crear empresa real' });
-  }
+res.json({
+  empresaId: nuevaEmpresa.id,
+  nombre: nuevaEmpresa.nombre,
+  mensaje: 'Empresa creada con período de prueba de 5 días',
+  pruebahasta: nuevaEmpresa.pruebahasta,
+  proximoPaso: 'Selecciona un plan de pago',
+});
+} catch (error) {
+  console.error('Error en POST /demos/convertir-a-cliente-real:', error);
+  res.status(500).json({ error: 'Error al crear empresa real' });
+}
 });
 
 module.exports = router;
