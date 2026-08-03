@@ -101,43 +101,17 @@ router.post('/elegir-plan', async (req, res) => {
       return res.status(404).json({ error: 'Empresa no encontrada' });
     }
 
-    // Crear orden en Flow
-    console.log('[DEBUG] Parámetros para Flow:', {
+    // OPCIÓN A: Plan elegido exitosamente (Flow.cl se integra después de martes 4)
+    console.log(`[OPCIÓN A] Plan ${plan} elegido por empresa ${empresaId}`);
+
+    res.json({
+      exitoso: true,
       plan,
+      monto: flowClient.PLANES[plan].precio,
+      mensaje: 'Plan elegido exitosamente',
+      proximoPaso: 'Nos contactaremos en breve para confirmar el pago',
       empresaId,
-      email: empresa.nombre,
-      telefono: '+56912345678'
     });
-
-    try {
-      const ordenFlow = await flowClient.crearSuscripcionPlan(
-        plan,
-        empresaId,
-        'contacto@test.cl',
-        '+56912345678'
-      );
-
-      console.log('[DEBUG] Orden creada en Flow:', ordenFlow);
-
-      // Guardar la orden pendiente en BD
-      await prisma.historialSuscripcion.create({
-        data: {
-          empresaId,
-          planNuevo: plan,
-          montoMensual: flowClient.PLANES[plan].precio,
-          flowSuscripcionId: ordenFlow.token,
-        },
-      });
-
-      res.json({
-        plan,
-        urlPago: ordenFlow.url,
-        monto: flowClient.PLANES[plan].precio,
-      });
-    } catch (error) {
-      console.error('[ERROR] Fallo creando orden Flow:', error.message, error.response?.data);
-      res.status(500).json({ error: 'Error al crear orden de pago: ' + error.message });
-    }
   } catch (error) {
     console.error('Error en POST /suscripcion/elegir-plan:', error);
     res.status(500).json({ error: 'Error al procesar solicitud' });
