@@ -43,11 +43,14 @@ const { renderPanelDemo } = require('./services/panelDemoHtml');
 const { renderSitioNegocio } = require('./services/sitioNegocioHtml');
 const listaEsperaRouter = require('./routes/listaEspera');
 const conversacionesRouter = require('./routes/conversaciones');
+const suscripcionRouter = require('./routes/suscripcion');
+const { iniciarJobBloqueoVencidas } = require('./jobs/bloquearEmpresasVencidas');
 
 // Job de opt-in de campañas (node-cron autoprogramado dentro de este mismo
 // proceso — ver src/jobs/enviarPreguntaOptIn.js). Requerirlo una sola vez
 // activa su cron.schedule interno.
 require('./jobs/enviarPreguntaOptIn');
+iniciarJobBloqueoVencidas();
 
 const app = express();
 // ← AGREGA ESTA LÍNEA:
@@ -125,6 +128,7 @@ app.use('/demos', demosRouter);
 app.use('/lista-espera', listaEsperaRouter);
 app.use('/conversaciones', conversacionesRouter);
 app.use('/disponibilidad', require('./routes/disponibilidad'));
+app.use('/suscripcion', suscripcionRouter);
 
 
 app.get('/', (req, res) => {

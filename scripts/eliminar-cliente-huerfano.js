@@ -1,101 +1,102 @@
-#!/usr/bin/env node
-
-const prisma = require('../src/lib/prisma');
-
-async function eliminarClienteHuerfano(clienteId) {
-  if (!clienteId) {
-    console.error('Uso: node scripts/eliminar-cliente-huerfano.js <clienteId>');
-    process.exit(1);
-  }
-
+async function limpiarAhorroptica() {
   try {
-    console.log(`🔍 Verificando cliente: ${clienteId}`);
+    console.log('🔍 Buscando clientes demo de Ahorróptica...\n');
 
-    const cliente = await prisma.cliente.findUnique({
-      where: { id: clienteId },
-      include: {
-        citas: true,
-        listaEspera: true,
-        ventas: true,
-        conversaciones: true,
-        pedidos: true,
+    const clientesDemo = await prisma.cliente.findMany({
+      where: {
+        empresaId: 'ahoroptica-lautaro-seed-id',
+        OR: [
+          { nombre: { contains: 'Demo' } },
+          { nombre: { contains: 'Prueba' } },
+          { nombre: { contains: 'Test' } }
+        ]
       },
     });
 
-    if (!cliente) {
-      console.error(`❌ Cliente no encontrado: ${clienteId}`);
-      process.exit(1);
+    if (clientesDemo.length === 0) {
+      console.log('✅ No hay clientes demo para eliminar\n');
+      await prisma.$disconnect();
+      process.exit(0);
     }
 
-    console.log(`\n📋 Cliente encontrado:`);
-    console.log(`   Nombre: ${cliente.nombre}`);
-    console.log(`   Teléfono: ${cliente.telefono || 'N/A'}`);
-    console.log(`   RUT: ${cliente.rut || 'N/A'}`);
-    console.log(`   Empresa: ${cliente.empresaId}`);
+    console.log(`📊 Encontrados ${clientesDemo.length} clientes demo:\n`);
+    clientesDemo.forEach((c, i) => {
+      console.log(`   ${i + 1}. ${c.nombre} (${c.telefono})`);
+    });
 
-    console.log(`\n📊 Referencias a eliminar:`);
-    console.log(`   - Citas: ${cliente.citas.length}`);
-    console.log(`   - Lista de espera: ${cliente.listaEspera.length}`);
-    console.log(`   - Ventas: ${cliente.ventas.length}`);
-    console.log(`   - Conversaciones: ${cliente.conversaciones.length}`);
-    console.log(`   - Pedidos: ${cliente.pedidos.length}`);
+    console.log('\n⏳ Eliminando en cascada...\n');
 
-    // Ejecutar eliminación en transacción
-    console.log(`\n⏳ Eliminando en cascada...`);
-    
     const resultado = await prisma.$transaction(async (tx) => {
-      // Eliminar en orden de dependencias
-      const citasEliminadas = await tx.cita.deleteMany({
-        where: { clienteId },
-      });
+      let totalCitas = 0;
+      let totalVentas = 0;
+      let totalConversaciones = 0;
+      let totalPedidos = 0;
+      let totalListaEspera = 0;
 
-      const listaEsperaEliminada = await tx.listaEspera.deleteMany({
-        where: { clienteId },
-      });
+      for (const cliente of clientesDemo) {
+        const citasEliminadas = await tx.cita.deleteMany({
+          where: { clienteId: cliente.id },
+        });
 
-      const ventasEliminadas = await tx.venta.deleteMany({
-        where: { clienteId },
-      });
+        const ventasEliminadas = await tx.venta.deleteMany({
+          where: { clienteId: cliente.id },
+        });
 
-      const conversacionesEliminadas = await tx.conversacion.deleteMany({
-        where: { clienteId },
-      });
+        const conversacionesEliminadas = await tx.conversacion.deleteMany({
+          where: { clienteId: cliente.id },
+        });
 
-      const pedidosEliminados = await tx.pedido.deleteMany({
-        where: { clienteId },
-      });
+        const pedidosEliminados = await tx.pedido.deleteMany({
+          where: { clienteId: cliente.id },
+        });
 
-      // Finalmente, eliminar el cliente
-      const clienteEliminado = await tx.cliente.delete({
-        where: { id: clienteId },
+        const listaEsperaEliminada = await tx.listaEspera.deleteMany({
+          where: { clienteId: cliente.id },
+        });
+
+        totalCitas += citasEliminadas.count;
+        totalVentas += ventasEliminadas.count;
+        totalConversaciones += conversacionesEliminadas.count;
+        totalPedidos += pedidosEliminados.count;
+        totalListaEspera += listaEsperaEliminada.count;
+      }
+
+      const clientesEliminados = await tx.cliente.deleteMany({
+        where: {
+          empresaId: 'ahoroptica-lautaro-seed-id',
+          OR: [
+            { nombre: { contains: 'Demo' } },
+            { nombre: { contains: 'Prueba' } },
+            { nombre: { contains: 'Test' } }
+          ]
+        },
       });
 
       return {
-        citas: citasEliminadas.count,
-        listaEspera: listaEsperaEliminada.count,
-        ventas: ventasEliminadas.count,
-        conversaciones: conversacionesEliminadas.count,
-        pedidos: pedidosEliminados.count,
-        cliente: clienteEliminado,
+        clientes: clientesEliminados.count,
+        citas: totalCitas,
+        ventas: totalVentas,
+        conversaciones: totalConversaciones,
+        pedidos: totalPedidos,
+        listaEspera: totalListaEspera,
       };
+    }, {
+      timeout: 30000, // Aumenta timeout a 30 segundos
     });
 
-    console.log(`\n✅ Cliente eliminado exitosamente:`);
+    console.log(`✅ Limpieza completada:\n`);
+    console.log(`   - Clientes: ${resultado.clientes} eliminados`);
     console.log(`   - Citas: ${resultado.citas} eliminadas`);
-    console.log(`   - Lista de espera: ${resultado.listaEspera} eliminadas`);
     console.log(`   - Ventas: ${resultado.ventas} eliminadas`);
     console.log(`   - Conversaciones: ${resultado.conversaciones} eliminadas`);
     console.log(`   - Pedidos: ${resultado.pedidos} eliminados`);
-    console.log(`   - Cliente: 1 eliminado\n`);
+    console.log(`   - Lista de espera: ${resultado.listaEspera} eliminadas\n`);
 
     await prisma.$disconnect();
     process.exit(0);
   } catch (error) {
-    console.error(`\n❌ Error durante la eliminación:`, error.message);
+    console.error(`❌ Error:`, error.message);
     await prisma.$disconnect();
     process.exit(1);
   }
 }
-
-const clienteId = process.argv[2];
-eliminarClienteHuerfano(clienteId);

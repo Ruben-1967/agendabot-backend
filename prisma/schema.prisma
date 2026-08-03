@@ -40,40 +40,36 @@ model RubroTemplate {
   empresas Empresa[]
 }
 
-// ------------------------------------------------------------
-// EMPRESAS (TENANTS)
-// Cada cliente de AgendaBot es una Empresa (Ahorróptica, etc.)
-// ------------------------------------------------------------
 model Empresa {
   id              String   @id @default(uuid())
-  nombre          String   // "Ahorróptica"
-  sucursal        String?  // "Sucursal Lautaro"
+  nombre          String
+  sucursal        String?
   rut             String?
   telefonoContacto String?
-
 
   rubroTemplate   RubroTemplate @relation(fields: [rubroTemplateId], references: [id])
   rubroTemplateId String
 
-  logoUrl         String? // URL del logo del negocio (para el panel, el chatbot, y la futura landing page)
+  logoUrl         String?
 
-  // Personalización del negocio — pensado para que cada empresa lo cargue
-  // ella misma vía el panel de "Información del negocio" (pendiente de UI),
-  // en vez de que MultiDigital lo cargue a mano por script.
-  direccion         String? // dirección real, usada en confirmaciones/recordatorios del bot
-  notaAgendamiento  String? // texto libre que el bot puede citar sobre políticas de agendamiento (ej. "cupos limitados, avisar con anticipación si no puede asistir")
-  informacionAdicional String? @db.Text // FAQ/precios/promociones que el bot puede citar TAL CUAL — nunca debe inventar nada fuera de esto
-  requiereRut       Boolean @default(false) // si true, agendar_cita exige RUT del cliente antes de crear la cita
-   tonoComunicacion  String? @default("Neutral")
-   sitioWeb        String? // URL del sitio web, si tiene — usado para extracción asistida de información
+  // Personalización del negocio
+  direccion         String?
+  notaAgendamiento  String?
+  informacionAdicional String? @db.Text
+  requiereRut       Boolean @default(false)
+  tonoComunicacion  String? @default("Neutral")
+  sitioWeb        String?
 
-  // WhatsApp Business propio del cliente (no de MultiDigital)
-  whatsappNumeroId String? // phone_number_id de Meta
-  whatsappWabaId   String? // ID de la WhatsApp Business Account
-  whatsappToken    String? // token de acceso (almacenar cifrado en producción)
+  // WhatsApp Business
+  whatsappNumeroId String?
+  whatsappWabaId   String?
+  whatsappToken    String?
 
   googleCalendarId    String?
-  googleRefreshToken  String? // almacenar cifrado en producción
+  googleRefreshToken  String?
+
+  // SUSCRIPCIÓN: solo la fecha de término de prueba (lo demás va en Suscripcion)
+  pruebahasta      DateTime? // null = sin prueba | <hoy = vencida
 
   creadoEn        DateTime @default(now())
 
@@ -85,24 +81,26 @@ model Empresa {
   listaEspera     ListaEspera[]
   conversaciones  Conversacion[]
   ventas          Venta[]
-  suscripcion     Suscripcion?
+  suscripcion     Suscripcion? @relation("SuscripcionActual") // relación a la suscripción vigente
+  suscripciones   HistorialSuscripcion[] // historial de cambios
   contratosAceptados ContratoAceptado[]
 
-  // Catálogo rotativo (panadería, rotisería, viandas, etc.)
+  // Catálogo rotativo
   productos       Producto[]
   campanasEnvio   CampanaEnvio[]
   pedidos         Pedido[]
 
-  // Créditos prepagados de campaña
+  // Créditos
   billeteraCreditos      BilleteraCreditos?
   ordenesCompraCreditos  OrdenCompraCreditos[]
 
-  // Demos comerciales
+  // Demos
   esDemo         Boolean @default(false)
   demosAsignadas DemoAsignada[]
 
   @@index([rubroTemplateId])
 }
+
 
 // ------------------------------------------------------------
 // USUARIOS DEL PANEL (staff de cada empresa)
@@ -398,16 +396,16 @@ enum EstadoSuscripcion {
 
 model Suscripcion {
   id        String   @id @default(uuid())
-  empresa   Empresa  @relation(fields: [empresaId], references: [id])
+  empresa   Empresa  @relation("SuscripcionActual", fields: [empresaId], references: [id])
   empresaId String   @unique
 
   plan      PlanSuscripcion
   estado    EstadoSuscripcion @default(PENDIENTE_PAGO)
 
-  tokenFlow String?  // token de tarjeta tokenizada en Flow
+  tokenFlow String?
 
   fechaInicio           DateTime @default(now())
-  fechaCambioPrecio     DateTime? // fechaInicio + 6 meses, para planes con promo inicial
+  fechaCambioPrecio     DateTime?
   montoMensualActual    Int
   citasIncluidas        Int
   precioCitaExcedente   Int
@@ -721,4 +719,21 @@ model Vendedor {
   creadoEn     DateTime @default(now())
 
   demosCreadas DemoAsignada[]
+}
+
+// ===== HISTORIAL DE SUSCRIPCIONES (NUEVO) =====
+model HistorialSuscripcion {
+  id                  String    @id @default(cuid())
+  empresaId           String
+  empresa             Empresa   @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  
+  planAnterior        String?   // Plan previo (si cambió)
+  planNuevo           String    // A | B | C
+  fechaActivacion     DateTime  @default(now())
+  fechaProximoCobro   DateTime  // Fecha en que Flow cobra la próxima cuota
+  montoMensual        Int       // Precio en CLP del plan
+  flowSuscripcionId   String?   // ID del token/orden en Flow.cl
+  
+  @@index([empresaId])
+  @@index([fechaActivacion])
 }
