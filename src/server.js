@@ -44,6 +44,7 @@ const { renderSitioNegocio } = require('./services/sitioNegocioHtml');
 const listaEsperaRouter = require('./routes/listaEspera');
 const conversacionesRouter = require('./routes/conversaciones');
 const suscripcionRouter = require('./routes/suscripcion');
+const websiteLeadsRouter = require('./routes/websiteLeads');
 const { iniciarJobBloqueoVencidas } = require('./jobs/bloquearEmpresasVencidas');
 
 // Job de opt-in de campañas (node-cron autoprogramado dentro de este mismo
@@ -129,6 +130,7 @@ app.use('/lista-espera', listaEsperaRouter);
 app.use('/conversaciones', conversacionesRouter);
 app.use('/disponibilidad', require('./routes/disponibilidad'));
 app.use('/suscripcion', suscripcionRouter);
+app.use('/', websiteLeadsRouter);
 
 
 app.get('/', (req, res) => {
@@ -239,7 +241,7 @@ app.post('/webhook/whatsapp', verificarFirmaWebhookWhatsApp, async (req, res) =>
           console.error(`[DEMO] Falta RubroTemplate con clave "${rubroGenerico.claveRubro}" — revisar seed.`);
           await sendWhatsAppTextMessage({
             phoneNumberId, to: telefonoCliente, accessToken: accessTokenDemo,
-            text: 'Tuvimos un problema armando esa demo — escríbenos a contacto@multidigital.cl y te ayudamos directo 🙌',
+            text: `Tuvimos un problema armando esa demo — escríbenos a ${process.env.ADMIN_EMAIL} y te ayudamos directo 🙌`,
           });
           return;
         }

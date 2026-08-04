@@ -736,3 +736,19 @@ model HistorialSuscripcion {
   @@index([empresaId])
   @@index([fechaActivacion])
 }
+
+// ===== LEADS DEL SITIO WEB =====
+model WebsiteLeads {
+  id        String   @id @default(cuid())
+  nombre    String
+  email     String
+  telefono  String
+  mensaje   String   @db.Text
+  empresaId String   @default("ahoroptica-lautaro-seed-id")
+  leido     Boolean  @default(false)
+  respondidoEn DateTime?
+  creadoEn  DateTime @default(now())
+
+  @@index([creadoEn])
+  @@index([leido])
+}
