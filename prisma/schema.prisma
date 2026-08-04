@@ -60,10 +60,11 @@ model Empresa {
   tonoComunicacion  String? @default("Neutral")
   sitioWeb        String?
 
-  // WhatsApp Business
-  whatsappNumeroId String?
-  whatsappWabaId   String?
-  whatsappToken    String?
+  // ====== CAMPOS PARA WHATSAPP BUSINESS ======
+  whatsappNumeroId    String?   @unique  // phone_number_id de Meta (ej: "135018715483508")
+  whatsappToken       String?   @db.Text // Access token permanente (cifrado AES-256-GCM)
+  whatsappWabaId      String?             // WABA ID (ej: "2156101751629995")
+  whatsappPhoneNumber String?             // El número legible (ej: "+56921738221")
 
   googleCalendarId    String?
   googleRefreshToken  String?
@@ -698,10 +699,8 @@ model DemoAsignada {
   actualizadoEn   DateTime @updatedAt
   vendedor        Vendedor? @relation(fields: [vendedorId], references: [id])
   vendedorId      String?
- eliminadoEn         DateTime? // si no es null, esta demo fue "eliminada" por el vendedor (soft-delete)
-  telefonoOriginal    String?   // el teléfono real, conservado para historial/métricas después de liberar `telefono`
-
-
+  eliminadoEn     DateTime? // si no es null, esta demo fue "eliminada" por el vendedor (soft-delete)
+  telefonoOriginal String?   // el teléfono real, conservado para historial/métricas después de liberar `telefono`
 
   paso                Int   @default(0)
   historialSimulacion Json?
@@ -721,7 +720,7 @@ model Vendedor {
   demosCreadas DemoAsignada[]
 }
 
-// ===== HISTORIAL DE SUSCRIPCIONES (NUEVO) =====
+// ===== HISTORIAL DE SUSCRIPCIONES =====
 model HistorialSuscripcion {
   id                  String    @id @default(cuid())
   empresaId           String
