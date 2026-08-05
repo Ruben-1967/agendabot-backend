@@ -17,7 +17,7 @@ router.use((req, res, next) => {
   next();
 });
 
-router.post("/website-leads", async (req, res) => {
+router.post("/", async (req, res) => {
   try {
     const { nombre, email, telefono, mensaje } = req.body;
     
