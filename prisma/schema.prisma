@@ -210,6 +210,10 @@ model Cliente {
   telefono  String?
   email     String?
   fechaNacimiento DateTime?
+ fechaProximaCita DateTime?
+  profesionalAtendio String?
+  diagnostico String?
+
 
   // Datos específicos del rubro (receta óptica, ficha estética, ficha de equipo, etc.)
   // La estructura de este JSON la define RubroTemplate.camposFicha
