@@ -70,23 +70,20 @@ app.use(express.json({
 }));
 app.use(express.urlencoded({ extended: true }));
 
-// Middleware CORS personalizado: permisivo para /website-leads (público),
-// restrictivo para el resto (panel, APIs privadas)
+// Middleware CORS con soporte para múltiples orígenes
 app.use((req, res, next) => {
-  if (req.path.startsWith('/website-leads')) {
-    // CORS permisivo para website-leads: acepta cualquier origen
-    res.header('Access-Control-Allow-Origin', '*');
-    res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS, PATCH');
-    res.header('Access-Control-Allow-Headers', 'Content-Type');
-  } else {
-    // CORS restrictivo para el resto (panel, APIs)
-    const allowed = origenesPermitidos === true ? '*' : origenesPermitidos;
-    res.header('Access-Control-Allow-Origin', allowed);
+  const origenPermitido = process.env.PANEL_FRONTEND_URL || 'https://agendabot-beryl.vercel.app';
+  const origenesPermitidos = origenPermitido.split(',').map(o => o.trim());
+  
+  const origen = req.get('origin');
+  
+  if (origenesPermitidos.includes(origen) || origenesPermitidos.includes('*')) {
+    res.header('Access-Control-Allow-Origin', origen);
     res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
     res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    res.header('Access-Control-Allow-Credentials', 'true');
   }
 
-  // Responder inmediato a preflight OPTIONS
   if (req.method === 'OPTIONS') {
     return res.sendStatus(200);
   }
