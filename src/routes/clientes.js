@@ -369,4 +369,152 @@ router.post('/:id/ventas', async (req, res) => {
   }
 });
 
+// ------------------------------------------------------------
+// Helper: recalcula el "caché" en Cliente (fichaJson, diagnostico,
+// profesionalAtendio, fechaProximaCita) a partir de la AtencionClinica
+// más reciente por fecha. Se llama tras crear/editar/eliminar una atención.
+// Si no queda ninguna atención, limpia el caché a null.
+// ------------------------------------------------------------
+async function recalcularCacheCliente(clienteId) {
+  const masReciente = await prisma.atencionClinica.findFirst({
+    where: { clienteId },
+    orderBy: { fecha: 'desc' },
+  });
+
+  await prisma.cliente.update({
+    where: { id: clienteId },
+    data: {
+      fichaJson: masReciente ? masReciente.fichaJson : null,
+      diagnostico: masReciente ? masReciente.diagnostico : null,
+      profesionalAtendio: masReciente ? masReciente.profesionalAtendio : null,
+      fechaProximaCita: masReciente ? masReciente.fechaProximaCitaFijada : null,
+    },
+  });
+}
+
+// ------------------------------------------------------------
+// GET /clientes/:id/atenciones — historial completo, más reciente primero
+// ------------------------------------------------------------
+router.get('/:id/atenciones', async (req, res) => {
+  try {
+    const cliente = await prisma.cliente.findFirst({
+      where: { id: req.params.id, empresaId: req.usuario.empresaId },
+    });
+    if (!cliente) return res.status(404).json({ error: 'Cliente no encontrado' });
+
+    const atenciones = await prisma.atencionClinica.findMany({
+      where: { clienteId: cliente.id },
+      orderBy: { fecha: 'desc' },
+    });
+
+    res.json({ atenciones });
+  } catch (error) {
+    console.error('Error listando atenciones clínicas:', error);
+    res.status(500).json({ error: 'Error al listar las atenciones clínicas' });
+  }
+});
+
+// ------------------------------------------------------------
+// POST /clientes/:id/atenciones — registra una atención nueva
+// ------------------------------------------------------------
+router.post('/:id/atenciones', async (req, res) => {
+  try {
+    const cliente = await prisma.cliente.findFirst({
+      where: { id: req.params.id, empresaId: req.usuario.empresaId },
+    });
+    if (!cliente) return res.status(404).json({ error: 'Cliente no encontrado' });
+
+    const { fecha, fichaJson, diagnostico, profesionalAtendio, fechaProximaCitaFijada } = req.body;
+
+    if (!fecha) {
+      return res.status(400).json({ error: 'Falta la fecha de la atención' });
+    }
+
+    const atencion = await prisma.atencionClinica.create({
+      data: {
+        clienteId: cliente.id,
+        fecha: new Date(fecha),
+        fichaJson: fichaJson || null,
+        diagnostico: diagnostico || null,
+        profesionalAtendio: profesionalAtendio || null,
+        fechaProximaCitaFijada: fechaProximaCitaFijada ? new Date(fechaProximaCitaFijada) : null,
+      },
+    });
+
+    await recalcularCacheCliente(cliente.id);
+
+    res.status(201).json({ atencion });
+  } catch (error) {
+    console.error('Error creando atención clínica:', error);
+    res.status(500).json({ error: 'Error al crear la atención clínica' });
+  }
+});
+
+// ------------------------------------------------------------
+// PATCH /clientes/:id/atenciones/:atencionId — edita una atención existente
+// ------------------------------------------------------------
+router.patch('/:id/atenciones/:atencionId', async (req, res) => {
+  try {
+    const cliente = await prisma.cliente.findFirst({
+      where: { id: req.params.id, empresaId: req.usuario.empresaId },
+    });
+    if (!cliente) return res.status(404).json({ error: 'Cliente no encontrado' });
+
+    const atencionExistente = await prisma.atencionClinica.findFirst({
+      where: { id: req.params.atencionId, clienteId: cliente.id },
+    });
+    if (!atencionExistente) return res.status(404).json({ error: 'Atención no encontrada' });
+
+    const { fecha, fichaJson, diagnostico, profesionalAtendio, fechaProximaCitaFijada } = req.body;
+
+    const actualizada = await prisma.atencionClinica.update({
+      where: { id: atencionExistente.id },
+      data: {
+        ...(fecha !== undefined && { fecha: new Date(fecha) }),
+        ...(fichaJson !== undefined && { fichaJson }),
+        ...(diagnostico !== undefined && { diagnostico: diagnostico || null }),
+        ...(profesionalAtendio !== undefined && { profesionalAtendio: profesionalAtendio || null }),
+        ...(fechaProximaCitaFijada !== undefined && {
+          fechaProximaCitaFijada: fechaProximaCitaFijada ? new Date(fechaProximaCitaFijada) : null,
+        }),
+      },
+    });
+
+    await recalcularCacheCliente(cliente.id);
+
+    res.json({ atencion: actualizada });
+  } catch (error) {
+    console.error('Error actualizando atención clínica:', error);
+    res.status(500).json({ error: 'Error al actualizar la atención clínica' });
+  }
+});
+
+// ------------------------------------------------------------
+// DELETE /clientes/:id/atenciones/:atencionId — elimina una atención
+// (el frontend debe pedir confirmación antes de llamar esta ruta)
+// ------------------------------------------------------------
+router.delete('/:id/atenciones/:atencionId', async (req, res) => {
+  try {
+    const cliente = await prisma.cliente.findFirst({
+      where: { id: req.params.id, empresaId: req.usuario.empresaId },
+    });
+    if (!cliente) return res.status(404).json({ error: 'Cliente no encontrado' });
+
+    const atencionExistente = await prisma.atencionClinica.findFirst({
+      where: { id: req.params.atencionId, clienteId: cliente.id },
+    });
+    if (!atencionExistente) return res.status(404).json({ error: 'Atención no encontrada' });
+
+    await prisma.atencionClinica.delete({ where: { id: atencionExistente.id } });
+
+    await recalcularCacheCliente(cliente.id);
+
+    res.json({ ok: true });
+  } catch (error) {
+    console.error('Error eliminando atención clínica:', error);
+    res.status(500).json({ error: 'Error al eliminar la atención clínica' });
+  }
+});
+
+
 module.exports = router;
