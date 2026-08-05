@@ -46,6 +46,7 @@ model Empresa {
   sucursal        String?
   rut             String?
   telefonoContacto String?
+  emailContacto   String?
 
   rubroTemplate   RubroTemplate @relation(fields: [rubroTemplateId], references: [id])
   rubroTemplateId String
