@@ -5,6 +5,18 @@ const router = express.Router();
 const prisma = new PrismaClient();
 const resend = new Resend(process.env.RESEND_API_KEY);
 
+// CORS permisivo solo para /website-leads (endpoint público, multi-tenant)
+router.use((req, res, next) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS, PATCH');
+  res.header('Access-Control-Allow-Headers', 'Content-Type');
+  
+  if (req.method === 'OPTIONS') {
+    return res.sendStatus(200);
+  }
+  next();
+});
+
 router.post("/website-leads", async (req, res) => {
   try {
     const { nombre, email, telefono, mensaje } = req.body;
