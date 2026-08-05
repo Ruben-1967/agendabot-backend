@@ -300,7 +300,10 @@ router.patch('/:id', async (req, res) => {
     });
     if (!cliente) return res.status(404).json({ error: 'Cliente no encontrado' });
 
-    const { nombre, rut, telefono, email, fechaNacimiento, fichaJson } = req.body;
+    const {
+      nombre, rut, telefono, email, fechaNacimiento, fichaJson,
+      fechaProximaCita, profesionalAtendio, diagnostico,
+    } = req.body;
 
     const actualizado = await prisma.cliente.update({
       where: { id: cliente.id },
@@ -313,6 +316,11 @@ router.patch('/:id', async (req, res) => {
           fechaNacimiento: fechaNacimiento ? new Date(fechaNacimiento) : null,
         }),
         ...(fichaJson !== undefined && { fichaJson }),
+        ...(fechaProximaCita !== undefined && {
+          fechaProximaCita: fechaProximaCita ? new Date(fechaProximaCita) : null,
+        }),
+        ...(profesionalAtendio !== undefined && { profesionalAtendio: profesionalAtendio || null }),
+        ...(diagnostico !== undefined && { diagnostico: diagnostico || null }),
       },
     });
 
