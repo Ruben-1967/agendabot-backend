@@ -1,52 +1,39 @@
-// ============================================================
-// Endpoint: POST /website-leads
-// Recibe datos del formulario de contacto del sitio web
-// Guarda en BD + envía email automático vía Resend
-// ============================================================
-
 const express = require("express");
 const { PrismaClient } = require("@prisma/client");
 const { Resend } = require("resend");
-
 const router = express.Router();
 const prisma = new PrismaClient();
 const resend = new Resend(process.env.RESEND_API_KEY);
 
-/**
- * POST /website-leads
- * Body: { nombre, email, telefono, mensaje }
- * Response: { exito: true, id } | { error: "..." }
- */
 router.post("/website-leads", async (req, res) => {
   try {
     const { nombre, email, telefono, mensaje } = req.body;
-
-    // Validar campos requeridos
-    if (!nombre || !email || !telefono || !mensaje) {
+    
+    if (!nombre || !email || !telefono) {
       return res.status(400).json({
-        error: "Campos requeridos: nombre, email, telefono, mensaje",
+        error: "Campos requeridos: nombre, email, telefono",
       });
     }
-
-    // Validar formato email básico
+    
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(email)) {
       return res.status(400).json({ error: "Email inválido" });
     }
-
-    // Guardar en BD
+    
     const lead = await prisma.websiteLeads.create({
       data: {
         nombre: nombre.trim(),
         email: email.trim().toLowerCase(),
         telefono: telefono.trim(),
-        mensaje: mensaje.trim(),
+        mensaje: mensaje.trim() || "",
         empresaId: "ahoroptica-lautaro-seed-id",
       },
     });
-
-    // Enviar email vía Resend
-    await resend.emails.send({
+    
+    console.log("[websiteLeads] Lead creado:", lead.id);
+    console.log("[websiteLeads] Enviando email a:", process.env.ADMIN_EMAIL);
+    
+    const emailResponse = await resend.emails.send({
       from: "noreply@ohparis.cl",
       to: process.env.ADMIN_EMAIL,
       subject: `📬 Nuevo lead del sitio web: ${nombre}`,
@@ -57,30 +44,32 @@ router.post("/website-leads", async (req, res) => {
         <p><strong>Teléfono:</strong> <a href="tel:${telefono}">${telefono}</a></p>
         <p><strong>Mensaje:</strong></p>
         <p style="background: #f5f5f5; padding: 15px; border-left: 4px solid #2F6F62;">
-          ${mensaje.replace(/\n/g, "<br>")}
-        </p>
-        <hr>
-        <p style="font-size: 12px; color: #666;">
-          ID del lead: <code>${lead.id}</code><br>
-          Fecha: ${new Date(lead.creadoEn).toLocaleString("es-CL")}
+          ${(mensaje || "").replace(/\n/g, "<br>")}
         </p>
       `,
     });
-
+    
+    console.log("[websiteLeads] Resend response:", emailResponse);
+    
+    if (emailResponse.error) {
+      console.error("[websiteLeads] Resend error:", emailResponse.error);
+      return res.status(500).json({
+        error: "Error al enviar email: " + JSON.stringify(emailResponse.error),
+      });
+    }
+    
+    console.log("[websiteLeads] Email enviado correctamente. ID:", emailResponse.id);
+    
     res.status(200).json({
       exito: true,
       id: lead.id,
-      mensaje: "Formulario enviado correctamente. Te contactaremos pronto.",
+      mensaje: "Formulario enviado correctamente.",
     });
+    
   } catch (error) {
-    console.error("Error en POST /website-leads:", error);
-
-    if (error.code && error.code.startsWith("P")) {
-      return res.status(400).json({ error: "Error al guardar el formulario" });
-    }
-
+    console.error("[websiteLeads] Error:", error.message, error);
     res.status(500).json({
-      error: "Error al procesar el formulario. Intenta más tarde.",
+      error: "Error al procesar el formulario. " + error.message,
     });
   }
 });
@@ -95,20 +84,6 @@ router.get("/website-leads/admin", async (req, res) => {
   } catch (error) {
     console.error("Error en GET /website-leads/admin:", error);
     res.status(500).json({ error: "Error al obtener leads" });
-  }
-});
-
-router.patch("/website-leads/:id/marcar-leido", async (req, res) => {
-  try {
-    const { id } = req.params;
-    const lead = await prisma.websiteLeads.update({
-      where: { id },
-      data: { leido: true, respondidoEn: new Date() },
-    });
-    res.status(200).json({ exito: true, lead });
-  } catch (error) {
-    console.error("Error en PATCH /website-leads/:id/marcar-leido:", error);
-    res.status(500).json({ error: "Error al actualizar lead" });
   }
 });
 
