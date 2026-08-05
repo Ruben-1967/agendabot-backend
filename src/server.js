@@ -46,6 +46,7 @@ const conversacionesRouter = require('./routes/conversaciones');
 const suscripcionRouter = require('./routes/suscripcion');
 const websiteLeadsRouter = require('./routes/websiteLeads');
 const { iniciarJobBloqueoVencidas } = require('./jobs/bloquearEmpresasVencidas');
+const cors = require('cors');
 
 // Job de opt-in de campañas (node-cron autoprogramado dentro de este mismo
 // proceso — ver src/jobs/enviarPreguntaOptIn.js). Requerirlo una sola vez
@@ -108,12 +109,28 @@ function verificarFirmaWebhookWhatsApp(req, res, next) {
   next();
 }
 
-app.use(cors({
- origin: origenesPermitidos,
-  credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
-}));
+// Middleware CORS personalizado: permisivo para /website-leads (público),
+// restrictivo para el resto (panel, APIs privadas)
+app.use((req, res, next) => {
+  if (req.path.startsWith('/website-leads')) {
+    // CORS permisivo para website-leads: acepta cualquier origen
+    res.header('Access-Control-Allow-Origin', '*');
+    res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS, PATCH');
+    res.header('Access-Control-Allow-Headers', 'Content-Type');
+  } else {
+    // CORS restrictivo para el resto (panel, APIs)
+    const allowed = origenesPermitidos === true ? '*' : origenesPermitidos;
+    res.header('Access-Control-Allow-Origin', allowed);
+    res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
+    res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  }
+
+  // Responder inmediato a preflight OPTIONS
+  if (req.method === 'OPTIONS') {
+    return res.sendStatus(200);
+  }
+  next();
+});
 
 app.use('/auth', authRouter);
 app.use('/campanas', campanasRouter);
@@ -131,6 +148,7 @@ app.use('/conversaciones', conversacionesRouter);
 app.use('/disponibilidad', require('./routes/disponibilidad'));
 app.use('/suscripcion', suscripcionRouter);
 app.use('/', websiteLeadsRouter);
+app.use('/website-leads', websiteLeadsRouter);
 
 
 app.get('/', (req, res) => {
