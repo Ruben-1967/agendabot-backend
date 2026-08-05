@@ -247,10 +247,40 @@ model Cliente {
   ventas      Venta[]
   conversaciones Conversacion[]
   pedidos     Pedido[]
+  atencionesClinicas AtencionClinica[]
 
   @@index([empresaId])
   @@index([telefono])
 }
+
+// ------------------------------------------------------------
+// ATENCIONES CLÍNICAS (historial versionado por visita)
+// Cada fila es una visita/control — nunca se sobrescribe, queda
+// como registro histórico. Cliente.fichaJson/diagnostico/
+// profesionalAtendio/fechaProximaCita funcionan como CACHÉ del
+// valor de la atención más reciente (se actualizan en el backend
+// cada vez que se crea/edita/elimina una AtencionClinica).
+// ------------------------------------------------------------
+model AtencionClinica {
+  id        String   @id @default(uuid())
+  cliente   Cliente  @relation(fields: [clienteId], references: [id])
+  clienteId String
+
+  fecha DateTime // editable siempre; default a hoy al crear, desde el frontend
+
+  fichaJson              Json?    // snapshot de la receta (OD/OI/DP) de esta visita
+  diagnostico            String?
+  profesionalAtendio     String?
+  fechaProximaCitaFijada DateTime?
+
+  creadoEn      DateTime @default(now())
+  actualizadoEn DateTime @updatedAt
+
+  @@index([clienteId])
+}
+
+
+
 
 // ------------------------------------------------------------
 // CITAS
