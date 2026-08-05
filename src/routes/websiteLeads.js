@@ -25,8 +25,21 @@ router.use((req, res, next) => {
  *   - req.get('host') = "localhost" → devuelve "localhost"
  */
 function extraerDominio(req) {
-  const host = req.get('host') || '';
-  return host.split(':')[0].toLowerCase();
+  // Intenta obtener el origin (sitio que hizo el request)
+  const origin = req.get('origin') || req.get('referer') || '';
+  
+  if (!origin) {
+    console.warn('[websiteLeads] Sin origin/referer detectado');
+    return null;
+  }
+
+  try {
+    const url = new URL(origin);
+    return url.hostname.toLowerCase();
+  } catch {
+    console.error('[websiteLeads] Error parseando origin:', origin);
+    return null;
+  }
 }
 
 /**
@@ -68,7 +81,15 @@ router.post("/", async (req, res) => {
     // MULTI-TENANT: Detectar empresa por dominio
     // ========================================
     const dominio = extraerDominio(req);
-    console.log(`[websiteLeads] Dominio detectado: ${dominio}`);
+
+if (!dominio) {
+  console.error(`[websiteLeads] No se pudo extraer dominio del request`);
+  return res.status(400).json({
+    error: "No se pudo identificar el origen del formulario",
+  });
+}
+
+console.log(`[websiteLeads] Dominio detectado: ${dominio}`);
 
     const empresa = await buscarEmpresaPorDominio(dominio);
     
