@@ -174,6 +174,7 @@ async function responderPreguntaSobreNegocio({ historial, empresaDemo, servicios
   const systemPrompt = `Eres el asistente de WhatsApp de "${empresaDemo.nombre}" (esto es una demo comercial de Totemsystem).
 Servicios que ofrece: ${serviciosBase.length ? serviciosBase.join(', ') : 'servicios generales del rubro'}.
 ${empresaDemo.direccion ? `Dirección: ${empresaDemo.direccion}.` : ''}
+${empresaDemo.sitioWeb ? `Sitio web: ${empresaDemo.sitioWeb}` : ''}
 ${empresaDemo.informacionAdicional ? `Información adicional que puedes citar tal cual: ${empresaDemo.informacionAdicional}` : ''}
 
 Ya tienes arriba el historial completo de la conversación — úsalo para no perder el hilo. Responde en 1-3
