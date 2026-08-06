@@ -143,16 +143,32 @@ async function agregarProductoYResponder({ demoAsignada, carritoActual, producto
 // prospecto decide si quiere seguir comprando o solo estaba preguntando.
 // ------------------------------------------------------------
 async function responderPreguntaLibreCatalogo({ historial, textoEntrante, empresaDemo }) {
+  const productos = await prisma.producto.findMany({
+    where: { empresaId: empresaDemo.id, activo: true },
+    orderBy: { nombre: 'asc' },
+  });
+
+  const catalogoTexto = productos.length > 0
+    ? productos
+        .map((p) => `- ${p.nombre}: $${p.precio.toLocaleString('es-CL')}${p.descripcion ? ` (${p.descripcion})` : ''}`)
+        .join('\n')
+    : null;
+
   const systemPrompt = `Eres el asistente de WhatsApp de "${empresaDemo.nombre}" (esto es una demo comercial de Totemsystem).
 ${empresaDemo.direccion ? `Dirección: ${empresaDemo.direccion}.` : ''}
 ${empresaDemo.sitioWeb ? `Sitio web: ${empresaDemo.sitioWeb}` : ''}
 ${empresaDemo.informacionAdicional ? `Información adicional que puedes citar tal cual: ${empresaDemo.informacionAdicional}` : ''}
+${catalogoTexto ? `Catálogo de productos disponible (nombre: precio) — usa estos datos EXACTOS si preguntan por productos o precios, nunca inventes otros:\n${catalogoTexto}` : ''}
 
 Ya tienes arriba el historial completo de la conversación — úsalo para no perder el hilo. Responde en 1-3
 líneas, tono cordial y directo, como WhatsApp. NUNCA inventes precios, horarios exactos, ni políticas que no
-te dieron arriba — si no lo sabes, dilo con naturalidad. Al final de tu respuesta, invita brevemente a ver el
-catálogo de productos si quiere (ej. "¿Quieres que te muestre el catálogo?"), sin mostrarlo tú mismo — solo
-pregúntalo.`;
+te dieron arriba — si no lo sabes, dilo con naturalidad.
+
+IMPORTANTE — idioma: usa español neutro de Chile con TUTEO estándar ("tú", "tienes", "quieres", "escribe").
+NUNCA uses voseo rioplatense ni muletillas argentinas ("vos", "querés", "escribís", "tenés", "che").
+
+Al final de tu respuesta, invita brevemente a ver el catálogo completo si quiere (ej. "¿Quieres que te muestre
+el catálogo completo?"), sin mostrarlo tú mismo en una lista larga — solo pregúntalo.`;
 
   const mensajes = [
     ...historial.slice(-40).map((turno) => ({
@@ -171,6 +187,10 @@ pregúntalo.`;
 
   const textBlock = response.content.find((b) => b.type === 'text');
   return textBlock ? textBlock.text : '¿En qué te puedo ayudar? Puedo mostrarte el catálogo o resolver tus dudas.';
+}
+
+function detectaIntencionVerCatalogo(texto) {
+  return /cat[aá]logo|men[uú]|productos?|qu[eé]\s+(venden|tienen|ofrecen|hay)|precios?/i.test(texto || '');
 }
 
 /**
@@ -391,10 +411,16 @@ async function procesarMensajeCatalogoDemo({ demoAsignada, textoEntrante, mensaj
     };
   }
 
-  // Pregunta libre o cualquier mensaje que no calzó con lo anterior — se
-  // responde con Claude usando la info real del negocio (sitioWeb,
-  // informacionAdicional, dirección), en vez de mostrar el catálogo sin
-  // que lo hayan pedido.
+  // Pide ver productos/catálogo/precios explícitamente — mismo
+  // comportamiento de siempre: catálogo interactivo real con cantidades y
+  // total, sin pasar por Claude.
+  if (detectaIntencionVerCatalogo(textoEntrante)) {
+    return construirInteractivoCatalogo(empresaDemo);
+  }
+
+  // Cualquier otra pregunta libre (dirección, sitio web, horarios, etc.) —
+  // se responde con Claude usando la info real del negocio, en vez de
+  // mostrar el catálogo sin que lo hayan pedido.
   try {
     const respuestaTexto = await responderPreguntaLibreCatalogo({ historial, textoEntrante, empresaDemo });
     return { respuestaTexto, interactivo: null };
