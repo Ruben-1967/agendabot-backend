@@ -225,9 +225,16 @@ async function generarRespuestaChatbot({ empresa, cliente, historial, mensajeEnt
   if (empresa.direccion) {
     bloquesPersonalizacion.push(`Dirección del negocio: ${empresa.direccion}`);
   }
+  
+if (empresa.sitioWeb) {
+  bloquesPersonalizacion.push(`Sitio web del negocio: ${empresa.sitioWeb}`);
+}
+
   if (empresa.notaAgendamiento) {
     bloquesPersonalizacion.push(`Nota sobre agendamiento (tono/política a transmitir cuando corresponda): ${empresa.notaAgendamiento}`);
   }
+
+
   if (empresa.informacionAdicional) {
     bloquesPersonalizacion.push(
       `Información adicional que puedes citar interpretando su contenido según el TONO DE COMUNICACIÓN especificado más abajo (precios, promociones, qué incluye cada servicio, etc.) — no agregues ni inventes nada que no esté aquí. IMPORTANTE: esto es solo para responder preguntas puntuales, NUNCA para construir, completar ni ampliar la lista de servicios ofrecidos (ver SERVICIOS AGENDABLES arriba y las instrucciones sobre mostrar_lista_servicios):\n${empresa.informacionAdicional}`
