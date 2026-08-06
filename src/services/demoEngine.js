@@ -218,7 +218,14 @@ function detectarServicioMencionado(texto, serviciosBase) {
   }
 
   // Paso 2: coincidencia parcial (una sola palabra clave), solo si es
-  // inequívoca (un único servicio candidato).
+  // inequívoca (un único servicio candidato) Y el mensaje es corto (máx 3
+  // palabras significativas). Mensajes largos suelen ser respuestas
+  // conversacionales a otra pregunta (ej. "no tengo receta pero es sin
+  // cristales ópticos") — compartir una sola palabra con el nombre de un
+  // servicio no debe secuestrar la conversación en ese caso.
+  const palabrasTexto = palabrasSignificativas(texto);
+  if (palabrasTexto.length > 3) return null;
+
   const candidatos = serviciosBase.filter((servicio) => {
     const palabras = palabrasSignificativas(servicio);
     return palabras.some((p) => new RegExp(`\\b${escaparRegex(p)}\\b`, 'i').test(textoNorm));
