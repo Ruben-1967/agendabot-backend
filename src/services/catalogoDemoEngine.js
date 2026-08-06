@@ -1,13 +1,16 @@
 // Motor de catálogo rotativo SIMPLIFICADO, exclusivo para demos
 // comerciales. A diferencia de pedidosEngine.js (el motor real), este lee
-// Producto directo, mantiene un "carrito" simple por demo
+// Producto direct, mantiene un "carrito" simple por demo
 // (DemoAsignada.carritoDemoJson) y un checkout simulado propio
 // (DemoAsignada.checkoutDemoJson). No se usa NUNCA para negocios reales —
 // pedidosEngine.js no tiene hoy forma de pago, tipo de entrega, ni regla
 // de despacho; esto es solo para la demo.
 
+const Anthropic = require('@anthropic-ai/sdk');
 const prisma = require('../lib/prisma');
 const { decodificarFilaProductoDemo, decodificarFilaCantidadDemo } = require('./whatsapp');
+
+const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 const MAX_PRODUCTOS_EN_LISTA = 10;
 const OPCIONES_CANTIDAD_RAPIDA = [1, 2, 3, 4, 5, 6];
@@ -125,7 +128,6 @@ async function agregarProductoYResponder({ demoAsignada, carritoActual, producto
   });
 
   const { resumen, total } = construirResumenCarrito(nuevoCarrito);
-  const etiqueta = etiquetaUnidad(producto.unidad);
   const cantidadTexto = formatearCantidad(cantidad, producto.unidad);
   return {
     respuestaTexto: `¡Agregado! ${cantidadTexto} ${producto.nombre} — $${(producto.precio * cantidad).toLocaleString('es-CL')}\n\nPedido hasta ahora:\n${resumen}\n\nTotal: $${total.toLocaleString('es-CL')}\n\nEscribe "menú" para agregar algo más, o "listo" para cerrar el pedido.`,
@@ -133,9 +135,47 @@ async function agregarProductoYResponder({ demoAsignada, carritoActual, producto
   };
 }
 
+// ------------------------------------------------------------
+// Responde una pregunta libre (no relacionada con el carrito/checkout)
+// usando Claude, con la misma información de negocio que el lado de
+// agendamiento (dirección, sitio web, información adicional). Al cerrar,
+// invita a ver el catálogo en vez de mostrarlo automáticamente — el
+// prospecto decide si quiere seguir comprando o solo estaba preguntando.
+// ------------------------------------------------------------
+async function responderPreguntaLibreCatalogo({ historial, textoEntrante, empresaDemo }) {
+  const systemPrompt = `Eres el asistente de WhatsApp de "${empresaDemo.nombre}" (esto es una demo comercial de Totemsystem).
+${empresaDemo.direccion ? `Dirección: ${empresaDemo.direccion}.` : ''}
+${empresaDemo.sitioWeb ? `Sitio web: ${empresaDemo.sitioWeb}` : ''}
+${empresaDemo.informacionAdicional ? `Información adicional que puedes citar tal cual: ${empresaDemo.informacionAdicional}` : ''}
+
+Ya tienes arriba el historial completo de la conversación — úsalo para no perder el hilo. Responde en 1-3
+líneas, tono cordial y directo, como WhatsApp. NUNCA inventes precios, horarios exactos, ni políticas que no
+te dieron arriba — si no lo sabes, dilo con naturalidad. Al final de tu respuesta, invita brevemente a ver el
+catálogo de productos si quiere (ej. "¿Quieres que te muestre el catálogo?"), sin mostrarlo tú mismo — solo
+pregúntalo.`;
+
+  const mensajes = [
+    ...historial.slice(-40).map((turno) => ({
+      role: turno.rol === 'asistente' ? 'assistant' : 'user',
+      content: turno.texto,
+    })),
+    { role: 'user', content: textoEntrante },
+  ];
+
+  const response = await anthropic.messages.create({
+    model: 'claude-haiku-4-5-20251001',
+    max_tokens: 200,
+    system: systemPrompt,
+    messages: mensajes,
+  });
+
+  const textBlock = response.content.find((b) => b.type === 'text');
+  return textBlock ? textBlock.text : '¿En qué te puedo ayudar? Puedo mostrarte el catálogo o resolver tus dudas.';
+}
+
 /**
  * @param {Object} params
- * @param {Object} params.demoAsignada - incluye empresaDemo, carritoDemoJson, checkoutDemoJson
+ * @param {Object} params.demoAsignada - incluye empresaDemo, carritoDemoJson, checkoutDemoJson, historialSimulacion
  * @param {string} params.textoEntrante
  * @param {Object} params.mensaje - mensaje crudo del webhook
  * @returns {Promise<{respuestaTexto: string, interactivo: Object|null}>}
@@ -143,6 +183,7 @@ async function agregarProductoYResponder({ demoAsignada, carritoActual, producto
 async function procesarMensajeCatalogoDemo({ demoAsignada, textoEntrante, mensaje }) {
   const empresaDemo = demoAsignada.empresaDemo;
   const carritoActual = Array.isArray(demoAsignada.carritoDemoJson) ? demoAsignada.carritoDemoJson : [];
+  const historial = Array.isArray(demoAsignada.historialSimulacion) ? demoAsignada.historialSimulacion : [];
   const checkout = demoAsignada.checkoutDemoJson || {};
   const paso = checkout.paso || null;
   const idFilaElegida = mensaje?.type === 'interactive' ? mensaje.interactive?.list_reply?.id : null;
@@ -343,14 +384,24 @@ async function procesarMensajeCatalogoDemo({ demoAsignada, textoEntrante, mensaj
   }
 
   const esSoloAgradecimiento = /^\s*(ok|okey|gracias|dale|bien|listo|perfecto)\s*[.!]?\s*$/i.test(textoEntrante || '');
-  if (!esSoloAgradecimiento) {
-    return construirInteractivoCatalogo(empresaDemo);
+  if (esSoloAgradecimiento) {
+    return {
+      respuestaTexto: '¡De nada! Escríbeme "menú" cuando quieras ver el catálogo de nuevo.',
+      interactivo: null,
+    };
   }
 
-  return {
-    respuestaTexto: '¡De nada! Escríbeme "menú" cuando quieras ver el catálogo de nuevo.',
-    interactivo: null,
-  };
+  // Pregunta libre o cualquier mensaje que no calzó con lo anterior — se
+  // responde con Claude usando la info real del negocio (sitioWeb,
+  // informacionAdicional, dirección), en vez de mostrar el catálogo sin
+  // que lo hayan pedido.
+  try {
+    const respuestaTexto = await responderPreguntaLibreCatalogo({ historial, textoEntrante, empresaDemo });
+    return { respuestaTexto, interactivo: null };
+  } catch (error) {
+    console.error('[DEMO] Error respondiendo pregunta libre de catálogo:', error.message);
+    return construirInteractivoCatalogo(empresaDemo);
+  }
 }
 
 async function finalizarPedido({ demoAsignada, empresaDemo, carritoActual, checkout }) {
