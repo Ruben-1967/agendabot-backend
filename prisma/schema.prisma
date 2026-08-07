@@ -151,11 +151,13 @@ model RecursoAgendable {
   bloqueos     Bloqueo[]
   citas        Cita[]
   usuarios     Usuario[]
+  servicios    ServicioRecurso[]
 
   @@index([empresaId])
 }
 
 model HorarioSemanal {
+
   id                 String   @id @default(uuid())
   recurso            RecursoAgendable @relation(fields: [recursoAgendableId], references: [id])
   recursoAgendableId String
@@ -192,9 +194,33 @@ model Servicio {
   duracionMinutos Int?
   activo    Boolean  @default(true)
 
+  // Multi-profesional (OPCIÓN C): si es false, cualquier profesional vinculado
+  // en ServicioRecurso puede atenderlo y el sistema asigna el primero libre.
+  // Si es true (default), el bot/panel debe pedir el profesional puntual.
+  requiereProfesionalEspecifico Boolean @default(true)
+
   citas     Cita[]
+  recursos  ServicioRecurso[]
 
   @@index([empresaId])
+}
+
+// ------------------------------------------------------------
+// SERVICIO x RECURSO (qué profesionales pueden dar cada servicio)
+// Solo relevante cuando la empresa tiene más de un RecursoAgendable
+// tipo "profesional". Con un solo recurso, esta tabla queda vacía y
+// todo funciona igual que hoy (comportamiento Plan B sin cambios).
+// ------------------------------------------------------------
+model ServicioRecurso {
+  id                 String   @id @default(uuid())
+  servicio           Servicio @relation(fields: [servicioId], references: [id])
+  servicioId         String
+  recurso            RecursoAgendable @relation(fields: [recursoAgendableId], references: [id])
+  recursoAgendableId String
+
+  @@unique([servicioId, recursoAgendableId])
+  @@index([servicioId])
+  @@index([recursoAgendableId])
 }
 
 // ------------------------------------------------------------

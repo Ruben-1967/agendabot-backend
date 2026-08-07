@@ -145,7 +145,47 @@ async function obtenerProximosDiasConDisponibilidad(recursoAgendableId, cantidad
     }
   }
 
-  return diasConCupo;
+return diasConCupo;
+}
+
+/**
+ * Devuelve los slots disponibles de un recurso en un rango de fechas.
+ * Alimenta el calendario del panel (CalendarPickerModal).
+ *
+ * @param {string} recursoAgendableId
+ * @param {Date} desde
+ * @param {Date} hasta
+ * @returns {Promise<{fecha: string, horas: string[]}[]>}
+ */
+async function obtenerDisponibilidad(recursoAgendableId, desde, hasta) {
+  const desdeISO = desde.toISOString().split('T')[0];
+  const hastaISO = hasta.toISOString().split('T')[0];
+
+  const dias = [];
+  let cursor = desdeISO;
+
+  while (cursor <= hastaISO) {
+    const horas = await obtenerHorariosDisponibles(recursoAgendableId, cursor);
+    if (horas.length > 0) {
+      dias.push({ fecha: cursor, horas });
+    }
+    cursor = sumarDiasISO(cursor, 1);
+  }
+
+  return dias;
+}
+
+/**
+ * Valida si un slot puntual (fecha + hora) sigue disponible para un recurso.
+ *
+ * @param {string} recursoAgendableId
+ * @param {string} fecha - 'YYYY-MM-DD'
+ * @param {string} hora - 'HH:MM'
+ * @returns {Promise<boolean>}
+ */
+async function validarSlot(recursoAgendableId, fecha, hora) {
+  const disponibles = await obtenerHorariosDisponibles(recursoAgendableId, fecha);
+  return disponibles.includes(hora);
 }
 
 /**
@@ -183,4 +223,6 @@ module.exports = {
   obtenerHorariosDisponibles,
   crearCita,
   obtenerProximosDiasConDisponibilidad,
+  obtenerDisponibilidad,
+  validarSlot,
 };

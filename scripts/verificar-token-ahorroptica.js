@@ -4,7 +4,7 @@ const prisma = new PrismaClient();
 
 async function verificar() {
   const empresa = await prisma.empresa.findUnique({
-    where: { empresaId: 'ahoroptica-lautaro-seed-id' },
+    where: { id: 'ahoroptica-lautaro-seed-id' },
     select: {
       empresaId: true,
       nombre: true,
