@@ -347,6 +347,8 @@ ${empresa.requiereRut ? '- Este negocio EXIGE nombre completo y RUT para agendar
       messages,
     });
 
+ console.log('[DEBUG-TEMP] stop_reason:', response.stop_reason, '| tool_use blocks:', response.content.filter(b => b.type === 'tool_use').map(b => b.name));
+
     if (response.stop_reason !== 'tool_use') {
       const textBlock = response.content.find((b) => b.type === 'text');
       return { texto: textBlock ? textBlock.text : 'Disculpa, ¿puedes repetir tu mensaje?', interactivo: null };
