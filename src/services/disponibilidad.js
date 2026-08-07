@@ -189,9 +189,118 @@ async function validarSlot(recursoAgendableId, fecha, hora) {
 }
 
 /**
- * Crea una Cita real en la base de datos.
+ * Devuelve disponibilidad a nivel de SERVICIO (no de un recurso puntual),
+ * respetando Servicio.requiereProfesionalEspecifico:
+ *
+ * - true  -> hay que indicar recursoAgendableId explícito (mismo
+ *            comportamiento que obtenerDisponibilidad de siempre).
+ * - false -> junta la disponibilidad de TODOS los RecursoAgendable
+ *            vinculados en ServicioRecurso, y cada slot indica a qué
+ *            recurso corresponde (necesario para poder crear la cita
+ *            después, sin volver a preguntar).
+ *
+ * @param {string} servicioId
+ * @param {Date} desde
+ * @param {Date} hasta
+ * @param {string|null} recursoAgendableId - obligatorio si el servicio requiere profesional específico
+ * @returns {Promise<{fecha: string, slots: {hora: string, recursoAgendableId: string}[]}[]>}
  */
-async function crearCita({ empresaId, clienteId, recursoAgendableId, servicioId, fechaISO, horaInicio }) {
+async function obtenerDisponibilidadPorServicio(servicioId, desde, hasta, recursoAgendableId = null) {
+  const servicio = await prisma.servicio.findUnique({
+    where: { id: servicioId },
+    include: { recursos: { include: { recurso: true } } },
+  });
+  if (!servicio) throw new Error('Servicio no encontrado');
+
+  if (servicio.requiereProfesionalEspecifico) {
+    if (!recursoAgendableId) {
+      throw new Error('SERVICIO_REQUIERE_PROFESIONAL_ESPECIFICO');
+    }
+    const dias = await obtenerDisponibilidad(recursoAgendableId, desde, hasta);
+    return dias.map((d) => ({
+      fecha: d.fecha,
+      slots: d.horas.map((hora) => ({ hora, recursoAgendableId })),
+    }));
+  }
+
+  const recursosVinculados = servicio.recursos.map((sr) => sr.recurso);
+  if (recursosVinculados.length === 0) {
+    return []; // servicio marcado como "cualquier profesional" pero sin ninguno vinculado todavía
+  }
+
+  const desdeISO = desde.toISOString().split('T')[0];
+  const hastaISO = hasta.toISOString().split('T')[0];
+
+  const porFecha = {}; // { 'YYYY-MM-DD': [{hora, recursoAgendableId}, ...] }
+  let cursor = desdeISO;
+  while (cursor <= hastaISO) {
+    porFecha[cursor] = [];
+    cursor = sumarDiasISO(cursor, 1);
+  }
+
+  for (const recurso of recursosVinculados) {
+    const diasDelRecurso = await obtenerDisponibilidad(recurso.id, desde, hasta);
+    for (const dia of diasDelRecurso) {
+      if (!porFecha[dia.fecha]) continue; // fuera del rango pedido, por seguridad
+      for (const hora of dia.horas) {
+        porFecha[dia.fecha].push({ hora, recursoAgendableId: recurso.id });
+      }
+    }
+  }
+
+  return Object.keys(porFecha)
+    .sort()
+    .map((fecha) => ({
+      fecha,
+      slots: porFecha[fecha].sort((a, b) => a.hora.localeCompare(b.hora)),
+    }))
+    .filter((d) => d.slots.length > 0);
+}
+
+/**
+ * Encuentra, entre los recursos vinculados a un servicio "sin profesional
+ * específico", el primero que tenga libre una fecha+hora puntual. Se usa
+ * en crearCita() para resolver automáticamente qué profesional asignar.
+ *
+ * @returns {Promise<string|null>} recursoAgendableId disponible, o null si ninguno lo está
+ */
+async function resolverRecursoDisponible(servicioId, fechaISO, horaInicio) {
+  const servicio = await prisma.servicio.findUnique({
+    where: { id: servicioId },
+    include: { recursos: { include: { recurso: true } } },
+  });
+  if (!servicio) throw new Error('Servicio no encontrado');
+
+  for (const sr of servicio.recursos) {
+    const disponibles = await obtenerHorariosDisponibles(sr.recursoAgendableId, fechaISO);
+    if (disponibles.includes(horaInicio)) {
+      return sr.recursoAgendableId;
+    }
+  }
+  return null;
+}
+
+/**
+ * Crea una Cita real en la base de datos.
+ *
+ * recursoAgendableId es opcional: si no se pasa, y el servicio tiene
+ * requiereProfesionalEspecifico = false, se resuelve automáticamente al
+ * primer profesional vinculado que tenga ese horario libre.
+ */
+async function crearCita({ empresaId, clienteId, recursoAgendableId = null, servicioId, fechaISO, horaInicio }) {
+  if (!recursoAgendableId) {
+    if (!servicioId) throw new Error('Falta recursoAgendableId o servicioId');
+    const servicio = await prisma.servicio.findUnique({ where: { id: servicioId } });
+    if (!servicio) throw new Error('Servicio no encontrado');
+    if (servicio.requiereProfesionalEspecifico) {
+      throw new Error('FALTA_RECURSO_AGENDABLE');
+    }
+    recursoAgendableId = await resolverRecursoDisponible(servicioId, fechaISO, horaInicio);
+    if (!recursoAgendableId) {
+      throw new Error('HORARIO_YA_NO_DISPONIBLE');
+    }
+  }
+
   const recurso = await prisma.recursoAgendable.findUnique({ where: { id: recursoAgendableId } });
   if (!recurso) throw new Error('Recurso no encontrado');
 
@@ -225,4 +334,5 @@ module.exports = {
   obtenerProximosDiasConDisponibilidad,
   obtenerDisponibilidad,
   validarSlot,
+  obtenerDisponibilidadPorServicio,
 };
