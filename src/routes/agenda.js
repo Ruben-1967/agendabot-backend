@@ -260,6 +260,81 @@ router.put('/recurso', requireRole('ADMIN'), async (req, res) => {
 });
 
 // ------------------------------------------------------------
+// POST /agenda/profesionales — agrega un profesional adicional
+// (segundo, tercer RecursoAgendable de tipo "profesional" en
+// adelante). Válido según el límite del plan de la empresa:
+//   PLAN_A / PLAN_INICIO_LEGACY / sin Suscripcion -> 1 profesional
+//   PLAN_B                                        -> 2 profesionales
+//   PLAN_C                                         -> ilimitado
+// Si se supera el límite, responde 402 con mensaje de upsell (no
+// bloquea la UI, el botón "Agregar profesional" siempre está visible
+// para todos los planes).
+// body: { nombre, duracionCitaMinutos, anticipacionMinimaMin, horizonteAgendaDias }
+// ------------------------------------------------------------
+const LIMITES_PROFESIONALES = {
+  PLAN_A: 1,
+  PLAN_B: 2,
+  PLAN_C: Infinity,
+  PLAN_INICIO_LEGACY: 1,
+};
+
+router.post('/profesionales', requireRole('ADMIN'), async (req, res) => {
+  try {
+    const empresaId = req.usuario.empresaId;
+    const { nombre, duracionCitaMinutos, anticipacionMinimaMin, horizonteAgendaDias } = req.body;
+
+    if (!nombre || !nombre.trim()) {
+      return res.status(400).json({ error: 'Falta el nombre del profesional' });
+    }
+    const duracion = Number(duracionCitaMinutos);
+    if (!duracion || duracion <= 0) {
+      return res.status(400).json({ error: 'duracionCitaMinutos debe ser un número mayor a 0' });
+    }
+
+    const empresa = await prisma.empresa.findUnique({
+      where: { id: empresaId },
+      include: { suscripcion: true },
+    });
+
+    const plan = empresa.suscripcion?.plan;
+    const limite = plan && LIMITES_PROFESIONALES[plan] != null ? LIMITES_PROFESIONALES[plan] : LIMITES_PROFESIONALES.PLAN_A;
+
+    const cantidadActual = await prisma.recursoAgendable.count({
+      where: { empresaId, tipo: 'profesional' },
+    });
+
+    if (cantidadActual >= limite) {
+      return res.status(402).json({
+        error: 'LIMITE_PROFESIONALES_ALCANZADO',
+        planActual: plan || 'SIN_SUSCRIPCION',
+        cantidadActual,
+        limite,
+        mensaje: `Tu plan actual permite máximo ${limite} profesional(es). Mejora tu plan para agregar más.`,
+      });
+    }
+
+    const anticipacion = anticipacionMinimaMin != null ? Number(anticipacionMinimaMin) : undefined;
+    const horizonte = horizonteAgendaDias != null ? Number(horizonteAgendaDias) : undefined;
+
+    const recurso = await prisma.recursoAgendable.create({
+      data: {
+        empresaId,
+        tipo: 'profesional',
+        nombre: nombre.trim(),
+        duracionCitaMinutos: duracion,
+        ...(anticipacion != null && { anticipacionMinimaMin: anticipacion }),
+        ...(horizonte != null && { horizonteAgendaDias: horizonte }),
+      },
+    });
+
+    res.status(201).json({ recurso });
+  } catch (error) {
+    console.error('Error en POST /agenda/profesionales:', error);
+    res.status(500).json({ error: 'Error al crear el profesional' });
+  }
+});
+
+// ------------------------------------------------------------
 // PUT /agenda/horarios — reemplaza el horario semanal completo del
 // recurso de la empresa. Se manda la lista completa cada vez (no un
 // parche parcial) para que la pantalla del panel sea la fuente de
