@@ -258,6 +258,65 @@ async function obtenerDisponibilidadPorServicio(servicioId, desde, hasta, recurs
 }
 
 /**
+ * Wrapper de obtenerHorariosDisponibles que respeta
+ * Servicio.requiereProfesionalEspecifico. Pensado para que el bot de
+ * WhatsApp (claude.js) consulte disponibilidad por SERVICIO en vez de por
+ * recurso directo, sin tener que decidir él mismo cuál flujo usar.
+ *
+ * - true  -> exige recursoAgendableId, comportamiento idéntico a hoy.
+ * - false -> junta y deduplica las horas libres de TODOS los recursos
+ *            vinculados al servicio (no importa cuál profesional quede,
+ *            crearCita() resuelve eso después).
+ *
+ * @param {string} servicioId
+ * @param {string} fechaISO - 'YYYY-MM-DD'
+ * @param {string|null} recursoAgendableId - obligatorio si el servicio requiere profesional específico
+ * @returns {Promise<string[]>}
+ */
+async function obtenerHorasDisponiblesParaServicio(servicioId, fechaISO, recursoAgendableId = null) {
+  const servicio = await prisma.servicio.findUnique({
+    where: { id: servicioId },
+    include: { recursos: true },
+  });
+  if (!servicio) throw new Error('Servicio no encontrado');
+
+  if (servicio.requiereProfesionalEspecifico) {
+    if (!recursoAgendableId) throw new Error('FALTA_RECURSO_AGENDABLE');
+    return obtenerHorariosDisponibles(recursoAgendableId, fechaISO);
+  }
+
+  const recursosVinculados = servicio.recursos.map((sr) => sr.recursoAgendableId);
+  if (recursosVinculados.length === 0) return [];
+
+  const horasSet = new Set();
+  for (const rid of recursosVinculados) {
+    const horas = await obtenerHorariosDisponibles(rid, fechaISO);
+    horas.forEach((h) => horasSet.add(h));
+  }
+  return Array.from(horasSet).sort();
+}
+
+/**
+ * Equivalente a obtenerProximosDiasConDisponibilidad, pero por SERVICIO en
+ * vez de por recurso directo (mismo criterio que obtenerHorasDisponiblesParaServicio).
+ *
+ * @returns {Promise<{fecha: string, horas: string[]}[]>}
+ */
+async function obtenerProximosDiasParaServicio(servicioId, cantidadDias = 4, maxDiasAExplorar = 30, recursoAgendableId = null) {
+  const hoyChileISO = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Santiago' });
+
+  const diasConCupo = [];
+  for (let i = 0; i < maxDiasAExplorar && diasConCupo.length < cantidadDias; i++) {
+    const fechaISO = sumarDiasISO(hoyChileISO, i);
+    const horas = await obtenerHorasDisponiblesParaServicio(servicioId, fechaISO, recursoAgendableId);
+    if (horas.length > 0) {
+      diasConCupo.push({ fecha: fechaISO, horas });
+    }
+  }
+  return diasConCupo;
+}
+
+/**
  * Encuentra, entre los recursos vinculados a un servicio "sin profesional
  * específico", el primero que tenga libre una fecha+hora puntual. Se usa
  * en crearCita() para resolver automáticamente qué profesional asignar.
@@ -265,6 +324,7 @@ async function obtenerDisponibilidadPorServicio(servicioId, desde, hasta, recurs
  * @returns {Promise<string|null>} recursoAgendableId disponible, o null si ninguno lo está
  */
 async function resolverRecursoDisponible(servicioId, fechaISO, horaInicio) {
+
   const servicio = await prisma.servicio.findUnique({
     where: { id: servicioId },
     include: { recursos: { include: { recurso: true } } },
@@ -335,4 +395,6 @@ module.exports = {
   obtenerDisponibilidad,
   validarSlot,
   obtenerDisponibilidadPorServicio,
+  obtenerHorasDisponiblesParaServicio,
+  obtenerProximosDiasParaServicio,
 };
