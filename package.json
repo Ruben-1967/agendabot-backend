@@ -4,10 +4,12 @@
   "description": "Backend multi-tenant de AgendaBot (MultiDigital): agenda, chatbot WhatsApp + Claude, clientes y suscripciones",
   "main": "src/server.js",
   "type": "commonjs",
-  "scripts": {
+ "scripts": {
     "dev": "node --watch src/server.js",
     "start": "node src/server.js",
+    "postinstall": "prisma generate",
     "prisma:generate": "prisma generate",
+
     "prisma:migrate": "prisma migrate dev --name init",
     "prisma:studio": "prisma studio",
     "seed": "node prisma/seed.js",
