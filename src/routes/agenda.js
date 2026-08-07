@@ -335,6 +335,45 @@ router.post('/profesionales', requireRole('ADMIN'), async (req, res) => {
 });
 
 // ------------------------------------------------------------
+// GET /agenda/profesionales — lista todos los RecursoAgendable tipo
+// "profesional" de la empresa, junto con el límite de su plan actual (para
+// que el panel pueda mostrar "2 de 2 profesionales usados" y deshabilitar
+// o redirigir a upsell el botón de agregar cuando corresponda).
+// ------------------------------------------------------------
+router.get('/profesionales', requireRole('ADMIN'), async (req, res) => {
+  try {
+    const empresaId = req.usuario.empresaId;
+
+    const empresa = await prisma.empresa.findUnique({
+      where: { id: empresaId },
+      include: { suscripcion: true },
+    });
+
+    const plan = empresa.suscripcion?.plan;
+    const limite = plan && LIMITES_PROFESIONALES[plan] != null ? LIMITES_PROFESIONALES[plan] : LIMITES_PROFESIONALES.PLAN_A;
+
+    const profesionales = await prisma.recursoAgendable.findMany({
+      where: { empresaId, tipo: 'profesional' },
+      include: {
+        horarios: { orderBy: [{ diaSemana: 'asc' }, { horaInicio: 'asc' }] },
+        usuarios: { select: { id: true, nombre: true, email: true } },
+      },
+      orderBy: { nombre: 'asc' },
+    });
+
+    res.json({
+      profesionales,
+      plan: plan || 'SIN_SUSCRIPCION',
+      limite: limite === Infinity ? null : limite,
+      puedeAgregarMas: profesionales.length < limite,
+    });
+  } catch (error) {
+    console.error('Error en GET /agenda/profesionales:', error);
+    res.status(500).json({ error: 'Error al obtener los profesionales' });
+  }
+});
+
+// ------------------------------------------------------------
 // PUT /agenda/horarios — reemplaza el horario semanal completo del
 // recurso de la empresa. Se manda la lista completa cada vez (no un
 // parche parcial) para que la pantalla del panel sea la fuente de
