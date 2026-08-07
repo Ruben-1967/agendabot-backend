@@ -190,8 +190,7 @@ async function ejecutarHerramienta(nombre, input, contexto) {
       }
     }
 
-    console.log('[DEBUG-TEMP agendar_cita] resuelto:', resuelto, '| input:', input);
-    try {
+   try {
       const cita = await crearCita({
         empresaId: empresa.id,
         clienteId: cliente.id,
@@ -200,10 +199,8 @@ async function ejecutarHerramienta(nombre, input, contexto) {
         fechaISO: input.fecha,
         horaInicio: input.hora,
       });
-      console.log('[DEBUG-TEMP agendar_cita] cita creada, id:', cita.id);
       return { exito: true, citaId: cita.id, fecha: input.fecha, hora: input.hora };
     } catch (err) {
-      console.log('[DEBUG-TEMP agendar_cita] ERROR CAPTURADO:', err.message);
       if (err.message === 'HORARIO_YA_NO_DISPONIBLE') {
         return { exito: false, error: 'Ese horario ya no está disponible, ofrece otra alternativa.' };
       }
@@ -350,9 +347,7 @@ ${empresa.requiereRut ? '- Este negocio EXIGE nombre completo y RUT para agendar
       messages,
     });
 
- console.log('[DEBUG-TEMP] stop_reason:', response.stop_reason, '| tool_use blocks:', response.content.filter(b => b.type === 'tool_use').map(b => b.name));
-
-    if (response.stop_reason !== 'tool_use') {
+if (response.stop_reason !== 'tool_use') {
       const textBlock = response.content.find((b) => b.type === 'text');
       return { texto: textBlock ? textBlock.text : 'Disculpa, ¿puedes repetir tu mensaje?', interactivo: null };
     }

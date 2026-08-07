@@ -349,17 +349,14 @@ async function resolverRecursoDisponible(servicioId, fechaISO, horaInicio) {
  */
 
 async function crearCita({ empresaId, clienteId, recursoAgendableId = null, servicioId, fechaISO, horaInicio }) {
-  console.log('[DEBUG-TEMP crearCita] input:', { recursoAgendableId, servicioId, fechaISO, horaInicio });
   if (!recursoAgendableId) {
     if (!servicioId) throw new Error('Falta recursoAgendableId o servicioId');
     const servicio = await prisma.servicio.findUnique({ where: { id: servicioId } });
-    console.log('[DEBUG-TEMP crearCita] servicio encontrado:', servicio?.nombre, '| requiereProfesionalEspecifico:', servicio?.requiereProfesionalEspecifico);
     if (!servicio) throw new Error('Servicio no encontrado');
     if (servicio.requiereProfesionalEspecifico) {
       throw new Error('FALTA_RECURSO_AGENDABLE');
     }
     recursoAgendableId = await resolverRecursoDisponible(servicioId, fechaISO, horaInicio);
-    console.log('[DEBUG-TEMP crearCita] recursoAgendableId resuelto:', recursoAgendableId);
     if (!recursoAgendableId) {
       throw new Error('HORARIO_YA_NO_DISPONIBLE');
     }
