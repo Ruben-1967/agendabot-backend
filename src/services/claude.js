@@ -1,6 +1,7 @@
 const Anthropic = require('@anthropic-ai/sdk');
 const prisma = require('../lib/prisma');
-const { obtenerHorariosDisponibles, crearCita, obtenerProximosDiasConDisponibilidad } = require('./disponibilidad');
+const { obtenerHorariosDisponibles, crearCita, obtenerProximosDiasConDisponibilidad, obtenerHorasDisponiblesParaServicio, obtenerProximosDiasParaServicio } = require('./disponibilidad');
+
 const { fechaLegibleDesdeISO } = require('../lib/formatoFechas');
 
 const anthropic = new Anthropic({
@@ -40,7 +41,7 @@ function construirTools(empresa, incluirMostrarServicios) {
   }
 
   return [
-    {
+  {
       name: 'consultar_disponibilidad',
       description:
         'Consulta los horarios disponibles para agendar una cita en una fecha específica. Devuelve una lista de horas de inicio disponibles (formato HH:MM), o una lista vacía si no hay disponibilidad ese día. Usar cuando el cliente SÍ menciona un día puntual (ej. "el jueves", "mañana", una fecha concreta).',
@@ -51,18 +52,27 @@ function construirTools(empresa, incluirMostrarServicios) {
             type: 'string',
             description: "Fecha a consultar, en formato YYYY-MM-DD (ej. '2026-07-15').",
           },
+          servicio: {
+            type: 'string',
+            description: 'Nombre del servicio que el cliente quiere agendar, exactamente uno de los nombres de la lista SERVICIOS AGENDABLES.',
+          },
         },
-        required: ['fecha'],
+        required: ['fecha', 'servicio'],
       },
     },
-    {
+{
       name: 'consultar_proximos_dias_disponibles',
       description:
         'Consulta los próximos días que tienen al menos un horario disponible, para cuando el cliente quiere agendar pero NO especificó ningún día. Devuelve una lista de días con cupo, cada uno con su hora más temprana disponible. Úsala en vez de consultar_disponibilidad solo cuando el cliente no mencionó fecha.',
       input_schema: {
         type: 'object',
-        properties: {},
-        required: [],
+        properties: {
+          servicio: {
+            type: 'string',
+            description: 'Nombre del servicio que el cliente quiere agendar, exactamente uno de los nombres de la lista SERVICIOS AGENDABLES.',
+          },
+        },
+        required: ['servicio'],
       },
     },
     ...(incluirMostrarServicios ? [{
@@ -90,24 +100,62 @@ function construirTools(empresa, incluirMostrarServicios) {
 }
 
 /**
+ * Dado el nombre de servicio que Claude mandó, decide si el flujo de
+ * disponibilidad/agendamiento debe usar el recurso fijo de la empresa
+ * (comportamiento de siempre) o el modo "cualquier profesional vinculado"
+ * (multi-profesional, OPCIÓN C).
+ *
+ * Si el nombre de servicio no calza con ningún Servicio real (empresa sin
+ * servicios cargados, o typo), cae al comportamiento de siempre usando el
+ * recurso fijo — así nunca se rompe nada para empresas como Ahorróptica
+ * que no tienen Servicio.requiereProfesionalEspecifico configurado.
+ *
+ * @returns {Promise<{servicioDb: Object|null, usaProfesionalFijo: boolean, recursoId: string|null}>}
+ */
+async function resolverServicioParaHerramienta(empresa, recurso, nombreServicio) {
+  const servicioDb = nombreServicio
+    ? await prisma.servicio.findFirst({
+        where: { empresaId: empresa.id, nombre: { equals: nombreServicio, mode: 'insensitive' } },
+      })
+    : null;
+
+  if (!servicioDb || servicioDb.requiereProfesionalEspecifico) {
+    return { servicioDb, usaProfesionalFijo: true, recursoId: recurso?.id || null };
+  }
+
+  return { servicioDb, usaProfesionalFijo: false, recursoId: null };
+}
+
+/**
  * Ejecuta la herramienta pedida por Claude y devuelve el resultado como texto/JSON.
  */
 async function ejecutarHerramienta(nombre, input, contexto) {
   const { empresa, cliente, recurso, serviciosReales } = contexto;
 
   if (nombre === 'consultar_disponibilidad') {
-    if (!recurso) {
-      return { error: 'Esta empresa no tiene un recurso agendable configurado todavía.' };
+    const resuelto = await resolverServicioParaHerramienta(empresa, recurso, input.servicio);
+    if (resuelto.usaProfesionalFijo) {
+      if (!resuelto.recursoId) {
+        return { error: 'Esta empresa no tiene un recurso agendable configurado todavía.' };
+      }
+      const horas = await obtenerHorariosDisponibles(resuelto.recursoId, input.fecha);
+      return { fecha: input.fecha, horasDisponibles: horas };
     }
-    const horas = await obtenerHorariosDisponibles(recurso.id, input.fecha);
+    const horas = await obtenerHorasDisponiblesParaServicio(resuelto.servicioDb.id, input.fecha);
     return { fecha: input.fecha, horasDisponibles: horas };
   }
 
   if (nombre === 'consultar_proximos_dias_disponibles') {
-    if (!recurso) {
-      return { error: 'Esta empresa no tiene un recurso agendable configurado todavía.' };
+    const resuelto = await resolverServicioParaHerramienta(empresa, recurso, input.servicio);
+    let dias;
+    if (resuelto.usaProfesionalFijo) {
+      if (!resuelto.recursoId) {
+        return { error: 'Esta empresa no tiene un recurso agendable configurado todavía.' };
+      }
+      dias = await obtenerProximosDiasConDisponibilidad(resuelto.recursoId, 4);
+    } else {
+      dias = await obtenerProximosDiasParaServicio(resuelto.servicioDb.id, 4);
     }
-    const dias = await obtenerProximosDiasConDisponibilidad(recurso.id, 4);
     return { dias: dias.map((d) => ({ fecha: d.fecha, primeraHora: d.horas[0] })) };
   }
 
@@ -116,7 +164,8 @@ async function ejecutarHerramienta(nombre, input, contexto) {
   }
 
   if (nombre === 'agendar_cita') {
-    if (!recurso) {
+    const resuelto = await resolverServicioParaHerramienta(empresa, recurso, input.servicio);
+    if (resuelto.usaProfesionalFijo && !resuelto.recursoId) {
       return { error: 'Esta empresa no tiene un recurso agendable configurado todavía.' };
     }
 
@@ -141,16 +190,12 @@ async function ejecutarHerramienta(nombre, input, contexto) {
       }
     }
 
-    const servicioDb = await prisma.servicio.findFirst({
-      where: { empresaId: empresa.id, nombre: { equals: input.servicio, mode: 'insensitive' } },
-    });
-
     try {
       const cita = await crearCita({
         empresaId: empresa.id,
         clienteId: cliente.id,
-        recursoAgendableId: recurso.id,
-        servicioId: servicioDb?.id || null,
+        recursoAgendableId: resuelto.usaProfesionalFijo ? resuelto.recursoId : null,
+        servicioId: resuelto.servicioDb?.id || null,
         fechaISO: input.fecha,
         horaInicio: input.hora,
       });
