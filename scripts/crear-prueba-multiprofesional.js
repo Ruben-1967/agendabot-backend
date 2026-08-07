@@ -15,9 +15,9 @@ const prisma = require('../src/lib/prisma');
 
 async function main() {
   try {
-    let rubro = await prisma.rubroTemplate.findUnique({ where: { clave: 'optica' } });
+  let rubro = await prisma.rubroTemplate.findUnique({ where: { clave: 'otro' } });
     if (!rubro) {
-      console.error('No existe RubroTemplate con clave "optica" en esta base. Corre el seed de rubros primero.');
+      console.error('No existe RubroTemplate con clave "otro" en esta base. Corre scripts/seed-rubros-nuevos.js primero.');
       process.exit(1);
     }
 
