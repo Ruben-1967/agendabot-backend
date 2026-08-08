@@ -362,7 +362,7 @@ router.get('/profesionales', requireRole('ADMIN'), async (req, res) => {
       orderBy: { nombre: 'asc' },
     });
 
-    res.json({
+   res.json({
       profesionales,
       plan: plan || 'SIN_SUSCRIPCION',
       limite: limite === Infinity ? null : limite,
@@ -371,6 +371,55 @@ router.get('/profesionales', requireRole('ADMIN'), async (req, res) => {
   } catch (error) {
     console.error('Error en GET /agenda/profesionales:', error);
     res.status(500).json({ error: 'Error al obtener los profesionales' });
+  }
+});
+
+// ------------------------------------------------------------
+// PATCH /agenda/profesionales/:id — edita los datos base de un
+// profesional ya creado (nombre, duración de cita, anticipación,
+// horizonte). Sin esto, un negocio Plan B/C que no ve "Configuración de
+// agenda" no tendría forma de tocar estos campos después de la creación.
+// body: { nombre?, duracionCitaMinutos?, anticipacionMinimaMin?, horizonteAgendaDias? }
+// ------------------------------------------------------------
+router.patch('/profesionales/:id', requireRole('ADMIN'), async (req, res) => {
+  try {
+    const empresaId = req.usuario.empresaId;
+    const recurso = await prisma.recursoAgendable.findFirst({
+      where: { id: req.params.id, empresaId, tipo: 'profesional' },
+    });
+    if (!recurso) {
+      return res.status(404).json({ error: 'Profesional no encontrado' });
+    }
+
+    const { nombre, duracionCitaMinutos, anticipacionMinimaMin, horizonteAgendaDias } = req.body;
+
+    if (nombre !== undefined && !nombre.trim()) {
+      return res.status(400).json({ error: 'El nombre no puede quedar vacío' });
+    }
+    if (duracionCitaMinutos !== undefined && Number(duracionCitaMinutos) <= 0) {
+      return res.status(400).json({ error: 'duracionCitaMinutos debe ser un número mayor a 0' });
+    }
+    if (anticipacionMinimaMin !== undefined && Number(anticipacionMinimaMin) < 0) {
+      return res.status(400).json({ error: 'anticipacionMinimaMin no puede ser negativo' });
+    }
+    if (horizonteAgendaDias !== undefined && Number(horizonteAgendaDias) <= 0) {
+      return res.status(400).json({ error: 'horizonteAgendaDias debe ser mayor a 0' });
+    }
+
+    const actualizado = await prisma.recursoAgendable.update({
+      where: { id: recurso.id },
+      data: {
+        ...(nombre !== undefined && { nombre: nombre.trim() }),
+        ...(duracionCitaMinutos !== undefined && { duracionCitaMinutos: Number(duracionCitaMinutos) }),
+        ...(anticipacionMinimaMin !== undefined && { anticipacionMinimaMin: Number(anticipacionMinimaMin) }),
+        ...(horizonteAgendaDias !== undefined && { horizonteAgendaDias: Number(horizonteAgendaDias) }),
+      },
+    });
+
+    res.json({ recurso: actualizado });
+  } catch (error) {
+    console.error('Error en PATCH /agenda/profesionales/:id:', error);
+    res.status(500).json({ error: 'Error al actualizar el profesional' });
   }
 });
 
