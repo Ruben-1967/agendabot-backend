@@ -352,10 +352,11 @@ router.get('/profesionales', requireRole('ADMIN'), async (req, res) => {
     const plan = empresa.suscripcion?.plan;
     const limite = plan && LIMITES_PROFESIONALES[plan] != null ? LIMITES_PROFESIONALES[plan] : LIMITES_PROFESIONALES.PLAN_A;
 
-    const profesionales = await prisma.recursoAgendable.findMany({
+  const profesionales = await prisma.recursoAgendable.findMany({
       where: { empresaId, tipo: 'profesional' },
       include: {
         horarios: { orderBy: [{ diaSemana: 'asc' }, { horaInicio: 'asc' }] },
+        bloqueos: { orderBy: { fechaInicio: 'asc' } },
         usuarios: { select: { id: true, nombre: true, email: true } },
       },
       orderBy: { nombre: 'asc' },
@@ -461,13 +462,16 @@ router.put('/horarios', requireRole('ADMIN'), async (req, res) => {
 router.post('/bloqueos', requireRole('ADMIN'), async (req, res) => {
   try {
     const empresaId = req.usuario.empresaId;
-    const { fechaInicio, fechaFin, motivo } = req.body;
-
+    const { fechaInicio, fechaFin, motivo, recursoId } = req.body;
     if (!fechaInicio || !fechaFin) {
       return res.status(400).json({ error: 'Faltan fechaInicio y/o fechaFin (formato YYYY-MM-DD)' });
     }
-
-    const recurso = await prisma.recursoAgendable.findFirst({ where: { empresaId } });
+    // Mismo patrón que PUT /agenda/horarios: si viene recursoId (panel de
+    // gestión de profesionales) se usa ese puntual; si no, cae al primero
+    // (comportamiento de siempre para un solo profesional).
+    const recurso = recursoId
+      ? await prisma.recursoAgendable.findFirst({ where: { id: recursoId, empresaId } })
+      : await prisma.recursoAgendable.findFirst({ where: { empresaId } });
     if (!recurso) {
       return res.status(400).json({ error: 'Primero crea el recurso agendable antes de cargar bloqueos' });
     }
@@ -507,14 +511,11 @@ router.post('/bloqueos', requireRole('ADMIN'), async (req, res) => {
 router.delete('/bloqueos/:id', requireRole('ADMIN'), async (req, res) => {
   try {
     const empresaId = req.usuario.empresaId;
-
-    const recurso = await prisma.recursoAgendable.findFirst({ where: { empresaId } });
-    if (!recurso) {
-      return res.status(404).json({ error: 'Esta empresa no tiene recurso agendable' });
-    }
-
+    // Se busca el bloqueo entre TODOS los recursos de la empresa, no solo
+    // el primero — antes, un bloqueo de un segundo profesional nunca se
+    // encontraba y devolvía 404 falso.
     const bloqueo = await prisma.bloqueo.findFirst({
-      where: { id: req.params.id, recursoAgendableId: recurso.id },
+      where: { id: req.params.id, recurso: { empresaId } },
     });
     if (!bloqueo) {
       return res.status(404).json({ error: 'Bloqueo no encontrado' });
