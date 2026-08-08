@@ -19,9 +19,9 @@ router.post('/login', limitadorLogin, async (req, res) => {
       return res.status(400).json({ error: 'Faltan email o password' });
     }
 
-    const usuario = await prisma.usuario.findUnique({
+   const usuario = await prisma.usuario.findUnique({
       where: { email: email.toLowerCase().trim() },
-      include: { empresa: { include: { rubroTemplate: true } }, recursoAgendable: true },
+      include: { empresa: { include: { rubroTemplate: true, suscripcion: true } }, recursoAgendable: true },
     });
 
     // Mismo mensaje genérico si el email no existe o la clave no calza,
@@ -57,8 +57,10 @@ router.post('/login', limitadorLogin, async (req, res) => {
         empresaModoOperacion: usuario.empresa.rubroTemplate.modoOperacion,
         recursoAgendableId: usuario.recursoAgendableId,
         recursoAgendableNombre: usuario.recursoAgendable?.nombre || null,
+        plan: usuario.empresa.suscripcion?.plan || null,
       },
     });
+
   } catch (error) {
     console.error('Error en /auth/login:', error);
     res.status(500).json({ error: 'Error al iniciar sesión' });
