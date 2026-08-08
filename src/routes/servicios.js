@@ -15,6 +15,9 @@ router.get('/', async (req, res) => {
   try {
     const servicios = await prisma.servicio.findMany({
       where: { empresaId: req.usuario.empresaId },
+      include: {
+        recursos: { include: { recurso: { select: { id: true, nombre: true } } } },
+      },
       orderBy: { nombre: 'asc' },
     });
     res.json({ servicios });
@@ -61,18 +64,54 @@ router.patch('/:id', async (req, res) => {
       return res.status(404).json({ error: 'Servicio no encontrado' });
     }
 
-    const { nombre, duracionMinutos, activo } = req.body;
+    const { nombre, duracionMinutos, activo, requiereProfesionalEspecifico, recursoIds } = req.body;
 
-    const actualizado = await prisma.servicio.update({
-      where: { id: servicio.id },
-      data: {
-        ...(nombre !== undefined && { nombre: nombre.trim() }),
-        ...(duracionMinutos !== undefined && { duracionMinutos: duracionMinutos != null ? Number(duracionMinutos) : null }),
-        ...(activo !== undefined && { activo: Boolean(activo) }),
-      },
+    // Si viene recursoIds, validamos que todos pertenezcan a esta empresa
+    // antes de tocar nada — evita que un id de otra empresa (o inventado)
+    // quede vinculado por error.
+    if (recursoIds !== undefined) {
+      if (!Array.isArray(recursoIds)) {
+        return res.status(400).json({ error: 'recursoIds debe ser un arreglo' });
+      }
+      if (recursoIds.length > 0) {
+        const validos = await prisma.recursoAgendable.count({
+          where: { id: { in: recursoIds }, empresaId: req.usuario.empresaId },
+        });
+        if (validos !== recursoIds.length) {
+          return res.status(400).json({ error: 'Uno o más recursoIds no pertenecen a esta empresa' });
+        }
+      }
+    }
+
+    const actualizado = await prisma.$transaction(async (tx) => {
+      const svc = await tx.servicio.update({
+        where: { id: servicio.id },
+        data: {
+          ...(nombre !== undefined && { nombre: nombre.trim() }),
+          ...(duracionMinutos !== undefined && { duracionMinutos: duracionMinutos != null ? Number(duracionMinutos) : null }),
+          ...(activo !== undefined && { activo: Boolean(activo) }),
+          ...(requiereProfesionalEspecifico !== undefined && { requiereProfesionalEspecifico: Boolean(requiereProfesionalEspecifico) }),
+        },
+      });
+
+      if (recursoIds !== undefined) {
+        await tx.servicioRecurso.deleteMany({ where: { servicioId: servicio.id } });
+        if (recursoIds.length > 0) {
+          await tx.servicioRecurso.createMany({
+            data: recursoIds.map((recursoAgendableId) => ({ servicioId: servicio.id, recursoAgendableId })),
+          });
+        }
+      }
+
+      return svc;
     });
 
-    res.json({ servicio: actualizado });
+    const servicioConRecursos = await prisma.servicio.findUnique({
+      where: { id: actualizado.id },
+      include: { recursos: { include: { recurso: { select: { id: true, nombre: true } } } } },
+    });
+
+    res.json({ servicio: servicioConRecursos });
   } catch (error) {
     console.error('Error actualizando servicio:', error);
     res.status(500).json({ error: 'Error al actualizar servicio' });
