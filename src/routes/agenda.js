@@ -70,11 +70,25 @@ router.get('/', requireRole('ADMIN', 'RECEPCION'), async (req, res) => {
 router.get('/dashboard/:empresaId', requireRole('ADMIN', 'RECEPCION'), async (req, res) => {
   try {
     const { empresaId } = req.params;
+    const { recursoId } = req.query; // opcional: filtra el dashboard a un solo profesional
 
     // Validar que el usuario pertenece a esta empresa
     if (req.usuario.empresaId !== empresaId) {
       return res.status(403).json({ error: 'No autorizado' });
     }
+
+    // Si viene recursoId, confirmamos que pertenece a esta empresa antes
+    // de usarlo — evita que alguien filtre por el recurso de otra empresa.
+    if (recursoId) {
+      const recursoValido = await prisma.recursoAgendable.findFirst({
+        where: { id: recursoId, empresaId },
+      });
+      if (!recursoValido) {
+        return res.status(400).json({ error: 'recursoId no pertenece a esta empresa' });
+      }
+    }
+
+    const filtroRecurso = recursoId ? { recursoAgendableId: recursoId } : {};
 
 // Calcular "hoy" en zona horaria Chile usando formatToParts (sin asumir orden)
 const ahora = new Date();
@@ -95,9 +109,10 @@ const hoyChile = horaChileAFechaUTC(hoyChileISO, '00:00');
 const mañanaChile = horaChileAFechaUTC(hoyChileISO, '23:59');
 
     // 1. CITAS HOY (todas las del día, sin filtrar por estado)
-    const citasHoy = await prisma.cita.count({
+   const citasHoy = await prisma.cita.count({
       where: {
         empresaId,
+        ...filtroRecurso,
         fechaHoraInicio: {
           gte: hoyChile,
           lt: mañanaChile,
@@ -106,9 +121,10 @@ const mañanaChile = horaChileAFechaUTC(hoyChileISO, '23:59');
     });
 
     // 2. CONFIRMADAS (solo CONFIRMADA hoy)
-    const confirmadas = await prisma.cita.count({
+   const confirmadas = await prisma.cita.count({
       where: {
         empresaId,
+        ...filtroRecurso,
         estado: 'CONFIRMADA',
         fechaHoraInicio: {
           gte: hoyChile,
@@ -127,9 +143,11 @@ const mañanaChile = horaChileAFechaUTC(hoyChileISO, '23:59');
 
     // 4. ASISTENCIA ÚLTIMOS 30 DÍAS
     const hace30Dias = new Date(hoyChile.getTime() - 30 * 24 * 60 * 60 * 1000);
-    const completadas = await prisma.cita.count({
+    
+   const completadas = await prisma.cita.count({
       where: {
         empresaId,
+        ...filtroRecurso,
         estado: 'COMPLETADA',
         fechaHoraInicio: {
           gte: hace30Dias,
@@ -140,6 +158,7 @@ const mañanaChile = horaChileAFechaUTC(hoyChileISO, '23:59');
     const noAsistio = await prisma.cita.count({
       where: {
         empresaId,
+        ...filtroRecurso,
         estado: 'NO_ASISTIO',
         fechaHoraInicio: {
           gte: hace30Dias,
@@ -147,6 +166,7 @@ const mañanaChile = horaChileAFechaUTC(hoyChileISO, '23:59');
         },
       },
     });
+
     const asistencia30dias = completadas + noAsistio > 0
       ? Math.round((completadas / (completadas + noAsistio)) * 100)
       : 0;
@@ -155,6 +175,7 @@ const mañanaChile = horaChileAFechaUTC(hoyChileISO, '23:59');
 const agendaHoy = await prisma.cita.findMany({
   where: {
     empresaId,
+    ...filtroRecurso,
     fechaHoraInicio: {
       gte: hoyChile,
       lt: mañanaChile,
