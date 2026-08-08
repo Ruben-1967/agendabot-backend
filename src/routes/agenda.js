@@ -381,16 +381,24 @@ router.get('/profesionales', requireRole('ADMIN'), async (req, res) => {
 // que el usuario ya borró en la UI pero el backend nunca supo.
 // body: { bloques: [{ diaSemana, horaInicio, horaFin }, ...] }
 // ------------------------------------------------------------
+
 router.put('/horarios', requireRole('ADMIN'), async (req, res) => {
   try {
     const empresaId = req.usuario.empresaId;
-    const { bloques } = req.body;
+    const { bloques, recursoId } = req.body;
 
     if (!Array.isArray(bloques)) {
       return res.status(400).json({ error: 'bloques debe ser un arreglo (puede ser vacío para dejar sin horario)' });
     }
 
-    const recurso = await prisma.recursoAgendable.findFirst({ where: { empresaId } });
+    // Si viene recursoId (panel de gestión de profesionales, con más de
+    // uno), se usa ese puntual. Si no viene, cae al primero — mismo
+    // comportamiento de siempre para empresas con un solo profesional
+    // (Ahorróptica y cualquier negocio en Plan A/Legacy).
+    const recurso = recursoId
+      ? await prisma.recursoAgendable.findFirst({ where: { id: recursoId, empresaId } })
+      : await prisma.recursoAgendable.findFirst({ where: { empresaId } });
+
     if (!recurso) {
       return res.status(400).json({ error: 'Primero crea el recurso agendable (PUT /agenda/recurso) antes de cargar el horario' });
     }
