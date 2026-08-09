@@ -160,6 +160,7 @@ router.post('/prospectos', requireAuth, requireRole('VENDEDOR'), async (req, res
           empresaDemoId: empresaDemo.id,
           nombreProspecto: nombreEncargado,
           vendedorId: req.usuario.vendedorId,
+          origenDemo: 'vendedor',
         },
       });
     }
@@ -253,6 +254,66 @@ router.delete('/prospectos/:id', requireAuth, requireRole('VENDEDOR'), async (re
   } catch (error) {
     console.error('Error eliminando (soft-delete) prospecto de demo:', error);
     res.status(500).json({ error: 'Error al eliminar la demo' });
+  }
+});
+
+// ------------------------------------------------------------
+// GET /demos/pool — leads derivados a vendedor por el seguimiento
+// automático post-demo (ver src/jobs/seguimientoDemo.js): demos orgánicas
+// que probaron la demo pero no se pudieron contactar dentro de la ventana
+// de servicio de WhatsApp (24h). No hay reparto automático entre vendedores
+// (eso es una fase aparte) — cualquier vendedor autenticado puede ver el
+// pool y tomar un lead con POST /demos/pool/:id/tomar.
+// ------------------------------------------------------------
+router.get('/pool', requireAuth, requireRole('VENDEDOR'), async (req, res) => {
+  try {
+    const demos = await prisma.demoAsignada.findMany({
+      where: { derivadoAVendedor: true, vendedorId: null, eliminadoEn: null },
+      include: { empresaDemo: { include: { rubroTemplate: true } } },
+      orderBy: { derivadoEn: 'desc' },
+    });
+
+    const resultado = demos.map((d) => ({
+      id: d.id,
+      telefono: d.telefono,
+      nombreNegocio: d.empresaDemo.nombre,
+      nombreEncargado: d.nombreProspecto,
+      rubro: d.empresaDemo.rubroTemplate.nombre,
+      intencionPrecioDetectada: d.intencionPrecioDetectada,
+      ultimaInteraccionEn: d.ultimaInteraccionEn,
+      derivadoEn: d.derivadoEn,
+      motivoDerivacion: d.motivoDerivacion,
+    }));
+
+    res.json({ demos: resultado });
+  } catch (error) {
+    console.error('Error listando el pool de leads derivados:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ------------------------------------------------------------
+// POST /demos/pool/:id/tomar — un vendedor se autoasigna un lead del pool.
+// El where con vendedorId: null hace que, si dos vendedores lo intentan casi
+// al mismo tiempo, solo el primero lo tome (el segundo recibe 409).
+// ------------------------------------------------------------
+router.post('/pool/:id/tomar', requireAuth, requireRole('VENDEDOR'), async (req, res) => {
+  try {
+    const resultado = await prisma.demoAsignada.updateMany({
+      where: { id: req.params.id, derivadoAVendedor: true, vendedorId: null, eliminadoEn: null },
+      data: { vendedorId: req.usuario.vendedorId },
+    });
+
+    if (resultado.count === 0) {
+      return res.status(409).json({
+        error: 'Este lead ya no está disponible en el pool (puede que otro vendedor ya lo haya tomado).',
+      });
+    }
+
+    res.json({ ok: true });
+  } catch (error) {
+    console.error('Error tomando lead del pool:', error);
+    res.status(500).json({ error: 'Error al tomar el lead' });
   }
 });
 

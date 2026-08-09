@@ -35,4 +35,35 @@ function horaChileAFechaUTC(fechaISO, horaHHMM) {
   return new Date(ingenua.getTime() + offsetMs);
 }
 
-module.exports = { horaChileAFechaUTC };
+const DIAS_SEMANA_EN = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+// Extrae día de la semana (0=domingo...6=sábado) y hora (0-23), ambos según
+// el reloj de pared en Chile, sin importar en qué zona horaria corre el
+// servidor (ver nota de cabecera del archivo). No usa el truco de offset de
+// horaChileAFechaUTC porque acá no hace falta reconstruir un instante UTC —
+// alcanza con leer directamente los campos que Intl calcula para Chile.
+function diaYHoraChile(fecha = new Date()) {
+  const partes = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/Santiago',
+    weekday: 'short',
+    hour: 'numeric',
+    hour12: false,
+  }).formatToParts(fecha);
+
+  const weekdayStr = partes.find((p) => p.type === 'weekday').value;
+  let hora = Number(partes.find((p) => p.type === 'hour').value);
+  if (hora === 24) hora = 0; // Intl a veces representa medianoche como "24"
+
+  return { diaSemana: DIAS_SEMANA_EN.indexOf(weekdayStr), hora };
+}
+
+// Lunes a sábado, 08:00–20:00 hora Chile. Restricción dura (no preferencia)
+// usada por src/jobs/seguimientoDemo.js: nunca se envía nada fuera de este
+// rango, sin excepción.
+function estaEnHorarioHabilChile(fecha = new Date()) {
+  const { diaSemana, hora } = diaYHoraChile(fecha);
+  const esDiaHabil = diaSemana >= 1 && diaSemana <= 6; // lunes(1) ... sábado(6)
+  return esDiaHabil && hora >= 8 && hora < 20;
+}
+
+module.exports = { horaChileAFechaUTC, estaEnHorarioHabilChile };

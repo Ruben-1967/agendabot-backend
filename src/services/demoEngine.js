@@ -288,6 +288,17 @@ async function procesarMensajeDemo({ demoAsignada, telefonoCliente, mensaje, nom
         historialSimulacion: [{ rol: 'asistente', texto: respuestaTexto }],
         citaDemoJson: null,
         carritoDemoJson: [],
+        // Reinicio manual = borrón y cuenta nueva también para el
+        // seguimiento automático post-demo (ver seguimientoDemo.js).
+        intencionPrecioDetectada: false,
+        intencionPrecioEn: null,
+        ultimaInteraccionEn: null,
+        seguimientosEnviados: 0,
+        seguimientoTipo: null,
+        seguimientoEnviadoEn: null,
+        derivadoAVendedor: false,
+        derivadoEn: null,
+        motivoDerivacion: null,
       },
     });
 
@@ -301,6 +312,9 @@ async function procesarMensajeDemo({ demoAsignada, telefonoCliente, mensaje, nom
   let nuevoPaso = paso;
   let nuevoCitaDemo = demoAsignada.citaDemoJson || null;
   let yaResuelto = false;
+  // Señal para el seguimiento automático post-demo (ver seguimientoDemo.js)
+  // — se marca en el mismo punto donde ya se detecta la intención de precio.
+  let detectoIntencionPrecioEsteTurno = false;
 
   // Selección de un SERVICIO real de la lista tocable (o "Otro/no lo
   // encuentro"), en modo AGENDAMIENTO. Se resuelve antes del switch.
@@ -370,6 +384,7 @@ async function procesarMensajeDemo({ demoAsignada, telefonoCliente, mensaje, nom
           /precio|beneficios?|cu[aá]nto (sale|vale|cobra|cuesta|es)|tarifa|\bcosto\b|\bplan(es)?\b|contrat(ar|o)|cotiza|totemsystem/i.test(textoEntrante);
 
         if (pareceQuererPrecio) {
+          detectoIntencionPrecioEsteTurno = true;
           const esInequivoco = /totemsystem/i.test(textoEntrante);
 
           if (esInequivoco) {
@@ -599,9 +614,26 @@ async function procesarMensajeDemo({ demoAsignada, telefonoCliente, mensaje, nom
 
   nuevoHistorial = [...nuevoHistorial, { rol: 'asistente', texto: respuestaTexto }].slice(-40);
 
+  const datosActualizacion = {
+    paso: nuevoPaso,
+    historialSimulacion: nuevoHistorial,
+    citaDemoJson: nuevoCitaDemo,
+    // ultimaInteraccionEn se actualiza SIEMPRE, sin condición — es la base
+    // de la ventana de 24h y del umbral de inactividad del seguimiento
+    // automático post-demo (ver seguimientoDemo.js).
+    ultimaInteraccionEn: new Date(),
+  };
+
+  // intencionPrecioEn solo se escribe la primera vez — no reiniciamos el
+  // timer del seguimiento si pregunta por precio varias veces.
+  if (detectoIntencionPrecioEsteTurno && !demoAsignada.intencionPrecioEn) {
+    datosActualizacion.intencionPrecioDetectada = true;
+    datosActualizacion.intencionPrecioEn = new Date();
+  }
+
   await prisma.demoAsignada.update({
     where: { id: demoAsignada.id },
-    data: { paso: nuevoPaso, historialSimulacion: nuevoHistorial, citaDemoJson: nuevoCitaDemo },
+    data: datosActualizacion,
   });
 
   return { respuestaTexto, interactivo };

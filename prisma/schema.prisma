@@ -768,6 +768,23 @@ model DemoAsignada {
   carritoDemoJson     Json? // productos seleccionados en la simulación de catálogo: [{productoId, nombre, precio, cantidad}]
   citaDemoJson        Json? // simulación de la cita elegida en la demo de agendamiento: {servicio, fecha, hora, nombre, edad}
   checkoutDemoJson    Json? // estado del checkout simulado en la demo de catálogo: {paso, productoPendienteId, nombre, formaPago, tipoEntrega, direccion}
+
+  // ====== SEGUIMIENTO AUTOMÁTICO POST-DEMO (ver src/jobs/seguimientoDemo.js) ======
+  // origenDemo distingue números orgánicos (escriben directo al WhatsApp de
+  // demos) de cargas masivas y demos armadas por un vendedor — el
+  // seguimiento automático solo aplica a 'organico'. Default 'legacy' cubre
+  // las filas creadas antes de este campo (no participan del seguimiento
+  // automático salvo reclasificación manual).
+  origenDemo                String    @default("legacy") // 'organico' | 'carga_masiva' | 'vendedor' | 'legacy'
+  intencionPrecioDetectada  Boolean   @default(false)
+  intencionPrecioEn         DateTime?
+  ultimaInteraccionEn       DateTime?
+  seguimientosEnviados      Int       @default(0)
+  seguimientoTipo           String?   // 'precio' | 'inactividad' | null
+  seguimientoEnviadoEn      DateTime?
+  derivadoAVendedor         Boolean   @default(false)
+  derivadoEn                DateTime?
+  motivoDerivacion          String?   // 'fuera_ventana_sin_conversion'
 }
 
 model Vendedor {

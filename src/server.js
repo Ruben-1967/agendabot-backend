@@ -273,7 +273,12 @@ app.post('/webhook/whatsapp', verificarFirmaWebhookWhatsApp, async (req, res) =>
             }
 
             await tx.demoAsignada.create({
-              data: { telefono: telefonoCliente, empresaDemoId: empresaCreada.id, nombreProspecto: nombreContacto },
+              data: {
+                telefono: telefonoCliente,
+                empresaDemoId: empresaCreada.id,
+                nombreProspecto: nombreContacto,
+                origenDemo: 'organico',
+              },
             });
 
             return { empresaNueva: empresaCreada };

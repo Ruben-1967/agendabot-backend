@@ -62,7 +62,7 @@ async function main() {
           data: { nombre: 'Óptica Demo', rubroTemplateId: rubroTemplate.id, esDemo: true },
         });
         await tx.demoAsignada.create({
-          data: { telefono, empresaDemoId: empresa.id, vendedorId: null },
+          data: { telefono, empresaDemoId: empresa.id, vendedorId: null, origenDemo: 'carga_masiva' },
         });
       });
       creados++;

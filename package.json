@@ -15,7 +15,8 @@
     "seed": "node prisma/seed.js",
     "crear:usuario": "node scripts/crear-usuario.js",
     "cron:recordatorios": "node src/jobs/enviarRecordatorios.js",
-    "cron:campanas": "node src/jobs/prepararEnviosCampana.js"
+    "cron:campanas": "node src/jobs/prepararEnviosCampana.js",
+    "cron:seguimientoDemo": "node src/jobs/seguimientoDemo.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.32.0",
