@@ -121,7 +121,7 @@ async function main() {
       create: {
         telefono,
         ...datos,
-        paso: 'PRUEBA',
+        paso: 0, // paso es Int en el schema real, no String — ajustar si 0 no es un valor válido en tu flujo
         empresaDemo: { connect: { id: empresaDemoId } },
       },
     });
