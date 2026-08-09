@@ -118,7 +118,12 @@ async function main() {
     const resultado = await prisma.demoAsignada.upsert({
       where: { telefono },
       update: datos,
-      create: { telefono, ...datos, paso: 'PRUEBA' },
+      create: {
+        telefono,
+        ...datos,
+        paso: 'PRUEBA',
+        empresaDemo: { connect: { id: empresaDemoId } },
+      },
     });
 
     console.log(`✔ ${caso.nombreProspecto} → ${resultado.telefono} (id: ${resultado.id})`);
