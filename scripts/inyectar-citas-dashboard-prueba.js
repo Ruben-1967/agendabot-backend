@@ -1,7 +1,8 @@
 /**
- * Inyecta 2 citas de prueba HOY, una para cada uno de los 2 profesionales
- * existentes en la empresa de prueba multi-profesional, para verificar
- * visualmente que el filtro por profesional del Dashboard funciona.
+ * Inyecta citas de prueba HOY, distribuidas de forma DESIGUAL entre los 2
+ * profesionales (2 para el primero, 1 para el segundo) — para verificar
+ * visualmente que el filtro por profesional del Dashboard realmente
+ * separa los datos y no solo muestra lo mismo sin importar la selección.
  *
  * Uso (Shell de Render, agendabot-backend-staging):
  *   node scripts/inyectar-citas-dashboard-prueba.js
@@ -18,44 +19,58 @@ async function main() {
       process.exit(1);
     }
 
+    const [recursoA, recursoB] = recursos;
     const hoy = new Date();
 
-    for (let i = 0; i < recursos.length; i++) {
-      const recurso = recursos[i];
+    // 2 citas para el primer profesional
+    for (let i = 0; i < 2; i++) {
       const cliente = await prisma.cliente.create({
         data: {
           empresaId: EMPRESA_ID,
-          nombre: `Paciente Prueba ${i + 1} (${recurso.nombre})`,
-          telefono: `+5691111111${i}`,
+          nombre: `Paciente ${recursoA.nombre} ${i + 1}`,
+          telefono: `+56911111${100 + i}`,
         },
       });
-
       const inicio = new Date(hoy);
       inicio.setHours(10 + i, 0, 0, 0);
-      const fin = new Date(inicio.getTime() + (recurso.duracionCitaMinutos || 30) * 60000);
-
+      const fin = new Date(inicio.getTime() + (recursoA.duracionCitaMinutos || 30) * 60000);
       const cita = await prisma.cita.create({
         data: {
           empresaId: EMPRESA_ID,
           clienteId: cliente.id,
-          recursoAgendableId: recurso.id,
+          recursoAgendableId: recursoA.id,
           fechaHoraInicio: inicio,
           fechaHoraFin: fin,
           estado: i === 0 ? 'CONFIRMADA' : 'PENDIENTE',
           origenCanal: 'panel',
         },
       });
-
-      console.log(`Cita creada para ${recurso.nombre}: ${cliente.nombre} a las ${inicio.toLocaleTimeString('es-CL')} (${cita.estado})`);
+      console.log(`Cita creada para ${recursoA.nombre}: ${cliente.nombre} a las ${inicio.toLocaleTimeString('es-CL')} (${cita.estado})`);
     }
 
-    process.exit(0);
-  } catch (error) {
-    console.error('Error:', error);
-    process.exit(1);
-  } finally {
-    await prisma.$disconnect();
-  }
-}
+    // 1 cita para el segundo profesional
+    const clienteB = await prisma.cliente.create({
+      data: {
+        empresaId: EMPRESA_ID,
+        nombre: `Paciente ${recursoB.nombre} 1`,
+        telefono: '+56911111200',
+      },
+    });
+    const inicioB = new Date(hoy);
+    inicioB.setHours(15, 0, 0, 0);
+    const finB = new Date(inicioB.getTime() + (recursoB.duracionCitaMinutos || 30) * 60000);
+    const citaB = await prisma.cita.create({
+      data: {
+        empresaId: EMPRESA_ID,
+        clienteId: clienteB.id,
+        recursoAgendableId: recursoB.id,
+        fechaHoraInicio: inicioB,
+        fechaHoraFin: finB,
+        estado: 'CONFIRMADA',
+        origenCanal: 'panel',
+      },
+    });
+    console.log(`Cita creada para ${recursoB.nombre}: ${clienteB.nombre} a las ${inicioB.toLocaleTimeString('es-CL')} (${citaB.estado})`);
 
-main();
+    console.log('');
+    console.log(`Total: 2 citas para "${recursoA.nombre}", 1 cita para "${recursoB.nombre}". "Todos" debería mostrar 3.`);
