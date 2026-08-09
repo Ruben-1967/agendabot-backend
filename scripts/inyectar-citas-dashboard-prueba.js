@@ -74,3 +74,13 @@ async function main() {
 
     console.log('');
     console.log(`Total: 2 citas para "${recursoA.nombre}", 1 cita para "${recursoB.nombre}". "Todos" debería mostrar 3.`);
+    process.exit(0);
+  } catch (error) {
+    console.error('Error:', error);
+    process.exit(1);
+  } finally {
+    await prisma.$disconnect();
+  }
+}
+
+main();
