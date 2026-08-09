@@ -1,13 +1,15 @@
 /**
- * Inyecta citas de prueba HOY, distribuidas de forma DESIGUAL entre los 2
- * profesionales (2 para el primero, 1 para el segundo) — para verificar
- * visualmente que el filtro por profesional del Dashboard realmente
- * separa los datos y no solo muestra lo mismo sin importar la selección.
+ * Inyecta citas de prueba HOY (en zona horaria Chile, no la del
+ * servidor), distribuidas de forma DESIGUAL entre los 2 profesionales
+ * (2 para el primero, 1 para el segundo) — para verificar visualmente
+ * que el filtro por profesional del Dashboard realmente separa los
+ * datos.
  *
  * Uso (Shell de Render, agendabot-backend-staging):
  *   node scripts/inyectar-citas-dashboard-prueba.js
  */
 const prisma = require('../src/lib/prisma');
+const { horaChileAFechaUTC } = require('../src/lib/horaChile');
 
 const EMPRESA_ID = '43038d5b-201c-4249-b1ed-377684efa1a2';
 
@@ -20,9 +22,9 @@ async function main() {
     }
 
     const [recursoA, recursoB] = recursos;
-    const hoy = new Date();
+    const hoyChileISO = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Santiago' });
 
-    // 2 citas para el primer profesional
+    const horasA = ['10:00', '11:00'];
     for (let i = 0; i < 2; i++) {
       const cliente = await prisma.cliente.create({
         data: {
@@ -31,8 +33,7 @@ async function main() {
           telefono: `+56911111${100 + i}`,
         },
       });
-      const inicio = new Date(hoy);
-      inicio.setHours(10 + i, 0, 0, 0);
+      const inicio = horaChileAFechaUTC(hoyChileISO, horasA[i]);
       const fin = new Date(inicio.getTime() + (recursoA.duracionCitaMinutos || 30) * 60000);
       const cita = await prisma.cita.create({
         data: {
@@ -45,10 +46,9 @@ async function main() {
           origenCanal: 'panel',
         },
       });
-      console.log(`Cita creada para ${recursoA.nombre}: ${cliente.nombre} a las ${inicio.toLocaleTimeString('es-CL')} (${cita.estado})`);
+      console.log(`Cita creada para ${recursoA.nombre}: ${cliente.nombre} a las ${horasA[i]} Chile (${cita.estado})`);
     }
 
-    // 1 cita para el segundo profesional
     const clienteB = await prisma.cliente.create({
       data: {
         empresaId: EMPRESA_ID,
@@ -56,8 +56,7 @@ async function main() {
         telefono: '+56911111200',
       },
     });
-    const inicioB = new Date(hoy);
-    inicioB.setHours(15, 0, 0, 0);
+    const inicioB = horaChileAFechaUTC(hoyChileISO, '15:00');
     const finB = new Date(inicioB.getTime() + (recursoB.duracionCitaMinutos || 30) * 60000);
     const citaB = await prisma.cita.create({
       data: {
@@ -70,7 +69,7 @@ async function main() {
         origenCanal: 'panel',
       },
     });
-    console.log(`Cita creada para ${recursoB.nombre}: ${clienteB.nombre} a las ${inicioB.toLocaleTimeString('es-CL')} (${citaB.estado})`);
+    console.log(`Cita creada para ${recursoB.nombre}: ${clienteB.nombre} a las 15:00 Chile (${citaB.estado})`);
 
     console.log('');
     console.log(`Total: 2 citas para "${recursoA.nombre}", 1 cita para "${recursoB.nombre}". "Todos" debería mostrar 3.`);
