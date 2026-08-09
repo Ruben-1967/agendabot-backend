@@ -36,9 +36,12 @@ async function obtenerOCrearEmpresaDemo() {
     data: {
       nombre: 'Óptica Demo Staging',
       esDemo: true,
-      // ⚠️ Si tu modelo Empresa tiene otros campos obligatorios (rubro,
-      // modoOperacion, etc.), agrégalos acá o el create va a fallar —
-      // revisa contra otro script que ya cree empresas, ej. demos.js.
+      rubroTemplate: {
+        connect: { clave: 'otro' },
+      },
+      // ⚠️ Si el create sigue fallando pidiendo otro campo obligatorio
+      // (modoOperacion, etc.), agrégalo acá — revisa contra demos.js,
+      // que ya crea empresas reales.
     },
     select: { id: true, nombre: true },
   });
