@@ -51,6 +51,8 @@ const { iniciarJobBloqueoVencidas } = require('./jobs/bloquearEmpresasVencidas')
 // proceso — ver src/jobs/enviarPreguntaOptIn.js). Requerirlo una sola vez
 // activa su cron.schedule interno.
 require('./jobs/enviarPreguntaOptIn');
+require('./jobs/rankingCache');
+require('./jobs/cierreRankingMensual');
 iniciarJobBloqueoVencidas();
 
 const app = express();
@@ -143,6 +145,8 @@ app.use('/conversaciones', conversacionesRouter);
 app.use('/disponibilidad', require('./routes/disponibilidad'));
 app.use('/suscripcion', suscripcionRouter);
 app.use('/website-leads', websiteLeadsRouter);
+app.use('/admin-vendedores', require('./routes/adminVendedores'));
+app.use('/ranking', require('./routes/ranking'));
 
 
 app.get('/', (req, res) => {

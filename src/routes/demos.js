@@ -11,10 +11,14 @@
  */
 
 const express = require('express');
+const crypto = require('crypto');
+const bcrypt = require('bcryptjs');
 const { parsePhoneNumberFromString } = require('libphonenumber-js');
 const prisma = require('../lib/prisma');
 const { requireAuth, requireRole } = require('../middleware/auth');
 const { extraerInfoSitioWeb } = require('../services/extraccionSitioWeb');
+const { sendWhatsAppTextMessage } = require('../services/whatsapp');
+const { listarLeadsConSLA } = require('../services/slaService');
 
 const router = express.Router();
 
@@ -189,35 +193,71 @@ router.post('/prospectos', requireAuth, requireRole('VENDEDOR'), async (req, res
 });
 
 // ------------------------------------------------------------
-// GET /demos/prospectos — lista las demos del vendedor autenticado
+// GET /demos/prospectos — lista las demos del vendedor autenticado, como
+// casos priorizados: ordenadas por urgencia de SLA/aging (rojo, luego
+// amarillo, luego ok) por defecto, no por elección del vendedor. Incluye
+// contadorVencidos para el badge de alerta, visible sin aplicar filtros.
+// Filtros (?estadoSLA=ROJO|AMARILLO|OK, ?tipoLead=CALIENTE|FRIO) son una
+// herramienta de exploración aparte, no la única forma de ver lo urgente.
 // ------------------------------------------------------------
 router.get('/prospectos', requireAuth, requireRole('VENDEDOR'), async (req, res) => {
   try {
-    const demos = await prisma.demoAsignada.findMany({
-      where: { vendedorId: req.usuario.vendedorId, eliminadoEn: null },
-      include: { empresaDemo: { include: { rubroTemplate: true } } },
-      orderBy: { creadoEn: 'desc' },
+    const { leads, contadorVencidos } = await listarLeadsConSLA(req.usuario.vendedorId);
+
+    const { estadoSLA, tipoLead } = req.query;
+    const filtrados = leads.filter((l) => {
+      if (estadoSLA && l.estadoSLA !== estadoSLA) return false;
+      if (tipoLead && l.tipoLead !== tipoLead) return false;
+      return true;
     });
 
-    const resultado = demos.map((d) => {
-      const historial = Array.isArray(d.historialSimulacion) ? d.historialSimulacion : [];
-      const yaProbo = historial.length > 0;
-      return {
-        id: d.id,
-        telefono: d.telefono,
-        nombreNegocio: d.empresaDemo.nombre,
-        nombreEncargado: d.nombreProspecto,
-        rubro: d.empresaDemo.rubroTemplate.nombre,
-        creadoEn: d.creadoEn,
-        yaProbo,
-        ultimaActividadEn: yaProbo ? d.actualizadoEn : null,
-      };
-    });
-
-    res.json({ demos: resultado });
+    res.json({ demos: filtrados, contadorVencidos });
   } catch (error) {
     console.error('Error listando prospectos de demo:', error);
     res.status(500).json({ error: error.message });
+  }
+});
+
+// ------------------------------------------------------------
+// POST /demos/prospectos/:id/marcar-contactado
+// Versión mínima del árbol de gestión de ventas (arbol-gestion-ventas-DISENO.md):
+// registra un EventoGestionVenta genérico y resetea el timer de aging. Cuando
+// se active la navegación completa del árbol (fase aparte, menor prioridad),
+// este botón único se reemplaza por la selección canal->resultado real, sin
+// tocar el modelo de datos.
+// ------------------------------------------------------------
+router.post('/prospectos/:id/marcar-contactado', requireAuth, requireRole('VENDEDOR'), async (req, res) => {
+  try {
+    const demo = await prisma.demoAsignada.findUnique({ where: { id: req.params.id } });
+
+    if (!demo || demo.vendedorId !== req.usuario.vendedorId || demo.eliminadoEn) {
+      return res.status(404).json({ error: 'Demo no encontrada' });
+    }
+
+    const ahora = new Date();
+    await prisma.$transaction([
+      prisma.eventoGestionVenta.create({
+        data: {
+          demoAsignadaId: demo.id,
+          vendedorId: req.usuario.vendedorId,
+          canal: 'OTRO',
+          resultado: 'contacto_registrado',
+          reseteaTimer: true,
+        },
+      }),
+      prisma.demoAsignada.update({
+        where: { id: demo.id },
+        data: {
+          primerContactoVendedorEn: demo.primerContactoVendedorEn || ahora,
+          ultimoContactoEfectivoEn: ahora,
+        },
+      }),
+    ]);
+
+    res.json({ ok: true });
+  } catch (error) {
+    console.error('Error marcando contacto:', error);
+    res.status(500).json({ error: 'Error al marcar el contacto' });
   }
 });
 
@@ -314,6 +354,110 @@ router.post('/pool/:id/tomar', requireAuth, requireRole('VENDEDOR'), async (req,
   } catch (error) {
     console.error('Error tomando lead del pool:', error);
     res.status(500).json({ error: 'Error al tomar el lead' });
+  }
+});
+
+// ------------------------------------------------------------
+// POST /demos/convertir-a-cliente-real
+// body: { demoId }
+// El vendedor confirma que una demo se convirtió en cliente real: crea la
+// Empresa real (vendedorId + demoOrigenId para atribución del ranking) y un
+// Usuario ADMIN con un password temporal inutilizable — el cliente define su
+// propia contraseña vía el link de activación que se le envía por WhatsApp
+// (el vendedor nunca conoce la contraseña real). No crea Suscripcion todavía:
+// eso ocurre cuando el cliente elige un plan en /suscripcion/elegir-plan.
+// ------------------------------------------------------------
+router.post('/convertir-a-cliente-real', requireAuth, requireRole('VENDEDOR'), async (req, res) => {
+  try {
+    const { demoId } = req.body;
+    if (!demoId) {
+      return res.status(400).json({ error: 'Falta demoId' });
+    }
+
+    const demo = await prisma.demoAsignada.findUnique({
+      where: { id: demoId },
+      include: { empresaDemo: true },
+    });
+
+    if (!demo || demo.vendedorId !== req.usuario.vendedorId || demo.eliminadoEn) {
+      return res.status(404).json({ error: 'Demo no encontrada' });
+    }
+    if (demo.convertidaEn) {
+      return res.status(400).json({ error: 'Esta demo ya fue convertida a cliente real' });
+    }
+
+    const tokenActivacion = crypto.randomBytes(24).toString('hex');
+    const tokenActivacionExpira = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 días
+    // Password inutilizable hasta que el cliente active su cuenta — nadie (ni el
+    // vendedor) puede iniciar sesión con esto porque el valor real nunca se comparte.
+    const passwordHashTemporal = await bcrypt.hash(crypto.randomUUID(), 10);
+
+    const { empresaReal } = await prisma.$transaction(async (tx) => {
+      const empresaReal = await tx.empresa.create({
+        data: {
+          nombre: demo.empresaDemo.nombre,
+          rubroTemplateId: demo.empresaDemo.rubroTemplateId,
+          telefonoContacto: demo.telefono,
+          sitioWeb: demo.empresaDemo.sitioWeb,
+          direccion: demo.empresaDemo.direccion,
+          informacionAdicional: demo.empresaDemo.informacionAdicional,
+          esDemo: false,
+          vendedorId: req.usuario.vendedorId,
+          demoOrigenId: demo.id,
+        },
+      });
+
+      await tx.usuario.create({
+        data: {
+          empresaId: empresaReal.id,
+          nombre: demo.nombreProspecto || demo.empresaDemo.nombre,
+          // No hay infraestructura de correo en el sistema — el login es por
+          // email+password, pero la activación/entrega es por WhatsApp, así que
+          // este email es solo un identificador estable, no se usa para enviar nada.
+          email: `${demo.telefono}@cliente.totemsystem.cl`,
+          passwordHash: passwordHashTemporal,
+          rol: 'ADMIN',
+          tokenActivacion,
+          tokenActivacionExpira,
+        },
+      });
+
+      await tx.demoAsignada.update({
+        where: { id: demo.id },
+        data: { convertidaEn: new Date() },
+      });
+
+      return { empresaReal };
+    });
+
+    const linkActivacion = `${process.env.PANEL_FRONTEND_URL}/activar-cuenta?token=${tokenActivacion}`;
+    try {
+      const phoneNumberId = process.env.DEMO_PHONE_NUMBER_ID;
+      const accessToken = process.env.DEMO_WHATSAPP_ACCESS_TOKEN;
+      if (phoneNumberId && accessToken) {
+        await sendWhatsAppTextMessage({
+          phoneNumberId,
+          to: demo.telefono,
+          text: `¡Gracias por confiar en nosotros! Para activar tu cuenta y elegir tu plan, define tu contraseña acá: ${linkActivacion}`,
+          accessToken,
+        });
+      } else {
+        console.warn('[convertir-a-cliente-real] Faltan DEMO_PHONE_NUMBER_ID/DEMO_WHATSAPP_ACCESS_TOKEN; no se envió el link. Link:', linkActivacion);
+      }
+    } catch (errWhatsapp) {
+      // La Empresa/Usuario ya quedaron creados — no revertimos la conversión por
+      // un fallo de envío; el vendedor puede reintentar el aviso manualmente.
+      console.error('[convertir-a-cliente-real] Error enviando WhatsApp de activación:', errWhatsapp.message);
+    }
+
+    res.json({
+      ok: true,
+      empresaId: empresaReal.id,
+      mensaje: 'Cliente real creado. Se envió el link de activación por WhatsApp.',
+    });
+  } catch (error) {
+    console.error('Error convirtiendo demo a cliente real:', error);
+    res.status(500).json({ error: error.message });
   }
 });
 

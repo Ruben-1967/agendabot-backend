@@ -44,4 +44,20 @@ function requireRole(...rolesPermitidos) {
   };
 }
 
-module.exports = { requireAuth, requireRole, JWT_SECRET };
+/**
+ * Gatea rutas admin-only del panel de vendedores (config de ranking, SLA,
+ * marcar suscripción como pagada). Requiere un JWT de vendedor (rol: 'VENDEDOR')
+ * cuyo rolVendedor sea 'ADMIN' — distinto del RolUsuario del panel de la
+ * empresa cliente. Debe usarse DESPUÉS de requireAuth.
+ */
+function requireRolVendedorAdmin(req, res, next) {
+  if (!req.usuario) {
+    return res.status(401).json({ error: 'No autenticado' });
+  }
+  if (req.usuario.rol !== 'VENDEDOR' || req.usuario.rolVendedor !== 'ADMIN') {
+    return res.status(403).json({ error: 'No tienes permiso para acceder a este recurso' });
+  }
+  next();
+}
+
+module.exports = { requireAuth, requireRole, requireRolVendedorAdmin, JWT_SECRET };

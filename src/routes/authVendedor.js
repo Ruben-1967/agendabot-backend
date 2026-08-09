@@ -35,12 +35,15 @@ router.post('/login', limitadorLogin, async (req, res) => {
       return res.status(401).json({ error: 'Email o contraseña incorrectos' });
     }
 
-    const payload = { vendedorId: vendedor.id, rol: 'VENDEDOR', nombre: vendedor.nombre };
+    // `rol: 'VENDEDOR'` es el discriminador genérico que ya usa requireRole('VENDEDOR')
+    // en todas las rutas de /demos — no lo pisamos. `rolVendedor` lleva la jerarquía
+    // real (VENDEDOR/SUPERVISOR/ADMIN) para gatear las rutas admin-only nuevas.
+    const payload = { vendedorId: vendedor.id, rol: 'VENDEDOR', rolVendedor: vendedor.rol, nombre: vendedor.nombre };
     const token = jwt.sign(payload, JWT_SECRET, { expiresIn: TOKEN_EXPIRA_EN });
 
     res.json({
       token,
-      vendedor: { id: vendedor.id, nombre: vendedor.nombre, email: vendedor.email },
+      vendedor: { id: vendedor.id, nombre: vendedor.nombre, email: vendedor.email, rol: vendedor.rol },
     });
   } catch (error) {
     console.error('Error en /auth-vendedor/login:', error);

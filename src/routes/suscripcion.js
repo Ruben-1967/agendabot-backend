@@ -9,10 +9,12 @@
  */
 
 const express = require('express');
+const jwt = require('jsonwebtoken');
 const router = express.Router();
 const prisma = require('../lib/prisma');
-const { requireAuth, requireRole } = require('../middleware/auth');
+const { requireAuth, requireRole, JWT_SECRET } = require('../middleware/auth');
 const flowClient = require('../services/flowClient');
+const { PLANES: DETALLE_PLANES } = require('../services/contratoHtml'); // fuente única de montoMensual/citasIncluidas/precioCitaExcedente por plan
 console.log('flowClient cargado:', Object.keys(flowClient));
 
 /**
@@ -71,11 +73,23 @@ router.post('/elegir-plan', async (req, res) => {
     const authHeader = req.headers.authorization;
     const token = authHeader ? authHeader.replace('Bearer ', '') : null;
 
+    // req.usuario no lo llena ningún middleware acá (esta ruta acepta tanto
+    // usuarios autenticados como clientes nuevos sin token todavía) — se
+    // verifica el JWT a mano si vino uno.
+    let usuarioJwt = null;
+    if (token) {
+      try {
+        usuarioJwt = jwt.verify(token, JWT_SECRET);
+      } catch (errJwt) {
+        return res.status(401).json({ error: 'Token inválido o expirado' });
+      }
+    }
+
     // Determinar empresaId: del JWT o del body
     let empresaId;
-    if (req.usuario && req.usuario.empresaId) {
+    if (usuarioJwt && usuarioJwt.empresaId) {
       // Usuario autenticado: usar su empresaId del JWT
-      empresaId = req.usuario.empresaId;
+      empresaId = usuarioJwt.empresaId;
     } else if (empresaIdBody) {
       // Nuevo cliente: pasar empresaId en body
       empresaId = empresaIdBody;
@@ -101,13 +115,54 @@ router.post('/elegir-plan', async (req, res) => {
       return res.status(404).json({ error: 'Empresa no encontrada' });
     }
 
-    // OPCIÓN A: Plan elegido exitosamente (Flow.cl se integra después de martes 4)
-    console.log(`[OPCIÓN A] Plan ${plan} elegido por empresa ${empresaId}`);
+    // OPCIÓN A: Flow.cl todavía no está integrado (pipeline de cobro roto,
+    // fuera de alcance de esta fase — ver tarea de background aparte). Por
+    // ahora dejamos la Suscripcion real en PENDIENTE_PAGO; un admin la pasa a
+    // ACTIVA manualmente en POST /admin-vendedores/suscripciones/:empresaId/marcar-activa
+    // una vez coordinado el cobro fuera del sistema.
+    const planEnum = `PLAN_${plan}`;
+    const detallePlan = DETALLE_PLANES[planEnum];
+
+    const fechaProximoCobro = new Date();
+    fechaProximoCobro.setMonth(fechaProximoCobro.getMonth() + 1);
+    const fechaProximoCobroHosting = new Date();
+    fechaProximoCobroHosting.setFullYear(fechaProximoCobroHosting.getFullYear() + 1);
+
+    const suscripcionExistente = await prisma.suscripcion.findUnique({ where: { empresaId } });
+
+    if (suscripcionExistente) {
+      // No tocamos estado/fechaActivacion acá — si ya estaba ACTIVA, elegir de
+      // nuevo el plan no debe revertir una conversión ya contada en el ranking.
+      await prisma.suscripcion.update({
+        where: { empresaId },
+        data: {
+          plan: planEnum,
+          montoMensualActual: detallePlan.montoMensual,
+          citasIncluidas: detallePlan.citasIncluidas,
+          precioCitaExcedente: detallePlan.precioCitaExcedente,
+        },
+      });
+    } else {
+      await prisma.suscripcion.create({
+        data: {
+          empresaId,
+          plan: planEnum,
+          estado: 'PENDIENTE_PAGO',
+          montoMensualActual: detallePlan.montoMensual,
+          citasIncluidas: detallePlan.citasIncluidas,
+          precioCitaExcedente: detallePlan.precioCitaExcedente,
+          fechaProximoCobro,
+          fechaProximoCobroHosting,
+        },
+      });
+    }
+
+    console.log(`[elegir-plan] Suscripcion ${planEnum} para empresa ${empresaId} (PENDIENTE_PAGO si es nueva)`);
 
     res.json({
       exitoso: true,
       plan,
-      monto: flowClient.PLANES[plan].precio,
+      monto: detallePlan.montoMensual,
       mensaje: 'Plan elegido exitosamente',
       proximoPaso: 'Nos contactaremos en breve para confirmar el pago',
       empresaId,

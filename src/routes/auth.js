@@ -68,6 +68,68 @@ router.post('/login', limitadorLogin, async (req, res) => {
 });
 
 // ------------------------------------------------------------
+// POST /auth/activar-cuenta
+// body: { token, password }
+// El cliente real (creado por un vendedor vía POST /demos/convertir-a-cliente-real)
+// define su propia contraseña con el link único que le llegó por WhatsApp. No
+// requiere autenticación previa — el token de activación hace ese papel.
+// ------------------------------------------------------------
+router.post('/activar-cuenta', async (req, res) => {
+  try {
+    const { token, password } = req.body;
+
+    if (!token || !password) {
+      return res.status(400).json({ error: 'Faltan token o password' });
+    }
+    if (password.length < 8) {
+      return res.status(400).json({ error: 'La contraseña debe tener al menos 8 caracteres' });
+    }
+
+    const usuario = await prisma.usuario.findUnique({ where: { tokenActivacion: token } });
+
+    if (!usuario || !usuario.tokenActivacionExpira || usuario.tokenActivacionExpira < new Date()) {
+      return res.status(400).json({ error: 'El link de activación es inválido o expiró' });
+    }
+
+    const passwordHash = await bcrypt.hash(password, 10);
+
+    const usuarioActivado = await prisma.usuario.update({
+      where: { id: usuario.id },
+      data: { passwordHash, tokenActivacion: null, tokenActivacionExpira: null },
+      include: { empresa: { include: { rubroTemplate: true, suscripcion: true } }, recursoAgendable: true },
+    });
+
+    const payload = {
+      userId: usuarioActivado.id,
+      empresaId: usuarioActivado.empresaId,
+      rol: usuarioActivado.rol,
+      recursoAgendableId: usuarioActivado.recursoAgendableId,
+      nombre: usuarioActivado.nombre,
+    };
+    const jwtToken = jwt.sign(payload, JWT_SECRET, { expiresIn: TOKEN_EXPIRA_EN });
+
+    res.json({
+      token: jwtToken,
+      usuario: {
+        id: usuarioActivado.id,
+        nombre: usuarioActivado.nombre,
+        email: usuarioActivado.email,
+        rol: usuarioActivado.rol,
+        empresaId: usuarioActivado.empresaId,
+        empresaNombre: usuarioActivado.empresa.nombre,
+        empresaModoOperacion: usuarioActivado.empresa.rubroTemplate.modoOperacion,
+        recursoAgendableId: usuarioActivado.recursoAgendableId,
+        recursoAgendableNombre: usuarioActivado.recursoAgendable?.nombre || null,
+        plan: usuarioActivado.empresa.suscripcion?.plan || null,
+      },
+    });
+  } catch (error) {
+    console.error('Error en /auth/activar-cuenta:', error);
+    res.status(500).json({ error: 'Error al activar la cuenta' });
+  }
+});
+
+// ------------------------------------------------------------
 // GET /auth/me — para que el frontend valide el token al cargar
 // ------------------------------------------------------------
 router.get('/me', requireAuth, async (req, res) => {

@@ -100,7 +100,14 @@ model Empresa {
   esDemo         Boolean @default(false)
   demosAsignadas DemoAsignada[]
 
+  // Atribución de venta: si esta Empresa nació de una demo gestionada por un vendedor
+  vendedor       Vendedor?     @relation(fields: [vendedorId], references: [id])
+  vendedorId     String?
+  demoOrigen     DemoAsignada? @relation("DemoConvertida", fields: [demoOrigenId], references: [id])
+  demoOrigenId   String?       @unique
+
   @@index([rubroTemplateId])
+  @@index([vendedorId])
 }
 
 
@@ -128,6 +135,12 @@ model Usuario {
   recursoAgendableId String?
 
   creadoEn  DateTime   @default(now())
+
+  // Activación de cuenta: usado cuando un vendedor convierte una demo a cliente real —
+  // el Usuario se crea con un passwordHash aleatorio inutilizable hasta que el cliente
+  // define su propia contraseña vía el link enviado por WhatsApp.
+  tokenActivacion       String?   @unique
+  tokenActivacionExpira DateTime?
 
   @@index([empresaId])
 }
@@ -463,6 +476,7 @@ model Suscripcion {
 
   plan      PlanSuscripcion
   estado    EstadoSuscripcion @default(PENDIENTE_PAGO)
+  fechaActivacion DateTime? // se setea cuando estado pasa a ACTIVA — el ranking de conversión lee este campo
 
   tokenFlow String?
 
@@ -785,17 +799,34 @@ model DemoAsignada {
   derivadoAVendedor         Boolean   @default(false)
   derivadoEn                DateTime?
   motivoDerivacion          String?   // 'fuera_ventana_sin_conversion'
+
+  // ====== CONVERSIÓN A CLIENTE REAL Y CONTROL DE CASOS (Panel de Vendedores Fase 4) ======
+  convertidaEn              DateTime?           // si no es null, ya se convirtió a cliente real (idempotencia)
+  empresaConvertida         Empresa?            @relation("DemoConvertida")
+  primerContactoVendedorEn  DateTime?           // fecha del primer EventoGestionVenta registrado
+  ultimoContactoEfectivoEn  DateTime?           // fecha del último evento con reseteaTimer = true
+  eventosGestion            EventoGestionVenta[]
+}
+
+enum RolVendedor {
+  VENDEDOR
+  SUPERVISOR
+  ADMIN
 }
 
 model Vendedor {
-  id           String   @id @default(uuid())
+  id           String       @id @default(uuid())
   nombre       String
-  email        String   @unique
+  email        String       @unique
   passwordHash String
-  activo       Boolean  @default(true)
-  creadoEn     DateTime @default(now())
+  activo       Boolean      @default(true)
+  rol          RolVendedor  @default(VENDEDOR)
+  creadoEn     DateTime     @default(now())
 
-  demosCreadas DemoAsignada[]
+  demosCreadas    DemoAsignada[]
+  empresasConvertidas Empresa[]
+  eventosGestion  EventoGestionVenta[]
+  rankingMensual  RankingMensual[]
 }
 
 // ===== HISTORIAL DE SUSCRIPCIONES =====
@@ -829,4 +860,98 @@ model WebsiteLeads {
 
   @@index([creadoEn])
   @@index([leido])
+}
+
+// ------------------------------------------------------------
+// PANEL DE VENDEDORES — FASE 4
+// Árbol de gestión de ventas (datos ya listos, UI de árbol completo diferida),
+// ranking mensual de conversión con premios, y control de casos por SLA/aging.
+// ------------------------------------------------------------
+
+// ===== ÁRBOL DE GESTIÓN DE VENTAS =====
+// Ver arbol-gestion-ventas-DISENO.md. Cada acción del vendedor es una fila nueva
+// (nunca se sobrescribe una anterior). Mientras la navegación completa del árbol no
+// esté activa, se usa 'OTRO' + resultado 'contacto_registrado' como placeholder genérico
+// desde la vista de casos priorizados.
+enum CanalGestion {
+  WHATSAPP
+  LLAMADA
+  CORREO
+  VISITA
+  OTRO
+}
+
+model EventoGestionVenta {
+  id             String       @id @default(cuid())
+  demoAsignada   DemoAsignada @relation(fields: [demoAsignadaId], references: [id])
+  demoAsignadaId String
+  vendedor       Vendedor     @relation(fields: [vendedorId], references: [id])
+  vendedorId     String
+
+  canal        CanalGestion
+  resultado    String  // clave corta de la lista cerrada por canal (arbol-gestion-ventas-DISENO.md sección 3)
+  reseteaTimer Boolean @default(false)
+
+  creadoEn      DateTime @default(now())
+  actualizadoEn DateTime @updatedAt
+
+  @@index([demoAsignadaId])
+  @@index([vendedorId])
+}
+
+// ===== RANKING MENSUAL DE CONVERSIÓN =====
+model ConfiguracionPremio {
+  id          String @id @default(cuid())
+  posicion    Int    @unique // 1 a 5
+  descripcion String
+  monto       Int?
+}
+
+model ConfiguracionRankingGlobal {
+  id                      String @id @default(cuid())
+  metaMinimaGrupalMensual Int    @default(20)
+}
+
+// Desempate del ranking por tipo de plan vendido, configurable desde admin (no hardcodeado)
+model JerarquiaPlanDesempate {
+  plan  PlanSuscripcion @id
+  orden Int             @unique // mayor orden = mejor posición en el desempate
+}
+
+// Snapshot histórico intocable: se escribe una vez al cierre de cada mes y nunca se recalcula,
+// aunque una conversión se revierta después.
+model RankingMensual {
+  id                  String   @id @default(cuid())
+  vendedor            Vendedor @relation(fields: [vendedorId], references: [id])
+  vendedorId          String
+  mes                 Int      // 1-12
+  anio                Int
+  posicion            Int
+  conversiones        Int
+  premioOtorgado      String?  // snapshot de ConfiguracionPremio.descripcion, o null si no se alcanzó la meta grupal
+  metaGrupalAlcanzada Boolean
+  creadoEn            DateTime @default(now())
+
+  @@unique([vendedorId, mes, anio])
+}
+
+// Cache del ranking del mes en curso, recalculado por cron cada 5 minutos (sin websockets)
+model RankingCacheActual {
+  id            String   @id @default(cuid())
+  dataJson      Json
+  actualizadoEn DateTime @updatedAt
+}
+
+// ===== CONTROL DE CASOS / SLA-AGING =====
+enum TipoLeadSLA {
+  CALIENTE
+  FRIO
+}
+
+model ConfiguracionSLA {
+  tipoLead                   TipoLeadSLA @id
+  diasPrimerContactoAmarillo Int
+  diasPrimerContactoRojo     Int
+  diasAgingAmarillo          Int
+  diasAgingRojo              Int
 }
