@@ -51,7 +51,14 @@ async function main() {
     },
   });
 
-  const telefonoPrueba = `569${Date.now().toString().slice(-8)}`;
+  // Antes esto generaba un número al azar con forma válida de celular
+  // chileno ("569" + timestamp) — riesgo real de coincidir con el número de
+  // una persona de verdad, ya que convertir-a-cliente-real envía un WhatsApp
+  // REAL (Meta Graph API, sin mock en ningún ambiente) a este número. Se usa
+  // en cambio el número de la demo siempre-funcional (el mismo que
+  // NuevaDemo.jsx le muestra al vendedor para probar el bot), que es propio
+  // del sistema y seguro para recibir mensajes de prueba.
+  const telefonoPrueba = '56927679838';
   const demo = await prisma.demoAsignada.create({
     data: {
       telefono: telefonoPrueba,
