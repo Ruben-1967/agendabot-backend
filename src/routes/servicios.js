@@ -17,6 +17,7 @@ router.get('/', async (req, res) => {
       where: { empresaId: req.usuario.empresaId },
       include: {
         recursos: { include: { recurso: { select: { id: true, nombre: true } } } },
+        plantillaFicha: { select: { id: true, nombre: true, camposFicha: true } },
       },
       orderBy: { nombre: 'asc' },
     });
@@ -30,7 +31,7 @@ router.get('/', async (req, res) => {
 // POST /servicios — crear un servicio nuevo
 router.post('/', async (req, res) => {
   try {
-    const { nombre, duracionMinutos } = req.body;
+    const { nombre, duracionMinutos, plantillaFichaId } = req.body;
 
     if (!nombre || !nombre.trim()) {
       return res.status(400).json({ error: 'Falta el nombre del servicio' });
@@ -39,11 +40,21 @@ router.post('/', async (req, res) => {
       return res.status(400).json({ error: 'duracionMinutos debe ser mayor a 0 si se especifica' });
     }
 
+    // Si no elige plantilla, plantillaFichaId queda null y el servicio
+    // hereda RubroTemplate.camposFicha como siempre (sin cambios).
+    if (plantillaFichaId) {
+      const plantilla = await prisma.plantillaFicha.findFirst({ where: { id: plantillaFichaId, activo: true } });
+      if (!plantilla) {
+        return res.status(400).json({ error: 'La plantilla de ficha elegida no existe o no está activa' });
+      }
+    }
+
     const servicio = await prisma.servicio.create({
       data: {
         empresaId: req.usuario.empresaId,
         nombre: nombre.trim(),
         duracionMinutos: duracionMinutos != null ? Number(duracionMinutos) : null,
+        plantillaFichaId: plantillaFichaId || null,
       },
     });
 
@@ -64,7 +75,7 @@ router.patch('/:id', async (req, res) => {
       return res.status(404).json({ error: 'Servicio no encontrado' });
     }
 
-    const { nombre, duracionMinutos, activo, requiereProfesionalEspecifico, recursoIds } = req.body;
+    const { nombre, duracionMinutos, activo, requiereProfesionalEspecifico, recursoIds, plantillaFichaId } = req.body;
 
     // Si viene recursoIds, validamos que todos pertenezcan a esta empresa
     // antes de tocar nada — evita que un id de otra empresa (o inventado)
@@ -83,6 +94,15 @@ router.patch('/:id', async (req, res) => {
       }
     }
 
+    // plantillaFichaId: null explícito = volver a heredar RubroTemplate;
+    // un id = validar que exista y esté activa antes de asignarla.
+    if (plantillaFichaId !== undefined && plantillaFichaId !== null) {
+      const plantilla = await prisma.plantillaFicha.findFirst({ where: { id: plantillaFichaId, activo: true } });
+      if (!plantilla) {
+        return res.status(400).json({ error: 'La plantilla de ficha elegida no existe o no está activa' });
+      }
+    }
+
     const actualizado = await prisma.$transaction(async (tx) => {
       const svc = await tx.servicio.update({
         where: { id: servicio.id },
@@ -91,6 +111,7 @@ router.patch('/:id', async (req, res) => {
           ...(duracionMinutos !== undefined && { duracionMinutos: duracionMinutos != null ? Number(duracionMinutos) : null }),
           ...(activo !== undefined && { activo: Boolean(activo) }),
           ...(requiereProfesionalEspecifico !== undefined && { requiereProfesionalEspecifico: Boolean(requiereProfesionalEspecifico) }),
+          ...(plantillaFichaId !== undefined && { plantillaFichaId: plantillaFichaId || null }),
         },
       });
 
@@ -108,7 +129,10 @@ router.patch('/:id', async (req, res) => {
 
     const servicioConRecursos = await prisma.servicio.findUnique({
       where: { id: actualizado.id },
-      include: { recursos: { include: { recurso: { select: { id: true, nombre: true } } } } },
+      include: {
+        recursos: { include: { recurso: { select: { id: true, nombre: true } } } },
+        plantillaFicha: { select: { id: true, nombre: true, camposFicha: true } },
+      },
     });
 
     res.json({ servicio: servicioConRecursos });

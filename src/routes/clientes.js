@@ -414,6 +414,38 @@ router.get('/:id/atenciones', async (req, res) => {
   }
 });
 
+// Recordatorio escalonado del próximo control (Fichas dinámicas +
+// Recordatorios escalonados): recordatorioModo se calcula UNA SOLA VEZ, en
+// el momento en que se fija/cambia fechaProximaCitaFijada, según la
+// anticipación medida desde HOY (no desde la fecha de la atención) — no se
+// recalcula después aunque pase el tiempo. Cualquier cambio de fecha
+// reinicia el ciclo (los pasos 1/2 vuelven a null), porque es efectivamente
+// un nuevo control. Sin fecha, no hay ciclo de recordatorio.
+const DIAS_LIMITE_RECORDATORIO_SIMPLE = 21; // 3 semanas
+
+function calcularCamposRecordatorio(fechaProximaCitaFijada) {
+  if (!fechaProximaCitaFijada) {
+    return {
+      recordatorioModo: null,
+      recordatorioPaso1EnviadoEn: null,
+      recordatorioPaso1Confirmado: null,
+      recordatorioPaso2EnviadoEn: null,
+      recordatorioPaso2Confirmado: null,
+    };
+  }
+
+  const diasAnticipacion = (fechaProximaCitaFijada - new Date()) / (1000 * 60 * 60 * 24);
+  const recordatorioModo = diasAnticipacion <= DIAS_LIMITE_RECORDATORIO_SIMPLE ? 'SIMPLE' : 'ESCALONADO';
+
+  return {
+    recordatorioModo,
+    recordatorioPaso1EnviadoEn: null,
+    recordatorioPaso1Confirmado: null,
+    recordatorioPaso2EnviadoEn: null,
+    recordatorioPaso2Confirmado: null,
+  };
+}
+
 // ------------------------------------------------------------
 // POST /clientes/:id/atenciones — registra una atención nueva
 // ------------------------------------------------------------
@@ -430,6 +462,8 @@ router.post('/:id/atenciones', async (req, res) => {
       return res.status(400).json({ error: 'Falta la fecha de la atención' });
     }
 
+    const fechaProximaCitaFijadaDate = fechaProximaCitaFijada ? new Date(fechaProximaCitaFijada) : null;
+
     const atencion = await prisma.atencionClinica.create({
       data: {
         clienteId: cliente.id,
@@ -437,7 +471,8 @@ router.post('/:id/atenciones', async (req, res) => {
         fichaJson: fichaJson || null,
         diagnostico: diagnostico || null,
         profesionalAtendio: profesionalAtendio || null,
-        fechaProximaCitaFijada: fechaProximaCitaFijada ? new Date(fechaProximaCitaFijada) : null,
+        fechaProximaCitaFijada: fechaProximaCitaFijadaDate,
+        ...calcularCamposRecordatorio(fechaProximaCitaFijadaDate),
       },
     });
 
@@ -467,6 +502,14 @@ router.patch('/:id/atenciones/:atencionId', async (req, res) => {
 
     const { fecha, fichaJson, diagnostico, profesionalAtendio, fechaProximaCitaFijada } = req.body;
 
+    // Solo se recalcula el ciclo de recordatorio si esta edición realmente
+    // toca fechaProximaCitaFijada — si no viene en el body, se deja el
+    // ciclo existente intacto (no se reinicia por editar otro campo).
+    let fechaProximaCitaFijadaDate;
+    if (fechaProximaCitaFijada !== undefined) {
+      fechaProximaCitaFijadaDate = fechaProximaCitaFijada ? new Date(fechaProximaCitaFijada) : null;
+    }
+
     const actualizada = await prisma.atencionClinica.update({
       where: { id: atencionExistente.id },
       data: {
@@ -475,7 +518,8 @@ router.patch('/:id/atenciones/:atencionId', async (req, res) => {
         ...(diagnostico !== undefined && { diagnostico: diagnostico || null }),
         ...(profesionalAtendio !== undefined && { profesionalAtendio: profesionalAtendio || null }),
         ...(fechaProximaCitaFijada !== undefined && {
-          fechaProximaCitaFijada: fechaProximaCitaFijada ? new Date(fechaProximaCitaFijada) : null,
+          fechaProximaCitaFijada: fechaProximaCitaFijadaDate,
+          ...calcularCamposRecordatorio(fechaProximaCitaFijadaDate),
         }),
       },
     });

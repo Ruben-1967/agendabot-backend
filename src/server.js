@@ -138,6 +138,7 @@ app.use('/billetera', billeteraRouter);
 app.use('/empresa', empresaRouter);
 app.use('/agenda', agendaRouter);
 app.use('/servicios', serviciosRouter);
+app.use('/plantillas-ficha', require('./routes/plantillasFicha'));
 app.use('/auth-vendedor', authVendedorRouter);
 app.use('/demos', demosRouter);
 app.use('/lista-espera', listaEsperaRouter);
@@ -523,6 +524,74 @@ app.post('/webhook/whatsapp', verificarFirmaWebhookWhatsApp, async (req, res) =>
       }
     }
     // ---- fin bloque de opt-in ----
+
+    // ------------------------------------------------------------
+    // Confirmación del recordatorio escalonado de ficha clínica (ver
+    // src/jobs/recordatoriosFicha.js). IMPORTANTE: los botones de una
+    // PLANTILLA aprobada (enviados con sendWhatsAppTemplateMessage) llegan
+    // como mensaje.type === 'button' con mensaje.button.text — NO como
+    // mensaje.type === 'interactive' con button_reply.id (eso es solo para
+    // botones interactivos libres tipo sendWhatsAppReplyButtons, que no
+    // sirven acá porque solo funcionan dentro de la ventana de 24h).
+    // sendWhatsAppTemplateMessage no soporta un payload/id personalizado por
+    // botón, así que se hace match por el TEXTO exacto del botón — distinto
+    // del patrón de texto libre "sí"/"no" (más abajo) porque el regex de ese
+    // patrón exige que el mensaje sea SOLO esa palabra corta, y estos
+    // botones tienen texto más largo ("Sí, asisto" / "No puedo").
+    // Solo aplica a modo ESCALONADO (SIMPLE nunca pide confirmación).
+    // ------------------------------------------------------------
+    if (mensaje.type === 'button') {
+      const textoBotonFicha = mensaje.button?.text || '';
+
+      if (textoBotonFicha === 'Sí, asisto' || textoBotonFicha === 'No puedo') {
+        const clienteFicha = await prisma.cliente.findFirst({
+          where: { empresaId: empresa.id, telefono: telefonoCliente },
+        });
+
+        const atencionPendiente = clienteFicha
+          ? await prisma.atencionClinica.findFirst({
+              where: {
+                clienteId: clienteFicha.id,
+                recordatorioModo: 'ESCALONADO',
+                OR: [
+                  { recordatorioPaso1EnviadoEn: { not: null }, recordatorioPaso1Confirmado: null },
+                  { recordatorioPaso2EnviadoEn: { not: null }, recordatorioPaso2Confirmado: null },
+                ],
+              },
+              orderBy: { fechaProximaCitaFijada: 'asc' },
+            })
+          : null;
+
+        if (atencionPendiente) {
+          const respuestaSi = textoBotonFicha === 'Sí, asisto';
+          // El paso2 siempre es la pregunta vigente más reciente si ya se
+          // envió — una respuesta tardía al paso1 después de que el paso2
+          // ya salió se cuenta como respuesta al paso2, no al paso1 (que
+          // ya quedó superado por el segundo mensaje).
+          const campo = (atencionPendiente.recordatorioPaso2EnviadoEn && atencionPendiente.recordatorioPaso2Confirmado === null)
+            ? 'recordatorioPaso2Confirmado'
+            : 'recordatorioPaso1Confirmado';
+
+          await prisma.atencionClinica.update({
+            where: { id: atencionPendiente.id },
+            data: { [campo]: respuestaSi },
+          });
+
+          const accessTokenFicha = empresa.whatsappToken || process.env.WHATSAPP_ACCESS_TOKEN;
+          if (accessTokenFicha) {
+            await sendWhatsAppTextMessage({
+              phoneNumberId, to: telefonoCliente, accessToken: accessTokenFicha,
+              text: respuestaSi ? '¡Gracias por confirmar! Te esperamos ✅' : 'Entendido, gracias por avisar 🙌',
+            });
+          }
+
+          console.log(`[FICHA] AtencionClinica ${atencionPendiente.id}: ${campo} = ${respuestaSi} (${empresa.nombre}).`);
+        }
+
+        return; // el texto del botón es inequívocamente de este flujo — no seguir a ningún otro, aunque no haya atención pendiente (respuesta tardía a un ciclo ya cerrado)
+      }
+    }
+    // ---- fin bloque de confirmación de ficha clínica ----
 
     // Rubros de catálogo rotativo (panadería, rotisería, etc.) usan un motor
     // de conversación distinto al de agendamiento — reacciona a botones y

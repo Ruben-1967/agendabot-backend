@@ -212,10 +212,32 @@ model Servicio {
   // Si es true (default), el bot/panel debe pedir el profesional puntual.
   requiereProfesionalEspecifico Boolean @default(true)
 
+  // Ficha dinámica por servicio: si es null, el servicio hereda
+  // RubroTemplate.camposFicha como siempre (compatibilidad total, cero
+  // cambios de comportamiento para negocios que no le asignan plantilla).
+  plantillaFicha   PlantillaFicha? @relation(fields: [plantillaFichaId], references: [id])
+  plantillaFichaId String?
+
   citas     Cita[]
   recursos  ServicioRecurso[]
 
   @@index([empresaId])
+  @@index([plantillaFichaId])
+}
+
+// ------------------------------------------------------------
+// PLANTILLAS DE FICHA (catálogo fijo mantenido por MultiDigital — el
+// negocio elige entre estas, no diseña campos libres)
+// ------------------------------------------------------------
+model PlantillaFicha {
+  id            String   @id @default(uuid())
+  nombre        String   // ej. "Kinesiología", "Óptica - Receta"
+  camposFicha   Json     // mismo formato que RubroTemplate.camposFicha
+  rubroSugerido String?  // clave de RubroTemplate, opcional — filtra sugerencias en el panel, no restringe
+  activo        Boolean  @default(true)
+  creadoEn      DateTime @default(now())
+
+  servicios Servicio[]
 }
 
 // ------------------------------------------------------------
@@ -311,6 +333,21 @@ model AtencionClinica {
   diagnostico            String?
   profesionalAtendio     String?
   fechaProximaCitaFijada DateTime?
+
+  // ====== RECORDATORIO ESCALONADO DEL PRÓXIMO CONTROL ======
+  // No reserva un cupo de agenda real (Cita) — solo mensajería. recordatorioModo
+  // se calcula UNA VEZ, en el momento en que se fija/cambia fechaProximaCitaFijada
+  // (según anticipación desde hoy), y no se recalcula después aunque pase el tiempo.
+  // 'SIMPLE' (<=3 semanas de anticipación): un solo envío, 24h antes, sin botones.
+  // 'ESCALONADO' (>3 semanas): paso1 a 3 días (con botones), paso2 a 24h (simple si
+  // confirmó paso1, con botones de nuevo si no confirmó/declinó — sin respuesta y
+  // declinar reciben el mismo trato). Si tampoco confirma en paso2, el ciclo
+  // termina sin ninguna acción automática más (no hay Cita que liberar).
+  recordatorioModo           String?
+  recordatorioPaso1EnviadoEn DateTime?
+  recordatorioPaso1Confirmado Boolean?
+  recordatorioPaso2EnviadoEn DateTime?
+  recordatorioPaso2Confirmado Boolean?
 
   creadoEn      DateTime @default(now())
   actualizadoEn DateTime @updatedAt

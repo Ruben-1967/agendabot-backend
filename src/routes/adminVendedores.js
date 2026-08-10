@@ -6,12 +6,123 @@
  */
 
 const express = require('express');
+const bcrypt = require('bcryptjs');
 const prisma = require('../lib/prisma');
 const { requireAuth, requireRolVendedorAdmin } = require('../middleware/auth');
 const { resumenLeadsPorVendedor } = require('../services/slaService');
 const { conversionesDelMesPorVendedor } = require('../services/rankingService');
 
 const router = express.Router();
+
+// ------------------------------------------------------------
+// GET /admin-vendedores/vendedores
+// Listado de vendedores (incluye bloqueados, con su estado visible) para la
+// vista admin "Vendedores".
+// ------------------------------------------------------------
+router.get('/vendedores', requireAuth, requireRolVendedorAdmin, async (req, res) => {
+  try {
+    const vendedores = await prisma.vendedor.findMany({
+      select: { id: true, nombre: true, email: true, activo: true, rol: true, creadoEn: true },
+      orderBy: { nombre: 'asc' },
+    });
+    res.json({ vendedores });
+  } catch (error) {
+    console.error('Error listando vendedores:', error);
+    res.status(500).json({ error: 'Error al listar los vendedores' });
+  }
+});
+
+// ------------------------------------------------------------
+// POST /admin-vendedores/vendedores
+// body: { nombre, email, password, rol? } — mismo hash bcrypt que
+// scripts/crear-vendedor.js (10 rounds).
+// ------------------------------------------------------------
+router.post('/vendedores', requireAuth, requireRolVendedorAdmin, async (req, res) => {
+  try {
+    const { nombre, email, password, rol } = req.body;
+    if (!nombre?.trim() || !email?.trim() || !password) {
+      return res.status(400).json({ error: 'Faltan nombre, email o contraseña' });
+    }
+    if (rol && !['VENDEDOR', 'SUPERVISOR', 'ADMIN'].includes(rol)) {
+      return res.status(400).json({ error: 'Rol inválido' });
+    }
+
+    const emailNormalizado = email.toLowerCase().trim();
+    const existente = await prisma.vendedor.findUnique({ where: { email: emailNormalizado } });
+    if (existente) {
+      return res.status(400).json({ error: 'Ya existe un vendedor con ese email' });
+    }
+
+    const passwordHash = await bcrypt.hash(password, 10);
+    const vendedor = await prisma.vendedor.create({
+      data: { nombre: nombre.trim(), email: emailNormalizado, passwordHash, rol: rol || 'VENDEDOR', activo: true },
+      select: { id: true, nombre: true, email: true, activo: true, rol: true, creadoEn: true },
+    });
+
+    res.status(201).json({ vendedor });
+  } catch (error) {
+    console.error('Error creando vendedor:', error);
+    res.status(500).json({ error: 'Error al crear el vendedor' });
+  }
+});
+
+// ------------------------------------------------------------
+// PATCH /admin-vendedores/vendedores/:id/activo
+// body: { activo: boolean } — toggle de bloqueo. No reasigna casos activos
+// (queda como tarea manual aparte, a definir después).
+// ------------------------------------------------------------
+router.patch('/vendedores/:id/activo', requireAuth, requireRolVendedorAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { activo } = req.body;
+    if (typeof activo !== 'boolean') {
+      return res.status(400).json({ error: 'Falta activo (boolean)' });
+    }
+
+    const vendedor = await prisma.vendedor.update({
+      where: { id },
+      data: { activo },
+      select: { id: true, nombre: true, email: true, activo: true, rol: true, creadoEn: true },
+    });
+
+    res.json({ vendedor });
+  } catch (error) {
+    if (error.code === 'P2025') {
+      return res.status(404).json({ error: 'Vendedor no encontrado' });
+    }
+    console.error('Error actualizando estado del vendedor:', error);
+    res.status(500).json({ error: 'Error al actualizar el vendedor' });
+  }
+});
+
+// ------------------------------------------------------------
+// PATCH /admin-vendedores/vendedores/:id/resetear-password
+// body: { password }
+// ------------------------------------------------------------
+router.patch('/vendedores/:id/resetear-password', requireAuth, requireRolVendedorAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { password } = req.body;
+    if (!password || password.length < 6) {
+      return res.status(400).json({ error: 'La contraseña debe tener al menos 6 caracteres' });
+    }
+
+    const passwordHash = await bcrypt.hash(password, 10);
+    const vendedor = await prisma.vendedor.update({
+      where: { id },
+      data: { passwordHash },
+      select: { id: true, nombre: true, email: true, activo: true, rol: true, creadoEn: true },
+    });
+
+    res.json({ vendedor });
+  } catch (error) {
+    if (error.code === 'P2025') {
+      return res.status(404).json({ error: 'Vendedor no encontrado' });
+    }
+    console.error('Error reseteando contraseña del vendedor:', error);
+    res.status(500).json({ error: 'Error al resetear la contraseña' });
+  }
+});
 
 // ------------------------------------------------------------
 // GET /admin-vendedores/vendedores-kpi

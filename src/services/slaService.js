@@ -128,12 +128,12 @@ async function resumenLeadsPorVendedor() {
       select: { vendedorId: true, origenDemo: true, creadoEn: true, primerContactoVendedorEn: true, ultimoContactoEfectivoEn: true },
     }),
     obtenerConfigSLA(),
-    prisma.vendedor.findMany({ select: { id: true, nombre: true }, orderBy: { nombre: 'asc' } }),
+    prisma.vendedor.findMany({ select: { id: true, nombre: true, activo: true }, orderBy: { nombre: 'asc' } }),
   ]);
 
   const ahora = new Date();
   const resumenPorVendedor = new Map(
-    vendedores.map((v) => [v.id, { vendedorId: v.id, nombre: v.nombre, total: 0, rojo: 0, amarillo: 0, ok: 0 }])
+    vendedores.map((v) => [v.id, { vendedorId: v.id, nombre: v.nombre, activo: v.activo, total: 0, rojo: 0, amarillo: 0, ok: 0 }])
   );
 
   for (const d of demos) {
