@@ -1,4 +1,5 @@
 const jwt = require('jsonwebtoken');
+const prisma = require('../lib/prisma');
 
 const JWT_SECRET = process.env.JWT_SECRET;
 
@@ -10,8 +11,17 @@ if (!JWT_SECRET) {
  * Verifica el JWT enviado en el header Authorization: Bearer <token>.
  * Si es válido, deja el payload decodificado en req.usuario:
  *   { userId, empresaId, rol, recursoAgendableId, nombre }
+ *
+ * Para JWT de vendedor (rol: 'VENDEDOR') se agrega una consulta a
+ * Vendedor.activo en cada request — el JWT por sí solo es stateless y no se
+ * entera si el admin bloqueó al vendedor después de emitido, así que sin
+ * este chequeo un vendedor bloqueado seguiría con acceso completo hasta que
+ * el token expire (12h, ver TOKEN_EXPIRA_EN en authVendedor.js). Es una
+ * consulta por primary key dentro de un request que de todas formas ya va a
+ * tocar la base — costo marginal, no una conexión nueva. No aplica a los
+ * JWT de Usuario (panel de negocio), que no pasan por esta rama.
  */
-function requireAuth(req, res, next) {
+async function requireAuth(req, res, next) {
   const header = req.headers.authorization || '';
   const [tipo, token] = header.split(' ');
 
@@ -21,6 +31,17 @@ function requireAuth(req, res, next) {
 
   try {
     const payload = jwt.verify(token, JWT_SECRET);
+
+    if (payload.rol === 'VENDEDOR') {
+      const vendedor = await prisma.vendedor.findUnique({
+        where: { id: payload.vendedorId },
+        select: { activo: true },
+      });
+      if (!vendedor || !vendedor.activo) {
+        return res.status(401).json({ error: 'Token inválido o expirado' });
+      }
+    }
+
     req.usuario = payload;
     next();
   } catch (error) {
