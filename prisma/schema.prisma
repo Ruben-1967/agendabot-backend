@@ -805,6 +805,14 @@ model DemoAsignada {
   empresaConvertida         Empresa?            @relation("DemoConvertida")
   primerContactoVendedorEn  DateTime?           // fecha del primer EventoGestionVenta registrado
   ultimoContactoEfectivoEn  DateTime?           // fecha del último evento con reseteaTimer = true
+  // Recalculado a partir de TODOS los EventoGestionVenta del demo (nunca
+  // seteado a mano): fecha del evento 'cerrado_perdido' más reciente, o null
+  // si no hay ninguno vigente. Saca al lead del radar de aging/SLA de forma
+  // permanente y consciente (arbol-gestion-ventas-DISENO.md sección 5.1) sin
+  // afectar el ranking ni liberar el teléfono (eso sigue siendo solo
+  // eliminadoEn). Si se edita/borra el evento que la causó, se recalcula y
+  // el caso puede volver a aparecer en Mis casos.
+  cerradaEn                 DateTime?
   eventosGestion            EventoGestionVenta[]
 }
 
@@ -888,9 +896,10 @@ model EventoGestionVenta {
   vendedor       Vendedor     @relation(fields: [vendedorId], references: [id])
   vendedorId     String
 
-  canal        CanalGestion
-  resultado    String  // clave corta de la lista cerrada por canal (arbol-gestion-ventas-DISENO.md sección 3)
-  reseteaTimer Boolean @default(false)
+  canal          CanalGestion
+  resultado      String  // clave corta de la lista cerrada por canal (arbol-gestion-ventas-DISENO.md sección 3), validada en el backend contra src/services/catalogoGestionVenta.js — nunca texto libre
+  reseteaTimer   Boolean @default(false)
+  motivoDescarte String? // clave corta de lista cerrada (sección 5.2), solo se completa cuando resultado = 'cerrado_perdido' — nunca texto libre
 
   creadoEn      DateTime @default(now())
   actualizadoEn DateTime @updatedAt

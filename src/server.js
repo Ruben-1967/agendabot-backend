@@ -147,6 +147,7 @@ app.use('/suscripcion', suscripcionRouter);
 app.use('/website-leads', websiteLeadsRouter);
 app.use('/admin-vendedores', require('./routes/adminVendedores'));
 app.use('/ranking', require('./routes/ranking'));
+app.use('/gestion-venta', require('./routes/gestionVenta'));
 
 
 app.get('/', (req, res) => {

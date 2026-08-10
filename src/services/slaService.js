@@ -76,6 +76,7 @@ async function listarLeadsConSLA(vendedorId) {
         vendedorId: vendedorId ? vendedorId : { not: null },
         eliminadoEn: null,
         convertidaEn: null,
+        cerradaEn: null,
       },
       include: { empresaDemo: { include: { rubroTemplate: true } }, vendedor: { select: { nombre: true } } },
     }),
@@ -123,7 +124,7 @@ async function listarLeadsConSLA(vendedorId) {
 async function resumenLeadsPorVendedor() {
   const [demos, configPorTipo, vendedores] = await Promise.all([
     prisma.demoAsignada.findMany({
-      where: { vendedorId: { not: null }, eliminadoEn: null, convertidaEn: null },
+      where: { vendedorId: { not: null }, eliminadoEn: null, convertidaEn: null, cerradaEn: null },
       select: { vendedorId: true, origenDemo: true, creadoEn: true, primerContactoVendedorEn: true, ultimoContactoEfectivoEn: true },
     }),
     obtenerConfigSLA(),
