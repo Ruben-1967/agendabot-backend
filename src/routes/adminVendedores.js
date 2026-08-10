@@ -8,8 +8,34 @@
 const express = require('express');
 const prisma = require('../lib/prisma');
 const { requireAuth, requireRolVendedorAdmin } = require('../middleware/auth');
+const { resumenLeadsPorVendedor } = require('../services/slaService');
+const { conversionesDelMesPorVendedor } = require('../services/rankingService');
 
 const router = express.Router();
+
+// ------------------------------------------------------------
+// GET /admin-vendedores/vendedores-kpi
+// Resumen por vendedor: casos activos por semáforo SLA + conversiones del
+// mes en curso. Alimenta el selector de vendedor en "Mis casos" (admin).
+// ------------------------------------------------------------
+router.get('/vendedores-kpi', requireAuth, requireRolVendedorAdmin, async (req, res) => {
+  try {
+    const [resumenLeads, conversionesPorVendedor] = await Promise.all([
+      resumenLeadsPorVendedor(),
+      conversionesDelMesPorVendedor(),
+    ]);
+
+    const vendedores = resumenLeads.map((r) => ({
+      ...r,
+      conversionesMes: conversionesPorVendedor[r.vendedorId] || 0,
+    }));
+
+    res.json({ vendedores });
+  } catch (error) {
+    console.error('Error obteniendo KPIs por vendedor:', error);
+    res.status(500).json({ error: 'Error al obtener los KPIs por vendedor' });
+  }
+});
 
 // ------------------------------------------------------------
 // POST /admin-vendedores/suscripciones/:empresaId/marcar-activa

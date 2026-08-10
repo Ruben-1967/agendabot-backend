@@ -199,10 +199,21 @@ router.post('/prospectos', requireAuth, requireRole('VENDEDOR'), async (req, res
 // contadorVencidos para el badge de alerta, visible sin aplicar filtros.
 // Filtros (?estadoSLA=ROJO|AMARILLO|OK, ?tipoLead=CALIENTE|FRIO) son una
 // herramienta de exploración aparte, no la única forma de ver lo urgente.
+//
+// ?vendedorId=<id>|todos — solo tiene efecto si el que pide es rolVendedor
+// ADMIN (un vendedor normal siempre ve lo suyo, aunque mande el parámetro).
+// 'todos' u omitido = todos los vendedores; un id puntual filtra a ese.
 // ------------------------------------------------------------
 router.get('/prospectos', requireAuth, requireRole('VENDEDOR'), async (req, res) => {
   try {
-    const { leads, contadorVencidos } = await listarLeadsConSLA(req.usuario.vendedorId);
+    const esAdmin = req.usuario.rolVendedor === 'ADMIN';
+    const vendedorIdParam = req.query.vendedorId;
+
+    const vendedorIdFiltro = esAdmin
+      ? (vendedorIdParam && vendedorIdParam !== 'todos' ? vendedorIdParam : null)
+      : req.usuario.vendedorId;
+
+    const { leads, contadorVencidos } = await listarLeadsConSLA(vendedorIdFiltro);
 
     const { estadoSLA, tipoLead } = req.query;
     const filtrados = leads.filter((l) => {

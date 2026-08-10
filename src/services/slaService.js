@@ -67,12 +67,17 @@ async function obtenerConfigSLA() {
 
 // Leads activos (no convertidos, no eliminados) del vendedor, ordenados por
 // urgencia (ROJO -> AMARILLO -> OK, y dentro de cada uno el más antiguo
-// primero) en vez de por elección del vendedor.
+// primero) en vez de por elección del vendedor. vendedorId=null trae los de
+// TODOS los vendedores (uso admin, ver GET /demos/prospectos?vendedorId=todos).
 async function listarLeadsConSLA(vendedorId) {
   const [demos, configPorTipo] = await Promise.all([
     prisma.demoAsignada.findMany({
-      where: { vendedorId, eliminadoEn: null, convertidaEn: null },
-      include: { empresaDemo: { include: { rubroTemplate: true } } },
+      where: {
+        vendedorId: vendedorId ? vendedorId : { not: null },
+        eliminadoEn: null,
+        convertidaEn: null,
+      },
+      include: { empresaDemo: { include: { rubroTemplate: true } }, vendedor: { select: { nombre: true } } },
     }),
     obtenerConfigSLA(),
   ]);
@@ -96,6 +101,8 @@ async function listarLeadsConSLA(vendedorId) {
       yaProbo: historial.length > 0,
       primerContactoVendedorEn: d.primerContactoVendedorEn,
       ultimoContactoEfectivoEn: d.ultimoContactoEfectivoEn,
+      vendedorId: d.vendedorId,
+      vendedorNombre: d.vendedor?.nombre || null,
     };
   });
 
@@ -110,4 +117,35 @@ async function listarLeadsConSLA(vendedorId) {
   return { leads, contadorVencidos };
 }
 
-module.exports = { derivarTipoLead, calcularEstadoSLA, obtenerConfigSLA, listarLeadsConSLA };
+// Resumen para admin: por cada vendedor, cuántos casos activos tiene y cómo
+// se reparten por semáforo SLA. Usado por GET /admin-vendedores/vendedores-kpi
+// junto con las conversiones del mes (ver rankingService.conversionesDelMesPorVendedor).
+async function resumenLeadsPorVendedor() {
+  const [demos, configPorTipo, vendedores] = await Promise.all([
+    prisma.demoAsignada.findMany({
+      where: { vendedorId: { not: null }, eliminadoEn: null, convertidaEn: null },
+      select: { vendedorId: true, origenDemo: true, creadoEn: true, primerContactoVendedorEn: true, ultimoContactoEfectivoEn: true },
+    }),
+    obtenerConfigSLA(),
+    prisma.vendedor.findMany({ select: { id: true, nombre: true }, orderBy: { nombre: 'asc' } }),
+  ]);
+
+  const ahora = new Date();
+  const resumenPorVendedor = new Map(
+    vendedores.map((v) => [v.id, { vendedorId: v.id, nombre: v.nombre, total: 0, rojo: 0, amarillo: 0, ok: 0 }])
+  );
+
+  for (const d of demos) {
+    const fila = resumenPorVendedor.get(d.vendedorId);
+    if (!fila) continue;
+    const { estadoSLA } = calcularEstadoSLA(d, configPorTipo, ahora);
+    fila.total += 1;
+    if (estadoSLA === 'ROJO') fila.rojo += 1;
+    else if (estadoSLA === 'AMARILLO') fila.amarillo += 1;
+    else fila.ok += 1;
+  }
+
+  return [...resumenPorVendedor.values()];
+}
+
+module.exports = { derivarTipoLead, calcularEstadoSLA, obtenerConfigSLA, listarLeadsConSLA, resumenLeadsPorVendedor };

@@ -148,4 +148,22 @@ async function cerrarRankingDelMes(fecha) {
   return { mes, anio, posiciones, metaGrupalAlcanzada };
 }
 
-module.exports = { limitesDelMes, calcularRankingDelMes, recalcularCacheRanking, cerrarRankingDelMes };
+// Conversiones del mes por vendedor, SIN limitar al top 5 (a diferencia de
+// calcularRankingDelMes) — usado por GET /admin-vendedores/vendedores-kpi
+// para mostrar el número real de cada vendedor, no solo el podio.
+async function conversionesDelMesPorVendedor(fecha = new Date()) {
+  const { inicio, fin } = limitesDelMes(fecha);
+
+  const conversiones = await prisma.empresa.groupBy({
+    by: ['vendedorId'],
+    where: {
+      vendedorId: { not: null },
+      suscripcion: { estado: 'ACTIVA', fechaActivacion: { gte: inicio, lt: fin } },
+    },
+    _count: { _all: true },
+  });
+
+  return Object.fromEntries(conversiones.map((c) => [c.vendedorId, c._count._all]));
+}
+
+module.exports = { limitesDelMes, calcularRankingDelMes, recalcularCacheRanking, cerrarRankingDelMes, conversionesDelMesPorVendedor };

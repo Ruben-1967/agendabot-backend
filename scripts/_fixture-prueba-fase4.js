@@ -13,7 +13,13 @@ async function main() {
   const passwordPlano = 'PruebaFase4-2026!';
   const passwordHash = await bcrypt.hash(passwordPlano, 10);
 
-  const rubro = await prisma.rubroTemplate.findFirst({ where: { clave: 'optica' } });
+  // 'optica' es del seed legacy de Ahorróptica y no existe en todas las bases
+  // (ej. agendabot_db_staging usa el set de rubros nuevo) — cae a 'otro' o al
+  // primero que haya, para que el fixture sea portable entre bases.
+  const rubro =
+    (await prisma.rubroTemplate.findFirst({ where: { clave: 'optica' } })) ||
+    (await prisma.rubroTemplate.findFirst({ where: { clave: 'otro' } })) ||
+    (await prisma.rubroTemplate.findFirst());
 
   const vendedorTest = await prisma.vendedor.upsert({
     where: { email: 'prueba-fase4-vendedor@multidigital.cl' },
