@@ -43,31 +43,37 @@ async function main() {
     },
   });
 
-  const empresaDemo = await prisma.empresa.create({
-    data: {
-      nombre: '[PRUEBA] Óptica Fase4',
-      rubroTemplateId: rubro.id,
-      esDemo: true,
-    },
-  });
+  // Números fijos, dados explícitamente por Ruben para poder recibir el
+  // WhatsApp real de "Convertir a cliente real" en su propio celular — nunca
+  // generados acá (ver memoria feedback_telefonos_prueba_fijos.md: convertir
+  // a cliente real envía un WhatsApp REAL, sin mock en ningún ambiente).
+  const casos = [
+    { sufijo: 'Caso 1', telefono: '56984084321' },
+    { sufijo: 'Caso 2', telefono: '56966108858' },
+  ];
 
-  // Antes esto generaba un número al azar con forma válida de celular
-  // chileno ("569" + timestamp) — riesgo real de coincidir con el número de
-  // una persona de verdad, ya que convertir-a-cliente-real envía un WhatsApp
-  // REAL (Meta Graph API, sin mock en ningún ambiente) a este número. Se usa
-  // en cambio el número de la demo siempre-funcional (el mismo que
-  // NuevaDemo.jsx le muestra al vendedor para probar el bot), que es propio
-  // del sistema y seguro para recibir mensajes de prueba.
-  const telefonoPrueba = '56927679838';
-  const demo = await prisma.demoAsignada.create({
-    data: {
-      telefono: telefonoPrueba,
-      empresaDemoId: empresaDemo.id,
-      nombreProspecto: '[PRUEBA] Prospecto Fase4',
-      vendedorId: vendedorTest.id,
-      origenDemo: 'vendedor',
-    },
-  });
+  const resultados = [];
+  for (const caso of casos) {
+    const empresaDemo = await prisma.empresa.create({
+      data: {
+        nombre: `[PRUEBA] Óptica Fase4 - ${caso.sufijo}`,
+        rubroTemplateId: rubro.id,
+        esDemo: true,
+      },
+    });
+
+    const demo = await prisma.demoAsignada.create({
+      data: {
+        telefono: caso.telefono,
+        empresaDemoId: empresaDemo.id,
+        nombreProspecto: `[PRUEBA] Prospecto Fase4 - ${caso.sufijo}`,
+        vendedorId: vendedorTest.id,
+        origenDemo: 'vendedor',
+      },
+    });
+
+    resultados.push({ sufijo: caso.sufijo, empresaDemoId: empresaDemo.id, demoId: demo.id, telefono: caso.telefono });
+  }
 
   console.log(JSON.stringify({
     passwordPlano,
@@ -75,9 +81,7 @@ async function main() {
     vendedorTestEmail: vendedorTest.email,
     adminTestId: adminTest.id,
     adminTestEmail: adminTest.email,
-    empresaDemoId: empresaDemo.id,
-    demoId: demo.id,
-    telefonoPrueba,
+    casos: resultados,
   }, null, 2));
 
   process.exit(0);

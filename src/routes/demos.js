@@ -442,6 +442,16 @@ router.post('/convertir-a-cliente-real', requireAuth, requireRole('VENDEDOR'), a
     });
 
     const linkActivacion = `${process.env.PANEL_FRONTEND_URL}/activar-cuenta?token=${tokenActivacion}`;
+
+    // El envío es texto libre, que WhatsApp Business API solo permite dentro
+    // de la ventana de 24h desde el último mensaje del prospecto al bot —
+    // fuera de esa ventana, Meta lo rechaza (típicamente error 131047,
+    // "re-engagement message") y haría falta una plantilla aprobada en su
+    // lugar. Mientras tanto: si el envío automático falla por lo que sea, no
+    // se traga el error — se avisa al vendedor y se le entrega el link para
+    // que lo comparta a mano por su propio WhatsApp.
+    let whatsappEnviado = false;
+    let motivoFalloWhatsapp = null;
     try {
       const phoneNumberId = process.env.DEMO_PHONE_NUMBER_ID;
       const accessToken = process.env.DEMO_WHATSAPP_ACCESS_TOKEN;
@@ -452,19 +462,27 @@ router.post('/convertir-a-cliente-real', requireAuth, requireRole('VENDEDOR'), a
           text: `¡Gracias por confiar en nosotros! Para activar tu cuenta y elegir tu plan, define tu contraseña acá: ${linkActivacion}`,
           accessToken,
         });
+        whatsappEnviado = true;
       } else {
+        motivoFalloWhatsapp = 'Faltan las credenciales de WhatsApp de demos configuradas en el servidor.';
         console.warn('[convertir-a-cliente-real] Faltan DEMO_PHONE_NUMBER_ID/DEMO_WHATSAPP_ACCESS_TOKEN; no se envió el link. Link:', linkActivacion);
       }
     } catch (errWhatsapp) {
       // La Empresa/Usuario ya quedaron creados — no revertimos la conversión por
-      // un fallo de envío; el vendedor puede reintentar el aviso manualmente.
+      // un fallo de envío.
+      motivoFalloWhatsapp = errWhatsapp.message;
       console.error('[convertir-a-cliente-real] Error enviando WhatsApp de activación:', errWhatsapp.message);
     }
 
     res.json({
       ok: true,
       empresaId: empresaReal.id,
-      mensaje: 'Cliente real creado. Se envió el link de activación por WhatsApp.',
+      whatsappEnviado,
+      linkActivacion: whatsappEnviado ? null : linkActivacion,
+      motivoFalloWhatsapp,
+      mensaje: whatsappEnviado
+        ? 'Cliente real creado. Se envió el link de activación por WhatsApp.'
+        : 'Cliente real creado, pero el WhatsApp automático no se pudo enviar — compartile este link a mano.',
     });
   } catch (error) {
     console.error('Error convirtiendo demo a cliente real:', error);
