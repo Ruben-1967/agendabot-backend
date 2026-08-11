@@ -66,4 +66,10 @@ function estaEnHorarioHabilChile(fecha = new Date()) {
   return esDiaHabil && hora >= 8 && hora < 20;
 }
 
-module.exports = { horaChileAFechaUTC, estaEnHorarioHabilChile };
+// Fecha de "hoy" en Chile como YYYY-MM-DD, para defaults de filtros de rango
+// de fecha (ej. GET /demos/kpis-diarios) — no la fecha del servidor.
+function hoyISOEnChile() {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Santiago' }).format(new Date());
+}
+
+module.exports = { horaChileAFechaUTC, estaEnHorarioHabilChile, hoyISOEnChile };

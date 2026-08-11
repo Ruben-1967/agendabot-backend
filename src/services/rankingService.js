@@ -166,4 +166,27 @@ async function conversionesDelMesPorVendedor(fecha = new Date()) {
   return Object.fromEntries(conversiones.map((c) => [c.vendedorId, c._count._all]));
 }
 
-module.exports = { limitesDelMes, calcularRankingDelMes, recalcularCacheRanking, cerrarRankingDelMes, conversionesDelMesPorVendedor };
+// Igual que conversionesDelMesPorVendedor, pero con un rango de fecha libre
+// en vez de asumir el mes en curso — usado por GET /demos/kpis-diarios
+// (bloque de KPIs de gestión diaria del panel de vendedores).
+async function conversionesEnRangoPorVendedor(inicio, fin) {
+  const conversiones = await prisma.empresa.groupBy({
+    by: ['vendedorId'],
+    where: {
+      vendedorId: { not: null },
+      suscripcion: { estado: 'ACTIVA', fechaActivacion: { gte: inicio, lt: fin } },
+    },
+    _count: { _all: true },
+  });
+
+  return Object.fromEntries(conversiones.map((c) => [c.vendedorId, c._count._all]));
+}
+
+module.exports = {
+  limitesDelMes,
+  calcularRankingDelMes,
+  recalcularCacheRanking,
+  cerrarRankingDelMes,
+  conversionesDelMesPorVendedor,
+  conversionesEnRangoPorVendedor,
+};

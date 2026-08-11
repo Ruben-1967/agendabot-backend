@@ -285,6 +285,10 @@ app.post('/webhook/whatsapp', verificarFirmaWebhookWhatsApp, async (req, res) =>
                 empresaDemoId: empresaCreada.id,
                 nombreProspecto: nombreContacto,
                 origenDemo: 'organico',
+                // La fila se crea reactivamente cuando el prospecto elige un
+                // rubro — ese acto ya ES su primera interacción real, no hace
+                // falta esperar un segundo mensaje para marcarla.
+                primerMensajeProspectoEn: new Date(),
               },
             });
 

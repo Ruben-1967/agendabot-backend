@@ -829,6 +829,12 @@ model DemoAsignada {
   origenDemo                String    @default("legacy") // 'organico' | 'carga_masiva' | 'vendedor' | 'legacy'
   intencionPrecioDetectada  Boolean   @default(false)
   intencionPrecioEn         DateTime?
+  // Momento del primer mensaje real del prospecto (no del bot). Se escribe
+  // UNA sola vez, mismo patrón que intencionPrecioEn — ver demoEngine.js.
+  // Para demos origenDemo='organico' se setea al crear la fila (la creación
+  // ya es reactiva al primer mensaje); para 'vendedor' queda null hasta que
+  // el prospecto realmente responda.
+  primerMensajeProspectoEn  DateTime?
   ultimaInteraccionEn       DateTime?
   seguimientosEnviados      Int       @default(0)
   seguimientoTipo           String?   // 'precio' | 'inactividad' | null
