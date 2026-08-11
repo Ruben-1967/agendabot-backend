@@ -877,11 +877,33 @@ model Vendedor {
   rol          RolVendedor  @default(VENDEDOR)
   creadoEn     DateTime     @default(now())
 
+  telefono     String?
+  direccion    String?
+  fechaIngreso DateTime?    @db.Date
+
   demosCreadas    DemoAsignada[]
   empresasConvertidas Empresa[]
   eventosGestion  EventoGestionVenta[]
   rankingMensual  RankingMensual[]
   leads           Lead[]
+  horariosModalidad HorarioModalidadVendedor[]
+}
+
+// Horario semanal de modalidad de trabajo (presencial/teletrabajo) por
+// vendedor, versionado por vigencia para no perder el historial al
+// cruzar una fecha pasada con el esquema que estaba vigente en ese momento.
+model HorarioModalidadVendedor {
+  id            String    @id @default(cuid())
+  vendedorId    String
+  vendedor      Vendedor  @relation(fields: [vendedorId], references: [id])
+  diaSemana     Int       // 0=domingo ... 6=sábado
+  modalidad     String    // 'presencial' | 'teletrabajo'
+  vigenteDesde  DateTime  @db.Date
+  vigenteHasta  DateTime? @db.Date  // null = sigue vigente indefinidamente
+
+  creadoEn      DateTime  @default(now())
+
+  @@index([vendedorId])
 }
 
 // ===== POOL UNIFICADO DE LEADS (capa sobre DemoAsignada y fuentes externas) =====
