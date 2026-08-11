@@ -18,6 +18,7 @@
 
 const Anthropic = require('@anthropic-ai/sdk');
 const prisma = require('../lib/prisma');
+const { sincronizarLeadDesdeDemo } = require('./leadSync');
 const { procesarMensajeCatalogoDemo } = require('./catalogoDemoEngine');
 const {
   decodificarFilaHorario,
@@ -631,9 +632,43 @@ async function procesarMensajeDemo({ demoAsignada, telefonoCliente, mensaje, nom
     datosActualizacion.intencionPrecioEn = new Date();
   }
 
+  // Si esta demo ya fue derivada a vendedor (ya tiene un Lead en el pool,
+  // tomado o no), el prospecto puede seguir escribiendo por WhatsApp — el
+  // resumen/última interacción del Lead no es un snapshot de una sola vez,
+  // tiene que reflejar la conversación más reciente (ver leadSync.js). No se
+  // pasa motivoDerivacion acá: eso no cambia por seguir conversando.
+  //
+  // Se intenta ANTES del update principal de DemoAsignada (no después) para
+  // poder fusionar el resultado — éxito o error — en esa misma escritura,
+  // sin una consulta/escritura extra. errorSincronizacionLead es un rastro
+  // consultable después (a diferencia de un simple console.error): solo
+  // tiene contenido cuando refleja un problema vigente, se limpia apenas una
+  // sincronización posterior tiene éxito.
+  const camposErrorLead = {};
+  if (demoAsignada.derivadoAVendedor) {
+    try {
+      await sincronizarLeadDesdeDemo({
+        id: demoAsignada.id,
+        telefono: demoAsignada.telefono,
+        nombreProspecto: demoAsignada.nombreProspecto,
+        intencionPrecioDetectada: datosActualizacion.intencionPrecioDetectada ?? demoAsignada.intencionPrecioDetectada,
+        historialSimulacion: datosActualizacion.historialSimulacion,
+        ultimaInteraccionEn: datosActualizacion.ultimaInteraccionEn,
+      });
+      if (demoAsignada.errorSincronizacionLead) {
+        camposErrorLead.errorSincronizacionLead = null;
+        camposErrorLead.errorSincronizacionLeadEn = null;
+      }
+    } catch (error) {
+      console.error(`[DEMO] Error sincronizando Lead tras nueva interacción (demo ${demoAsignada.id}):`, error.message);
+      camposErrorLead.errorSincronizacionLead = error.message;
+      camposErrorLead.errorSincronizacionLeadEn = new Date();
+    }
+  }
+
   await prisma.demoAsignada.update({
     where: { id: demoAsignada.id },
-    data: datosActualizacion,
+    data: { ...datosActualizacion, ...camposErrorLead },
   });
 
   return { respuestaTexto, interactivo };

@@ -24,6 +24,7 @@ require('dotenv').config();
 const prisma = require('../lib/prisma');
 const { sendWhatsAppTextMessage } = require('../services/whatsapp');
 const { estaEnHorarioHabilChile } = require('../lib/horaChile');
+const { sincronizarLeadDesdeDemo } = require('../services/leadSync');
 
 // ------------------------------------------------------------
 // Umbrales — PENDIENTE DE DEFINIR con Ruben antes de deploy a producción.
@@ -109,6 +110,7 @@ async function procesarSeguimientoDemos() {
             motivoDerivacion: 'fuera_ventana_sin_conversion',
           },
         });
+        await sincronizarLeadDesdeDemo(demo, 'fuera_ventana_sin_conversion');
         derivados++;
         continue;
       }

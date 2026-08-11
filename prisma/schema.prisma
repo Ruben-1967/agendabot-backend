@@ -837,6 +837,15 @@ model DemoAsignada {
   derivadoEn                DateTime?
   motivoDerivacion          String?   // 'fuera_ventana_sin_conversion'
 
+  // Rastro consultable de si la sincronización continua del Lead (ver
+  // src/services/leadSync.js, llamada desde demoEngine.js cuando el
+  // prospecto sigue escribiendo tras ser derivado) falló la última vez que
+  // se intentó. Se limpia (null) apenas una sincronización posterior tiene
+  // éxito — solo tiene contenido cuando refleja un problema real y vigente,
+  // nunca un error viejo ya resuelto.
+  errorSincronizacionLead   String?   @db.Text
+  errorSincronizacionLeadEn DateTime?
+
   // ====== CONVERSIÓN A CLIENTE REAL Y CONTROL DE CASOS (Panel de Vendedores Fase 4) ======
   convertidaEn              DateTime?           // si no es null, ya se convirtió a cliente real (idempotencia)
   empresaConvertida         Empresa?            @relation("DemoConvertida")
@@ -872,6 +881,43 @@ model Vendedor {
   empresasConvertidas Empresa[]
   eventosGestion  EventoGestionVenta[]
   rankingMensual  RankingMensual[]
+  leads           Lead[]
+}
+
+// ===== POOL UNIFICADO DE LEADS (capa sobre DemoAsignada y fuentes externas) =====
+// No se modifica DemoAsignada para volverla "genérica" — Lead es una tabla
+// liviana que actúa de capa unificadora sobre distintos orígenes (hoy:
+// seguimiento automático post-demo vía WhatsApp; próximamente: app de
+// captura de emails, fuera de esta base de datos). Ver src/routes/leads.js
+// y src/jobs/seguimientoDemo.js.
+model Lead {
+  id                   String    @id @default(cuid())
+
+  origen               String    // 'whatsapp_demo' | 'email_campana'
+  origenId             String    // id de DemoAsignada, o id de NegocioProspecto (app de captura, fuera de esta base de datos)
+
+  telefono             String?
+  email                String?
+  nombreProspecto      String?
+  rubro                String?
+
+  intencionDetectada   Boolean   @default(false)
+
+  ultimoMensajeResumen String?   @db.Text
+  ultimaInteraccionEn  DateTime?
+
+  estado               String    @default("sin_asignar") // 'sin_asignar' | 'asignado' | 'contactado' | 'convertido' | 'perdido'
+  vendedorId           String?
+  vendedor             Vendedor? @relation(fields: [vendedorId], references: [id])
+
+  motivoDerivacion     String?   // 'fuera_ventana_sin_conversion' | 'respuesta_email' | etc.
+
+  creadoEn             DateTime  @default(now())
+  actualizadoEn        DateTime  @updatedAt
+
+  @@unique([origen, origenId])
+  @@index([estado])
+  @@index([vendedorId])
 }
 
 // ===== HISTORIAL DE SUSCRIPCIONES =====
