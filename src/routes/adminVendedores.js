@@ -22,7 +22,10 @@ const router = express.Router();
 router.get('/vendedores', requireAuth, requireRolVendedorAdmin, async (req, res) => {
   try {
     const vendedores = await prisma.vendedor.findMany({
-      select: { id: true, nombre: true, email: true, activo: true, rol: true, creadoEn: true },
+      select: {
+        id: true, nombre: true, email: true, activo: true, rol: true, creadoEn: true,
+        telefono: true, direccion: true, fechaIngreso: true,
+      },
       orderBy: { nombre: 'asc' },
     });
     res.json({ vendedores });
@@ -34,12 +37,12 @@ router.get('/vendedores', requireAuth, requireRolVendedorAdmin, async (req, res)
 
 // ------------------------------------------------------------
 // POST /admin-vendedores/vendedores
-// body: { nombre, email, password, rol? } — mismo hash bcrypt que
-// scripts/crear-vendedor.js (10 rounds).
+// body: { nombre, email, password, rol?, telefono?, direccion?, fechaIngreso? }
+// mismo hash bcrypt que scripts/crear-vendedor.js (10 rounds).
 // ------------------------------------------------------------
 router.post('/vendedores', requireAuth, requireRolVendedorAdmin, async (req, res) => {
   try {
-    const { nombre, email, password, rol } = req.body;
+    const { nombre, email, password, rol, telefono, direccion, fechaIngreso } = req.body;
     if (!nombre?.trim() || !email?.trim() || !password) {
       return res.status(400).json({ error: 'Faltan nombre, email o contraseña' });
     }
@@ -50,17 +53,32 @@ router.post('/vendedores', requireAuth, requireRolVendedorAdmin, async (req, res
     const emailNormalizado = email.toLowerCase().trim();
     const existente = await prisma.vendedor.findUnique({ where: { email: emailNormalizado } });
     if (existente) {
-      return res.status(400).json({ error: 'Ya existe un vendedor con ese email' });
+      return res.status(409).json({ error: 'Ya existe un vendedor con ese email' });
     }
 
     const passwordHash = await bcrypt.hash(password, 10);
     const vendedor = await prisma.vendedor.create({
-      data: { nombre: nombre.trim(), email: emailNormalizado, passwordHash, rol: rol || 'VENDEDOR', activo: true },
-      select: { id: true, nombre: true, email: true, activo: true, rol: true, creadoEn: true },
+      data: {
+        nombre: nombre.trim(),
+        email: emailNormalizado,
+        passwordHash,
+        rol: rol || 'VENDEDOR',
+        activo: true,
+        telefono: telefono?.trim() || null,
+        direccion: direccion?.trim() || null,
+        fechaIngreso: fechaIngreso ? new Date(fechaIngreso) : null,
+      },
+      select: {
+        id: true, nombre: true, email: true, activo: true, rol: true, creadoEn: true,
+        telefono: true, direccion: true, fechaIngreso: true,
+      },
     });
 
     res.status(201).json({ vendedor });
   } catch (error) {
+    if (error.code === 'P2002') {
+      return res.status(409).json({ error: 'Ya existe un vendedor con ese email' });
+    }
     console.error('Error creando vendedor:', error);
     res.status(500).json({ error: 'Error al crear el vendedor' });
   }
@@ -121,6 +139,67 @@ router.patch('/vendedores/:id/resetear-password', requireAuth, requireRolVendedo
     }
     console.error('Error reseteando contraseña del vendedor:', error);
     res.status(500).json({ error: 'Error al resetear la contraseña' });
+  }
+});
+
+// ------------------------------------------------------------
+// PUT /admin-vendedores/vendedores/:id/horario-modalidad
+// body: { horario: [{ diaSemana, modalidad }] } — reemplaza el horario
+// vigente del vendedor para los días recibidos (hasta 7, uno por día de
+// semana; días no incluidos quedan sin modalidad definida). Cierra
+// (vigenteHasta: hoy) cualquier registro vigente anterior para esos días y
+// crea las nuevas filas con vigenteDesde: hoy. No borra historial —
+// mismo principio que AtencionClinica versionado.
+// ------------------------------------------------------------
+router.put('/vendedores/:id/horario-modalidad', requireAuth, requireRolVendedorAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { horario } = req.body;
+    if (!Array.isArray(horario) || horario.length === 0) {
+      return res.status(400).json({ error: 'Falta horario (array)' });
+    }
+    for (const h of horario) {
+      if (!Number.isInteger(h.diaSemana) || h.diaSemana < 0 || h.diaSemana > 6) {
+        return res.status(400).json({ error: 'diaSemana inválido (debe ser 0-6)' });
+      }
+      if (!['presencial', 'teletrabajo'].includes(h.modalidad)) {
+        return res.status(400).json({ error: 'modalidad inválida (debe ser presencial o teletrabajo)' });
+      }
+    }
+
+    const vendedor = await prisma.vendedor.findUnique({ where: { id } });
+    if (!vendedor) {
+      return res.status(404).json({ error: 'Vendedor no encontrado' });
+    }
+
+    const hoy = new Date();
+    hoy.setHours(0, 0, 0, 0);
+    const diasRecibidos = horario.map((h) => h.diaSemana);
+
+    await prisma.$transaction([
+      prisma.horarioModalidadVendedor.updateMany({
+        where: { vendedorId: id, diaSemana: { in: diasRecibidos }, vigenteHasta: null },
+        data: { vigenteHasta: hoy },
+      }),
+      prisma.horarioModalidadVendedor.createMany({
+        data: horario.map((h) => ({
+          vendedorId: id,
+          diaSemana: h.diaSemana,
+          modalidad: h.modalidad,
+          vigenteDesde: hoy,
+        })),
+      }),
+    ]);
+
+    const horarioActual = await prisma.horarioModalidadVendedor.findMany({
+      where: { vendedorId: id, vigenteHasta: null },
+      orderBy: { diaSemana: 'asc' },
+    });
+
+    res.json({ horario: horarioActual });
+  } catch (error) {
+    console.error('Error actualizando horario de modalidad:', error);
+    res.status(500).json({ error: 'Error al actualizar el horario de modalidad' });
   }
 });
 

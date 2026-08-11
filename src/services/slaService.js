@@ -128,7 +128,20 @@ async function resumenLeadsPorVendedor() {
       select: { vendedorId: true, origenDemo: true, creadoEn: true, primerContactoVendedorEn: true, ultimoContactoEfectivoEn: true },
     }),
     obtenerConfigSLA(),
-    prisma.vendedor.findMany({ select: { id: true, nombre: true, activo: true }, orderBy: { nombre: 'asc' } }),
+    // Un vendedor bloqueado (activo: false) solo desaparece del selector cuando
+    // ya no tiene ningún caso activo sin reasignar — mientras le queden, debe
+    // seguir apareciendo para que el admin pueda gestionarlos/reasignarlos.
+    // Misma condición de "caso activo" que la consulta de demos de arriba.
+    prisma.vendedor.findMany({
+      where: {
+        OR: [
+          { activo: true },
+          { activo: false, demosCreadas: { some: { eliminadoEn: null, convertidaEn: null, cerradaEn: null } } },
+        ],
+      },
+      select: { id: true, nombre: true, activo: true },
+      orderBy: { nombre: 'asc' },
+    }),
   ]);
 
   const ahora = new Date();
