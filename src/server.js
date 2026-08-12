@@ -220,43 +220,10 @@ app.post('/webhook/whatsapp', verificarFirmaWebhookWhatsApp, async (req, res) =>
 
       const accessTokenDemo = process.env.DEMO_WHATSAPP_ACCESS_TOKEN;
 
-      if (!demoAsignada) {
-        // Paso 1 del menú genérico: eligió una categoría (Agendamiento vs
-        // Catálogo) en los botones — muestra la lista de rubros reales de
-        // esa categoría. Se hace en dos pasos porque WhatsApp no permite
-        // más de 10 filas en total en un solo mensaje de lista, y hoy hay
-        // más de 10 RubroTemplate reales entre ambas categorías.
-        const categoriaElegida = mensaje.type === 'interactive'
-          ? decodificarBotonCategoriaGenerica(mensaje.interactive?.button_reply?.id)
-          : null;
-
-        if (categoriaElegida) {
-          const rubrosDeCategoria = await prisma.rubroTemplate.findMany({
-            where: { modoOperacion: categoriaElegida },
-            select: { id: true, nombre: true },
-            orderBy: { nombre: 'asc' },
-          });
-
-          await sendWhatsAppInteractiveList({
-            phoneNumberId,
-            to: telefonoCliente,
-            accessToken: accessTokenDemo,
-            textoCuerpo: 'Elige el rubro que quieres ver funcionando por WhatsApp 👇',
-            textoBoton: 'Ver rubros',
-            textoHeader: 'Totemsystem — Demo',
-            secciones: [{
-              titulo: NOMBRES_CATEGORIA_GENERICA[categoriaElegida] || 'Rubros',
-              filas: rubrosDeCategoria.map((r) => ({
-                id: codificarFilaRubroGenerico(r.id), titulo: r.nombre,
-              })),
-            }],
-          });
-          return;
-        }
-
-        // Paso 2: eligió un rubro de la lista — el id de fila ES el id real
-        // del RubroTemplate (fuente de verdad única, misma tabla que usa
-        // GET /demos/rubros en el panel de vendedor).
+     if (!demoAsignada) {
+        // Único paso del menú genérico: se muestran directamente los
+        // rubros Reactivos (AGENDAMIENTO). Catálogo (Proactivo) queda
+        // oculto por ahora — decisión de negocio, ver memoria del proyecto.
         const rubroTemplateElegidoId = mensaje.type === 'interactive'
           ? decodificarFilaRubroGenerico(mensaje.interactive?.list_reply?.id)
           : null;
@@ -266,18 +233,27 @@ app.post('/webhook/whatsapp', verificarFirmaWebhookWhatsApp, async (req, res) =>
 
         if (!rubroTemplate) {
           // Nadie asignó este teléfono a ninguna demo todavía (o no
-          // reconocimos la respuesta) — muestra los botones de categoría
-          // para que se autogestione desde el principio.
-          await sendWhatsAppReplyButtons({
+          // reconocimos la respuesta) — muestra directamente la lista de
+          // rubros Reactivos disponibles, sin paso previo de categoría.
+          const rubrosReactivos = await prisma.rubroTemplate.findMany({
+            where: { modoOperacion: 'AGENDAMIENTO' },
+            select: { id: true, nombre: true },
+            orderBy: { nombre: 'asc' },
+          });
+
+          await sendWhatsAppInteractiveList({
             phoneNumberId,
             to: telefonoCliente,
             accessToken: accessTokenDemo,
-            textoCuerpo: '¡Hola! 👋 Soy el asistente de *Totemsystem*. ¿Qué tipo de negocio quieres ver funcionando por WhatsApp?',
+            textoCuerpo: '¡Hola! 👋 Soy el asistente de *Totemsystem*. Elige el rubro que quieres ver funcionando por WhatsApp 👇',
+            textoBoton: 'Ver rubros',
             textoHeader: 'Totemsystem — Demo',
-            botones: [
-              { id: codificarBotonCategoriaGenerica('AGENDAMIENTO'), titulo: 'Agendamiento de citas' },
-              { id: codificarBotonCategoriaGenerica('CATALOGO_ROTATIVO'), titulo: 'Catálogo por WhatsApp' },
-            ],
+            secciones: [{
+              titulo: NOMBRES_CATEGORIA_GENERICA.AGENDAMIENTO,
+              filas: rubrosReactivos.map((r) => ({
+                id: codificarFilaRubroGenerico(r.id), titulo: r.nombre,
+              })),
+            }],
           });
           return;
         }
