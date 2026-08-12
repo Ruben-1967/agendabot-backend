@@ -262,16 +262,23 @@ router.get('/kpis-diarios', requireAuth, requireRole('VENDEDOR'), async (req, re
 
     const filtroVendedor = vendedorIdFiltro ? { vendedorId: vendedorIdFiltro } : { vendedorId: { not: null } };
 
+    // Demos eliminadas (soft-delete) quedan fuera del KPI de actividad — mismo
+    // criterio que ya usa slaService.js para "Mis casos". El registro y su
+    // historial siguen existiendo en la base, solo se ajusta qué cuenta acá.
+    // conversionesEnRangoPorVendedor no se toca: cuenta Empresa+Suscripcion
+    // directamente, no DemoAsignada, y una conversión real no debe
+    // desaparecer porque la demo de origen se haya borrado después.
     const [demosCreadas, negociosQueProbaron, eventosDistintos, conversionesPorVendedor] = await Promise.all([
       prisma.demoAsignada.count({
-        where: { creadoEn: { gte: inicio, lt: finExclusivo }, ...filtroVendedor },
+        where: { creadoEn: { gte: inicio, lt: finExclusivo }, eliminadoEn: null, ...filtroVendedor },
       }),
       prisma.demoAsignada.count({
-        where: { primerMensajeProspectoEn: { gte: inicio, lt: finExclusivo }, ...filtroVendedor },
+        where: { primerMensajeProspectoEn: { gte: inicio, lt: finExclusivo }, eliminadoEn: null, ...filtroVendedor },
       }),
       prisma.eventoGestionVenta.findMany({
         where: {
           creadoEn: { gte: inicio, lt: finExclusivo },
+          demoAsignada: { eliminadoEn: null },
           ...(vendedorIdFiltro ? { vendedorId: vendedorIdFiltro } : {}),
         },
         select: { demoAsignadaId: true },
