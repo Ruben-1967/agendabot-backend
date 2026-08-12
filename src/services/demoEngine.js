@@ -300,6 +300,11 @@ async function procesarMensajeDemo({ demoAsignada, telefonoCliente, mensaje, nom
         derivadoAVendedor: false,
         derivadoEn: null,
         motivoDerivacion: null,
+        // A diferencia de los campos de arriba, primerMensajeProspectoEn NO
+        // es parte del "borrón y cuenta nueva" — es un marcador histórico
+        // permanente (el negocio sí probó la demo alguna vez), así que solo
+        // se escribe si todavía estaba en null, nunca se limpia.
+        ...(demoAsignada.primerMensajeProspectoEn ? {} : { primerMensajeProspectoEn: new Date() }),
       },
     });
 
@@ -307,6 +312,7 @@ async function procesarMensajeDemo({ demoAsignada, telefonoCliente, mensaje, nom
   }
 
   let nuevoHistorial = [...historial, { rol: 'prospecto', texto: textoEntrante }];
+  const esPrimerMensajeProspecto = !demoAsignada.primerMensajeProspectoEn;
 
   let respuestaTexto;
   let interactivo = null;
@@ -624,6 +630,13 @@ async function procesarMensajeDemo({ demoAsignada, telefonoCliente, mensaje, nom
     // automático post-demo (ver seguimientoDemo.js).
     ultimaInteraccionEn: new Date(),
   };
+
+  // primerMensajeProspectoEn solo se escribe la primera vez, mismo patrón
+  // que intencionPrecioEn más abajo — usado por el bloque de KPIs de
+  // gestión diaria del panel de vendedores (ver GET /demos/kpis-diarios).
+  if (esPrimerMensajeProspecto) {
+    datosActualizacion.primerMensajeProspectoEn = new Date();
+  }
 
   // intencionPrecioEn solo se escribe la primera vez — no reiniciamos el
   // timer del seguimiento si pregunta por precio varias veces.

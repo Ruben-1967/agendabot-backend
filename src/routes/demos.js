@@ -19,6 +19,8 @@ const { requireAuth, requireRole } = require('../middleware/auth');
 const { extraerInfoSitioWeb } = require('../services/extraccionSitioWeb');
 const { sendWhatsAppTextMessage } = require('../services/whatsapp');
 const { listarLeadsConSLA } = require('../services/slaService');
+const { conversionesEnRangoPorVendedor } = require('../services/rankingService');
+const { horaChileAFechaUTC, hoyISOEnChile } = require('../lib/horaChile');
 
 const router = express.Router();
 
@@ -225,6 +227,74 @@ router.get('/prospectos', requireAuth, requireRole('VENDEDOR'), async (req, res)
     res.json({ demos: filtrados, contadorVencidos });
   } catch (error) {
     console.error('Error listando prospectos de demo:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+function sumarUnDiaISO(fechaISO) {
+  const d = new Date(`${fechaISO}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + 1);
+  return d.toISOString().slice(0, 10);
+}
+
+// ------------------------------------------------------------
+// GET /demos/kpis-diarios?desde=YYYY-MM-DD&hasta=YYYY-MM-DD&vendedorId=<id>|todos
+// Bloque de "actividad" en un rango de fecha libre (por defecto hoy, hora de
+// Chile) — complementa la tarjeta de KPIs de estado actual (vendedores-kpi)
+// sin reemplazarla. Mismo mecanismo de scoping por rol que GET /prospectos:
+// un vendedor normal siempre ve lo suyo, aunque mande vendedorId.
+// ------------------------------------------------------------
+router.get('/kpis-diarios', requireAuth, requireRole('VENDEDOR'), async (req, res) => {
+  try {
+    const esAdmin = req.usuario.rolVendedor === 'ADMIN';
+    const vendedorIdParam = req.query.vendedorId;
+
+    const vendedorIdFiltro = esAdmin
+      ? (vendedorIdParam && vendedorIdParam !== 'todos' ? vendedorIdParam : null)
+      : req.usuario.vendedorId;
+
+    const hoy = hoyISOEnChile();
+    const desde = req.query.desde || hoy;
+    const hasta = req.query.hasta || hoy;
+
+    const inicio = horaChileAFechaUTC(desde, '00:00');
+    const finExclusivo = horaChileAFechaUTC(sumarUnDiaISO(hasta), '00:00');
+
+    const filtroVendedor = vendedorIdFiltro ? { vendedorId: vendedorIdFiltro } : { vendedorId: { not: null } };
+
+    const [demosCreadas, negociosQueProbaron, eventosDistintos, conversionesPorVendedor] = await Promise.all([
+      prisma.demoAsignada.count({
+        where: { creadoEn: { gte: inicio, lt: finExclusivo }, ...filtroVendedor },
+      }),
+      prisma.demoAsignada.count({
+        where: { primerMensajeProspectoEn: { gte: inicio, lt: finExclusivo }, ...filtroVendedor },
+      }),
+      prisma.eventoGestionVenta.findMany({
+        where: {
+          creadoEn: { gte: inicio, lt: finExclusivo },
+          ...(vendedorIdFiltro ? { vendedorId: vendedorIdFiltro } : {}),
+        },
+        select: { demoAsignadaId: true },
+        distinct: ['demoAsignadaId'],
+      }),
+      conversionesEnRangoPorVendedor(inicio, finExclusivo),
+    ]);
+
+    const conversiones = vendedorIdFiltro
+      ? (conversionesPorVendedor[vendedorIdFiltro] || 0)
+      : Object.values(conversionesPorVendedor).reduce((suma, n) => suma + n, 0);
+
+    res.json({
+      desde,
+      hasta,
+      vendedorId: vendedorIdFiltro || 'todos',
+      demosCreadas,
+      negociosQueProbaron,
+      negociosGestionados: eventosDistintos.length,
+      conversiones,
+    });
+  } catch (error) {
+    console.error('Error obteniendo KPIs de gestión diaria:', error);
     res.status(500).json({ error: error.message });
   }
 });
