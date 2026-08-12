@@ -362,7 +362,8 @@ router.delete('/prospectos/:id', requireAuth, requireRole('VENDEDOR'), async (re
   try {
     const demo = await prisma.demoAsignada.findUnique({ where: { id: req.params.id } });
 
-    if (!demo || demo.vendedorId !== req.usuario.vendedorId) {
+   const esAdmin = req.usuario.rolVendedor === 'ADMIN';
+    if (!demo || (!esAdmin && demo.vendedorId !== req.usuario.vendedorId)) {
       return res.status(404).json({ error: 'Demo no encontrada' });
     }
     if (demo.eliminadoEn) {
