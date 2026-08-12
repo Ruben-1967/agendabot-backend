@@ -124,18 +124,30 @@ async function sendWhatsAppInteractiveList({
 }) {
   const url = `https://graph.facebook.com/${GRAPH_API_VERSION}/${phoneNumberId}/messages`;
 
+  // Meta limita a 10 filas EN TOTAL sumando todas las secciones (no 10 por
+  // sección) — repartimos el cupo entre secciones en el orden recibido y
+  // cortamos ahí, en vez de mandar una lista que la API rechazaría.
+  const MAX_FILAS_TOTAL = 10;
+  let filasRestantes = MAX_FILAS_TOTAL;
   const seccionesFinales = secciones && secciones.length > 0
-    ? secciones.slice(0, 10).map((seccion) => ({
-        title: seccion.titulo.slice(0, 24),
-        rows: seccion.filas.slice(0, 10).map((fila) => ({
-          id: fila.id,
-          title: fila.titulo.slice(0, 24),
-          description: fila.descripcion ? fila.descripcion.slice(0, 72) : undefined,
-        })),
-      }))
+    ? secciones
+        .slice(0, 10)
+        .map((seccion) => {
+          const filasSeccion = seccion.filas.slice(0, filasRestantes);
+          filasRestantes -= filasSeccion.length;
+          return {
+            title: seccion.titulo.slice(0, 24),
+            rows: filasSeccion.map((fila) => ({
+              id: fila.id,
+              title: fila.titulo.slice(0, 24),
+              description: fila.descripcion ? fila.descripcion.slice(0, 72) : undefined,
+            })),
+          };
+        })
+        .filter((seccion) => seccion.rows.length > 0)
     : [{
         title: 'Disponible hoy',
-        rows: (filas || []).slice(0, 10).map((fila) => ({
+        rows: (filas || []).slice(0, MAX_FILAS_TOTAL).map((fila) => ({
           id: fila.id,
           title: fila.titulo.slice(0, 24),
           description: fila.descripcion ? fila.descripcion.slice(0, 72) : undefined,
@@ -386,6 +398,24 @@ function decodificarFilaRubroGenerico(id) {
   return partes[1];
 }
 
+/**
+ * Codifica la elección de categoría (Agendamiento / Catálogo) en el primer
+ * paso del menú genérico — un número desconocido ve estos botones antes de
+ * la lista de rubros, porque WhatsApp no permite más de 10 filas en total
+ * en un solo mensaje de lista y hoy hay más de 10 RubroTemplate reales.
+ * Formato: "categoriagenerica|<modoOperacion>"
+ */
+function codificarBotonCategoriaGenerica(modoOperacion) {
+  return `categoriagenerica|${modoOperacion}`;
+}
+
+function decodificarBotonCategoriaGenerica(id) {
+  if (typeof id !== 'string') return null;
+  const partes = id.split('|');
+  if (partes.length !== 2 || partes[0] !== 'categoriagenerica') return null;
+  return partes[1];
+}
+
 module.exports = {
   sendWhatsAppTextMessage,
   sendWhatsAppTemplateMessage,
@@ -401,6 +431,8 @@ module.exports = {
   decodificarFilaCantidadDemo,
   codificarFilaRubroGenerico,
   decodificarFilaRubroGenerico,
+  codificarBotonCategoriaGenerica,
+  decodificarBotonCategoriaGenerica,
   codificarFilaServicio,
   decodificarFilaServicio,
   ID_FILA_SERVICIO_OTRO,

@@ -6,6 +6,7 @@ const crypto = require('crypto');
 const {
   sendWhatsAppTextMessage,
   sendWhatsAppInteractiveList,
+  sendWhatsAppReplyButtons,
   decodificarFilaHorario,
   codificarFilaHorario,
   decodificarFilaDia,
@@ -14,6 +15,8 @@ const {
   codificarFilaCantidadDemo,
   codificarFilaRubroGenerico,
   decodificarFilaRubroGenerico,
+  codificarBotonCategoriaGenerica,
+  decodificarBotonCategoriaGenerica,
   codificarFilaServicio,
   decodificarFilaServicio,
   ID_FILA_SERVICIO_OTRO,
@@ -38,7 +41,6 @@ const { procesarMensajeDemo } = require('./services/demoEngine');
 const authVendedorRouter = require('./routes/authVendedor');
 const demosRouter = require('./routes/demos');
 const { generarHorasSimuladasParaDia } = require('./lib/agendaDemoSimulada');
-const { RUBROS_MENU_GENERICO } = require('./lib/rubrosMenuGenerico');
 const { renderPanelDemo } = require('./services/panelDemoHtml');
 const { renderSitioNegocio } = require('./services/sitioNegocioHtml');
 const listaEsperaRouter = require('./routes/listaEspera');
@@ -156,6 +158,13 @@ app.get('/', (req, res) => {
   res.json({ status: 'ok', app: 'AgendaBot backend' });
 });
 
+// Nombres legibles de las categorías del menú genérico (número desconocido
+// que escribe al número de demo) — claves = RubroTemplate.modoOperacion.
+const NOMBRES_CATEGORIA_GENERICA = {
+  AGENDAMIENTO: 'Agendamiento de citas',
+  CATALOGO_ROTATIVO: 'Catálogo por WhatsApp',
+};
+
 // ------------------------------------------------------------
 // WEBHOOK DE WHATSAPP (Meta) — verificación inicial
 // ------------------------------------------------------------
@@ -212,36 +221,62 @@ app.post('/webhook/whatsapp', verificarFirmaWebhookWhatsApp, async (req, res) =>
       const accessTokenDemo = process.env.DEMO_WHATSAPP_ACCESS_TOKEN;
 
       if (!demoAsignada) {
-        const rubroElegidoId = mensaje.type === 'interactive'
-          ? decodificarFilaRubroGenerico(mensaje.interactive?.list_reply?.id)
-          : null;
-        const rubroGenerico = rubroElegidoId
-          ? RUBROS_MENU_GENERICO.find((r) => r.id === rubroElegidoId)
+        // Paso 1 del menú genérico: eligió una categoría (Agendamiento vs
+        // Catálogo) en los botones — muestra la lista de rubros reales de
+        // esa categoría. Se hace en dos pasos porque WhatsApp no permite
+        // más de 10 filas en total en un solo mensaje de lista, y hoy hay
+        // más de 10 RubroTemplate reales entre ambas categorías.
+        const categoriaElegida = mensaje.type === 'interactive'
+          ? decodificarBotonCategoriaGenerica(mensaje.interactive?.button_reply?.id)
           : null;
 
-        if (!rubroGenerico) {
-          // Nadie asignó este teléfono a ninguna demo todavía — muestra el
-          // menú de rubros genéricos para que se autogestione.
+        if (categoriaElegida) {
+          const rubrosDeCategoria = await prisma.rubroTemplate.findMany({
+            where: { modoOperacion: categoriaElegida },
+            select: { id: true, nombre: true },
+            orderBy: { nombre: 'asc' },
+          });
+
           await sendWhatsAppInteractiveList({
             phoneNumberId,
             to: telefonoCliente,
             accessToken: accessTokenDemo,
-            textoCuerpo: '¡Hola! 👋 Soy el asistente de *Totemsystem*. Elige el tipo de negocio que quieres ver funcionando por WhatsApp 👇',
+            textoCuerpo: 'Elige el rubro que quieres ver funcionando por WhatsApp 👇',
             textoBoton: 'Ver rubros',
             textoHeader: 'Totemsystem — Demo',
-            secciones: [
-              {
-                titulo: 'Agendamiento de citas',
-                filas: RUBROS_MENU_GENERICO.filter((r) => !r.productos).map((r) => ({
-                  id: codificarFilaRubroGenerico(r.id), titulo: r.titulo, descripcion: r.descripcion,
-                })),
-              },
-              {
-                titulo: 'Catálogo por WhatsApp',
-                filas: RUBROS_MENU_GENERICO.filter((r) => r.productos).map((r) => ({
-                  id: codificarFilaRubroGenerico(r.id), titulo: r.titulo, descripcion: r.descripcion,
-                })),
-              },
+            secciones: [{
+              titulo: NOMBRES_CATEGORIA_GENERICA[categoriaElegida] || 'Rubros',
+              filas: rubrosDeCategoria.map((r) => ({
+                id: codificarFilaRubroGenerico(r.id), titulo: r.nombre,
+              })),
+            }],
+          });
+          return;
+        }
+
+        // Paso 2: eligió un rubro de la lista — el id de fila ES el id real
+        // del RubroTemplate (fuente de verdad única, misma tabla que usa
+        // GET /demos/rubros en el panel de vendedor).
+        const rubroTemplateElegidoId = mensaje.type === 'interactive'
+          ? decodificarFilaRubroGenerico(mensaje.interactive?.list_reply?.id)
+          : null;
+        const rubroTemplate = rubroTemplateElegidoId
+          ? await prisma.rubroTemplate.findUnique({ where: { id: rubroTemplateElegidoId } })
+          : null;
+
+        if (!rubroTemplate) {
+          // Nadie asignó este teléfono a ninguna demo todavía (o no
+          // reconocimos la respuesta) — muestra los botones de categoría
+          // para que se autogestione desde el principio.
+          await sendWhatsAppReplyButtons({
+            phoneNumberId,
+            to: telefonoCliente,
+            accessToken: accessTokenDemo,
+            textoCuerpo: '¡Hola! 👋 Soy el asistente de *Totemsystem*. ¿Qué tipo de negocio quieres ver funcionando por WhatsApp?',
+            textoHeader: 'Totemsystem — Demo',
+            botones: [
+              { id: codificarBotonCategoriaGenerica('AGENDAMIENTO'), titulo: 'Agendamiento de citas' },
+              { id: codificarBotonCategoriaGenerica('CATALOGO_ROTATIVO'), titulo: 'Catálogo por WhatsApp' },
             ],
           });
           return;
@@ -255,25 +290,15 @@ app.post('/webhook/whatsapp', verificarFirmaWebhookWhatsApp, async (req, res) =>
         // recuperamos la demo que ya creó el primero. La transacción
         // también evita que quede una Empresa/Producto huérfana si el
         // segundo intento falla a mitad de camino.
-        const rubroTemplate = await prisma.rubroTemplate.findUnique({ where: { clave: rubroGenerico.claveRubro } });
-        if (!rubroTemplate) {
-          console.error(`[DEMO] Falta RubroTemplate con clave "${rubroGenerico.claveRubro}" — revisar seed.`);
-          await sendWhatsAppTextMessage({
-            phoneNumberId, to: telefonoCliente, accessToken: accessTokenDemo,
-            text: `Tuvimos un problema armando esa demo — escríbenos a ${process.env.ADMIN_EMAIL} y te ayudamos directo 🙌`,
-          });
-          return;
-        }
-
         try {
           const { empresaNueva } = await prisma.$transaction(async (tx) => {
             const empresaCreada = await tx.empresa.create({
-              data: { nombre: rubroGenerico.nombreEmpresa, rubroTemplateId: rubroTemplate.id, esDemo: true },
+              data: { nombre: `${rubroTemplate.nombre} Demo`, rubroTemplateId: rubroTemplate.id, esDemo: true },
             });
 
-            if (rubroGenerico.productos?.length > 0) {
+            if (rubroTemplate.modoOperacion === 'CATALOGO_ROTATIVO' && Array.isArray(rubroTemplate.serviciosBase) && rubroTemplate.serviciosBase.length > 0) {
               await tx.producto.createMany({
-                data: rubroGenerico.productos.map((p) => ({
+                data: rubroTemplate.serviciosBase.map((p) => ({
                   empresaId: empresaCreada.id, nombre: p.nombre, precio: p.precio, activo: true,
                 })),
               });
@@ -300,7 +325,7 @@ app.post('/webhook/whatsapp', verificarFirmaWebhookWhatsApp, async (req, res) =>
             include: { empresaDemo: { include: { rubroTemplate: true } } },
           });
 
-          console.log(`[DEMO] Número desconocido ${telefonoCliente} eligió "${rubroGenerico.titulo}" — empresa privada ${empresaNueva.id} creada.`);
+          console.log(`[DEMO] Número desconocido ${telefonoCliente} eligió "${rubroTemplate.nombre}" — empresa privada ${empresaNueva.id} creada.`);
         } catch (error) {
           if (error.code === 'P2002') {
             // Condición de carrera: otro mensaje casi simultáneo del mismo
