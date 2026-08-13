@@ -301,6 +301,7 @@ model Cliente {
   // tipos de recordatorio por rubro (ej. próxima sesión, mantención).
   recordatorioControlAnualEnviadoEn DateTime?
 
+  creadoEn  DateTime @default(now())
 
   citas       Cita[]
   listaEspera ListaEspera[]
@@ -398,6 +399,8 @@ model Cita {
 
   origenCanal String @default("whatsapp") // "whatsapp" | "panel" | "widget"
 
+  creadoEn  DateTime @default(now())
+  actualizadoEn DateTime @updatedAt
 
   @@index([empresaId, fechaHoraInicio])
   @@index([clienteId])
