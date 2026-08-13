@@ -301,12 +301,6 @@ model Cliente {
   // tipos de recordatorio por rubro (ej. próxima sesión, mantención).
   recordatorioControlAnualEnviadoEn DateTime?
 
-  // Fecha real de la venta/atención — editable siempre desde el frontend,
-  // igual que AtencionClinica.fecha. @default(now()) es solo para no romper
-  // filas ya existentes al aplicar el db push (Ventas reales de Ahorróptica);
-  // de ahí en adelante siempre se envía explícita desde el formulario.
-  fecha     DateTime @default(now())
-  creadoEn  DateTime @default(now()) // auditoría: cuándo se guardó el registro, nunca editable
 
   citas       Cita[]
   listaEspera ListaEspera[]
@@ -404,9 +398,6 @@ model Cita {
 
   origenCanal String @default("whatsapp") // "whatsapp" | "panel" | "widget"
 
-fecha     DateTime @default(now())
-  creadoEn  DateTime @default(now())
-  actualizadoEn DateTime @updatedAt
 
   @@index([empresaId, fechaHoraInicio])
   @@index([clienteId])
@@ -489,6 +480,7 @@ model Venta {
   fichaAsociadaId String? // referencia opcional a la receta/ficha vigente al momento de la venta
   categoriaProducto String? // ej. "Lente monofocal", "Lente progresivo", "Lente de contacto", "Solo atención" — permite segmentar campañas por tipo de producto/servicio comprado, igual que productoId lo hace en el catálogo rotativo
 
+  fecha     DateTime @default(now())
   creadoEn  DateTime @default(now())
 
   @@index([empresaId])
