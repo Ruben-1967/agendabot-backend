@@ -301,7 +301,6 @@ model Cliente {
   // tipos de recordatorio por rubro (ej. próxima sesión, mantención).
   recordatorioControlAnualEnviadoEn DateTime?
 
-  creadoEn  DateTime @default(now())
 
   citas       Cita[]
   listaEspera ListaEspera[]
@@ -399,8 +398,6 @@ model Cita {
 
   origenCanal String @default("whatsapp") // "whatsapp" | "panel" | "widget"
 
-  creadoEn  DateTime @default(now())
-  actualizadoEn DateTime @updatedAt
 
   @@index([empresaId, fechaHoraInicio])
   @@index([clienteId])
@@ -483,6 +480,7 @@ model Venta {
   fichaAsociadaId String? // referencia opcional a la receta/ficha vigente al momento de la venta
   categoriaProducto String? // ej. "Lente monofocal", "Lente progresivo", "Lente de contacto", "Solo atención" — permite segmentar campañas por tipo de producto/servicio comprado, igual que productoId lo hace en el catálogo rotativo
 
+  fecha     DateTime @default(now())
   creadoEn  DateTime @default(now())
 
   @@index([empresaId])

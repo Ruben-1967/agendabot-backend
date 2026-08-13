@@ -149,8 +149,8 @@ router.get('/segmentacion', async (req, res) => {
       where: { empresaId },
       include: {
         ventas: {
-          where: { creadoEn: { gte: fechaInicioPeriodo } },
-          orderBy: { creadoEn: 'desc' },
+          where: { fecha: { gte: fechaInicioPeriodo } },
+          orderBy: { fecha: 'desc' },
         },
       },
     });
@@ -158,9 +158,9 @@ router.get('/segmentacion', async (req, res) => {
     const ultimasVentas = await prisma.venta.groupBy({
       by: ['clienteId'],
       where: { clienteId: { in: clientes.map((c) => c.id) } },
-      _max: { creadoEn: true },
+      _max: { fecha: true },
     });
-    const mapaUltimaVenta = new Map(ultimasVentas.map((u) => [u.clienteId, u._max.creadoEn]));
+    const mapaUltimaVenta = new Map(ultimasVentas.map((u) => [u.clienteId, u._max.fecha]));
 
     let segmentados = clientes.map((c) => {
       const totalGastado = c.ventas.reduce((acc, v) => acc + v.monto, 0);
@@ -217,7 +217,7 @@ router.get('/', async (req, res) => {
 
     const clientes = await prisma.cliente.findMany({
       where: { empresaId },
-      include: { ventas: { orderBy: { creadoEn: 'desc' } } },
+      include: { ventas: { orderBy: { fecha: 'desc' } } },
       orderBy: { nombre: 'asc' },
     });
 
@@ -231,7 +231,7 @@ router.get('/', async (req, res) => {
         email: c.email,
         numVentas: c.ventas.length,
         totalGastado,
-        ultimaCompraFecha: c.ventas[0]?.creadoEn || null,
+        ultimaCompraFecha: c.ventas[0]?.fecha || null,
       };
     });
 
@@ -249,7 +249,7 @@ router.get('/:id', async (req, res) => {
   try {
     const cliente = await prisma.cliente.findFirst({
       where: { id: req.params.id, empresaId: req.usuario.empresaId },
-      include: { ventas: { orderBy: { creadoEn: 'desc' } } },
+      include: { ventas: { orderBy: { fecha: 'desc' } } },
     });
     if (!cliente) return res.status(404).json({ error: 'Cliente no encontrado' });
 
@@ -341,7 +341,7 @@ router.post('/:id/ventas', async (req, res) => {
     });
     if (!cliente) return res.status(404).json({ error: 'Cliente no encontrado' });
 
-    const { descripcion, monto, categoriaProducto } = req.body;
+    const { descripcion, monto, categoriaProducto, fecha } = req.body;
 
     if (!descripcion || !descripcion.trim()) {
       return res.status(400).json({ error: 'Falta la descripción de la venta' });
@@ -359,6 +359,7 @@ router.post('/:id/ventas', async (req, res) => {
         monto: Math.round(montoNum),
         categoriaProducto: categoriaProducto || null,
         estadoPago: 'PAGADO',
+        fecha: fecha ? new Date(fecha) : new Date(),
       },
     });
 
@@ -366,6 +367,53 @@ router.post('/:id/ventas', async (req, res) => {
   } catch (error) {
     console.error('Error registrando venta:', error);
     res.status(500).json({ error: 'Error al registrar la venta' });
+  }
+});
+
+// ------------------------------------------------------------
+// PATCH /clientes/:id/ventas/:ventaId — edita una venta ya registrada
+// (fecha, descripción, monto, categoría). No existía ninguna forma de
+// corregir una venta después de creada hasta ahora.
+// ------------------------------------------------------------
+router.patch('/:id/ventas/:ventaId', async (req, res) => {
+  try {
+    const cliente = await prisma.cliente.findFirst({
+      where: { id: req.params.id, empresaId: req.usuario.empresaId },
+    });
+    if (!cliente) return res.status(404).json({ error: 'Cliente no encontrado' });
+
+    const venta = await prisma.venta.findFirst({
+      where: { id: req.params.ventaId, clienteId: cliente.id, empresaId: req.usuario.empresaId },
+    });
+    if (!venta) return res.status(404).json({ error: 'Venta no encontrada' });
+
+    const { descripcion, monto, categoriaProducto, fecha } = req.body;
+
+    if (descripcion !== undefined && !descripcion.trim()) {
+      return res.status(400).json({ error: 'La descripción no puede quedar vacía' });
+    }
+    let montoNum;
+    if (monto !== undefined) {
+      montoNum = Number(monto);
+      if (!Number.isFinite(montoNum) || montoNum < 0) {
+        return res.status(400).json({ error: 'monto debe ser un número válido' });
+      }
+    }
+
+    const ventaActualizada = await prisma.venta.update({
+      where: { id: venta.id },
+      data: {
+        ...(descripcion !== undefined && { descripcion: descripcion.trim() }),
+        ...(montoNum !== undefined && { monto: Math.round(montoNum) }),
+        ...(categoriaProducto !== undefined && { categoriaProducto: categoriaProducto || null }),
+        ...(fecha !== undefined && { fecha: new Date(fecha) }),
+      },
+    });
+
+    res.json({ venta: ventaActualizada });
+  } catch (error) {
+    console.error('Error editando venta:', error);
+    res.status(500).json({ error: 'Error al editar la venta' });
   }
 });
 
