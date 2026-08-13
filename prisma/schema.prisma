@@ -301,7 +301,12 @@ model Cliente {
   // tipos de recordatorio por rubro (ej. próxima sesión, mantención).
   recordatorioControlAnualEnviadoEn DateTime?
 
-  creadoEn  DateTime @default(now())
+  // Fecha real de la venta/atención — editable siempre desde el frontend,
+  // igual que AtencionClinica.fecha. @default(now()) es solo para no romper
+  // filas ya existentes al aplicar el db push (Ventas reales de Ahorróptica);
+  // de ahí en adelante siempre se envía explícita desde el formulario.
+  fecha     DateTime @default(now())
+  creadoEn  DateTime @default(now()) // auditoría: cuándo se guardó el registro, nunca editable
 
   citas       Cita[]
   listaEspera ListaEspera[]
