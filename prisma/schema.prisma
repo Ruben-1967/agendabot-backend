@@ -404,6 +404,7 @@ model Cita {
 
   origenCanal String @default("whatsapp") // "whatsapp" | "panel" | "widget"
 
+fecha     DateTime @default(now())
   creadoEn  DateTime @default(now())
   actualizadoEn DateTime @updatedAt
 
