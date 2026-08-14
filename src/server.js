@@ -195,6 +195,18 @@ app.post('/webhook/whatsapp', verificarFirmaWebhookWhatsApp, async (req, res) =>
     const value = change?.value;
     const mensaje = value?.messages?.[0];
 
+    // Diagnóstico de Embedded Signup: Meta documenta que dispara el webhook
+    // "account_update" cuando un cliente completa el flujo de conexión de
+    // WhatsApp — independiente del postMessage del navegador (que se probó
+    // poco confiable: FB.login() puede reportar éxito y aun así no llegar
+    // nunca el postMessage de cierre). Antes esto se descartaba en silencio
+    // junto con el resto de campos que no son "messages"; ahora se loguea
+    // completo para poder correlacionar con los intentos reales de conectar
+    // WhatsApp desde el panel.
+    if (change?.field && change.field !== 'messages') {
+      console.log(`[WEBHOOK WHATSAPP] Campo "${change.field}" recibido (no es un mensaje):`, JSON.stringify(req.body));
+    }
+
     // Aceptamos mensajes de texto libre, clics en botones de plantillas, y
     // selecciones de listas interactivas (usadas por el catálogo rotativo).
     // Ignoramos silenciosamente cualquier otro tipo (imágenes, ubicación,
