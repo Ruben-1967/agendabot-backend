@@ -504,7 +504,12 @@ router.post('/convertir-a-cliente-real', requireAuth, requireRole('VENDEDOR'), a
       ok: true,
       empresaId: empresaReal.id,
       whatsappEnviado,
-      linkActivacion: whatsappEnviado ? null : linkActivacion,
+      // Siempre se devuelve, aunque el envío automático haya reportado éxito:
+      // que la API de Meta no tire error no garantiza que el mensaje se vea
+      // reflejado en el chat del prospecto (ej. número sin un dispositivo con
+      // WhatsApp real detrás), así que el vendedor siempre tiene el link a
+      // mano como respaldo.
+      linkActivacion,
       motivoFalloWhatsapp,
       mensaje: whatsappEnviado
         ? 'Cliente real creado. Se envió el link de activación por WhatsApp.'
