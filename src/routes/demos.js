@@ -298,6 +298,89 @@ router.get('/clientes-convertidos', requireAuth, requireRole('VENDEDOR'), async 
   }
 });
 
+// ------------------------------------------------------------
+// DELETE /demos/clientes-convertidos/:empresaId — borra por completo un
+// cliente convertido (Empresa, Usuario, Suscripcion, Pago, y la
+// DemoAsignada que lo originó). Solo para rolVendedor ADMIN — pensado como
+// herramienta de limpieza de pruebas, no para uso con clientes reales.
+// Misma lógica que scripts/eliminar-empresa-prueba.js, ahora como endpoint.
+// ------------------------------------------------------------
+router.delete('/clientes-convertidos/:empresaId', requireAuth, requireRole('VENDEDOR'), async (req, res) => {
+  try {
+    if (req.usuario.rolVendedor !== 'ADMIN') {
+      return res.status(403).json({ error: 'Solo un administrador puede eliminar clientes convertidos' });
+    }
+
+    const { empresaId } = req.params;
+    const empresa = await prisma.empresa.findUnique({
+      where: { id: empresaId },
+      include: { suscripcion: true, demoOrigen: true },
+    });
+
+    if (!empresa || !empresa.demoOrigenId) {
+      return res.status(404).json({ error: 'Empresa no encontrada o no proviene de una demo convertida' });
+    }
+
+    await prisma.$transaction(async (tx) => {
+      if (empresa.suscripcion) {
+        await tx.pago.deleteMany({ where: { suscripcionId: empresa.suscripcion.id } });
+        await tx.suscripcion.delete({ where: { id: empresa.suscripcion.id } });
+      }
+      await tx.usuario.deleteMany({ where: { empresaId: empresa.id } });
+      await tx.empresa.delete({ where: { id: empresa.id } });
+      await tx.demoAsignada.delete({ where: { id: empresa.demoOrigenId } });
+    });
+
+    res.json({ ok: true });
+  } catch (error) {
+    console.error('Error eliminando cliente convertido:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ------------------------------------------------------------
+// PATCH /demos/clientes-convertidos/:empresaId/plan — cambia el plan de un
+// cliente ya convertido. Solo para rolVendedor ADMIN. Recalcula
+// montoMensualActual/citasIncluidas/precioCitaExcedente desde DETALLE_PLANES
+// (misma fuente que usa /suscripcion/elegir-plan) — no toca estado/fechas.
+// ------------------------------------------------------------
+router.patch('/clientes-convertidos/:empresaId/plan', requireAuth, requireRole('VENDEDOR'), async (req, res) => {
+  try {
+    if (req.usuario.rolVendedor !== 'ADMIN') {
+      return res.status(403).json({ error: 'Solo un administrador puede cambiar el plan de un cliente' });
+    }
+
+    const { empresaId } = req.params;
+    const { plan } = req.body;
+    if (!['A', 'B', 'C'].includes(plan)) {
+      return res.status(400).json({ error: 'Plan inválido' });
+    }
+
+    const suscripcionExistente = await prisma.suscripcion.findUnique({ where: { empresaId } });
+    if (!suscripcionExistente) {
+      return res.status(404).json({ error: 'Esta empresa no tiene una suscripción todavía' });
+    }
+
+    const planEnum = `PLAN_${plan}`;
+    const detallePlan = DETALLE_PLANES[planEnum];
+
+    const suscripcionActualizada = await prisma.suscripcion.update({
+      where: { empresaId },
+      data: {
+        plan: planEnum,
+        montoMensualActual: detallePlan.montoMensual,
+        citasIncluidas: detallePlan.citasIncluidas,
+        precioCitaExcedente: detallePlan.precioCitaExcedente,
+      },
+    });
+
+    res.json({ ok: true, suscripcion: suscripcionActualizada });
+  } catch (error) {
+    console.error('Error cambiando plan de cliente convertido:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 function sumarUnDiaISO(fechaISO) {
   const d = new Date(`${fechaISO}T00:00:00Z`);
   d.setUTCDate(d.getUTCDate() + 1);
