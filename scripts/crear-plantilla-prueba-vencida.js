@@ -8,9 +8,12 @@
  *
  * Requiere DEMO_WHATSAPP_ACCESS_TOKEN (ya en el entorno) y
  * DEMO_WHATSAPP_WABA_ID (el "ID de la cuenta de WhatsApp Business" del
- * número demo — no confundir con el phone_number_id). Se encuentra en:
- * Meta Business Manager > WhatsApp Manager > el número demo > Configuración
- * de la API > "ID de la cuenta de WhatsApp Business".
+ * número demo — no confundir con el phone_number_id). El número de prueba
+ * NO aparece en WhatsApp Manager (business.facebook.com) — vive dentro de
+ * la App en developers.facebook.com > Mis Apps > "Totemsystem Demos" >
+ * Casos de uso > WhatsApp > Configuración de la API. Ahí Meta muestra el
+ * par número/WABA ID directo (confirmado: WABA 1022360410721153,
+ * phone_number_id 1218967037965089 — coincide con DEMO_PHONE_NUMBER_ID).
  *
  * Uso (Render Shell):
  *   node scripts/crear-plantilla-prueba-vencida.js
@@ -36,8 +39,8 @@ async function main() {
   }
   if (!wabaId) {
     console.error('\nFalta DEMO_WHATSAPP_WABA_ID en el entorno.');
-    console.error('Se encuentra en Meta Business Manager > WhatsApp Manager > el número demo >');
-    console.error('Configuración de la API > "ID de la cuenta de WhatsApp Business" (NO es el phone_number_id).');
+    console.error('Es 1022360410721153 (confirmado: developers.facebook.com > "Totemsystem Demos" >');
+    console.error('Casos de uso > WhatsApp > Configuración de la API — NO aparece en WhatsApp Manager).');
     console.error('Agrégalo en Render y volvé a correr este script.\n');
     process.exit(1);
   }
@@ -49,7 +52,9 @@ async function main() {
     components: [
       {
         type: 'BODY',
-        text: 'Hola {{1}}, tu período de prueba gratuita de AgendaBot terminó. Para que tus clientes puedan seguir agendando por WhatsApp sin interrupciones, activa tu plan aquí: {{2}}',
+        // {{2}} no puede ser lo último del texto (Meta rechaza una variable
+        // pegada al final sin texto real de cierre) — de ahí el "ahora." al final.
+        text: 'Hola {{1}}, tu período de prueba gratuita de AgendaBot terminó. Para reactivar el servicio y que tus clientes sigan agendando por WhatsApp, entra a {{2}} ahora.',
         example: {
           body_text: [['Óptica Ejemplo', 'https://agendabot-beryl.vercel.app/suscripcion/elegir-plan?empresaId=abc123']],
         },
