@@ -2,22 +2,40 @@
  * src/jobs/bloquearEmpresasVencidas.js
  *
  * Cron job que corre cada 6 horas:
- * 1. Busca empresas en prueba con pruebahasta vencido (sin plan activo)
- * 2. Envía aviso "Tu prueba termina en X días"
- * 3. Después de 3 días sin respuesta (sin pago), bloquea automáticamente
+ * 1. Busca empresas (no demo) con la prueba vencida y sin una Suscripcion
+ *    pagada (sin Suscripcion, o con una en PENDIENTE_PAGO — eligieron plan
+ *    pero no completaron el pago en Flow).
+ * 2. Les manda hasta MAX_AVISOS recordatorios por WhatsApp (plantilla,
+ *    porque a esta altura ya está fuera de la ventana de 24h), espaciados
+ *    DIAS_ENTRE_AVISOS días, con el link para suscribirse.
+ * 3. Agotados los avisos + un último plazo de gracia, marca la empresa como
+ *    bloqueadaPorPruebaVencida=true. Esa marca por sí sola NO corta nada —
+ *    el corte real del chat (en server.js) solo ocurre si la variable de
+ *    entorno BLOQUEO_PRUEBA_VENCIDA_ACTIVO='true' está prendida. Por defecto
+ *    queda apagado: este job solo deja la empresa "lista para bloquear" y
+ *    sigue avisando por WhatsApp.
+ *
+ * Umbrales — PENDIENTE DE CONFIRMAR con Ruben antes de ajustar en serio,
+ * dejados como constantes para poder tunearlos sin tocar la lógica.
  */
 
 const cron = require('node-cron');
 const prisma = require('../lib/prisma');
-const { enviarPlantillaWhatsApp } = require('../services/whatsapp');
+const { sendWhatsAppTemplateMessage } = require('../services/whatsapp');
+const { obtenerUrlPanelPrincipal } = require('../lib/urlPanel');
+
+const MAX_AVISOS = 3;
+const DIAS_ENTRE_AVISOS = 3; // también se usa como plazo de gracia después del último aviso, antes de marcar bloqueadaPorPruebaVencida
+const TEMPLATE_PRUEBA_VENCIDA = 'agendabot_prueba_vencida'; // ver plantilla propuesta para Meta — hay que enviarla a revisión antes de que esto funcione de verdad
+
+function diasEntre(a, b) {
+  return (a - b) / (1000 * 60 * 60 * 24);
+}
 
 /**
- * Inicia el job de bloqueo (debe llamarse desde server.js)
+ * Inicia el job (debe llamarse desde server.js)
  */
 function iniciarJobBloqueoVencidas() {
-  // Cada 6 horas: 0 */6 * * *
-  // Cada hora (desarrollo): 0 * * * *
-  // En tests: no iniciar automático
   cron.schedule('0 */6 * * *', async () => {
     console.log('[job] Ejecutando: bloquearEmpresasVencidas');
     try {
@@ -28,101 +46,93 @@ function iniciarJobBloqueoVencidas() {
   });
 }
 
+async function enviarAvisoPruebaVencida(empresa) {
+  const phoneNumberId = process.env.DEMO_PHONE_NUMBER_ID;
+  const accessToken = process.env.DEMO_WHATSAPP_ACCESS_TOKEN;
+
+  if (!phoneNumberId || !accessToken) {
+    throw new Error('Faltan DEMO_PHONE_NUMBER_ID o DEMO_WHATSAPP_ACCESS_TOKEN en el entorno.');
+  }
+  if (!empresa.telefonoContacto) {
+    throw new Error('La empresa no tiene telefonoContacto.');
+  }
+
+  const link = `${obtenerUrlPanelPrincipal()}/suscripcion/elegir-plan?empresaId=${empresa.id}`;
+
+  await sendWhatsAppTemplateMessage({
+    phoneNumberId,
+    to: empresa.telefonoContacto,
+    accessToken,
+    templateName: TEMPLATE_PRUEBA_VENCIDA,
+    variables: [empresa.nombre, link],
+  });
+}
+
 /**
  * Lógica principal
  */
 async function procesarEmpresasVencidas() {
   const hoy = new Date();
 
-  // PASO 1: Empresas en PRUEBA cuya prueba ACABA DE VENCER (hoy) → PRIMERA ADVERTENCIA
-  const empresasVencenHoy = await prisma.empresa.findMany({
+  const empresasVencidas = await prisma.empresa.findMany({
     where: {
-      estadoSuscripcion: 'PRUEBA',
-      planActivo: null,
-      pruebahasta: {
-        lte: new Date(hoy.getTime() + 24 * 60 * 60 * 1000), // próximas 24h
-        gte: hoy, // no más viejo
-      },
-      diasAdvertenciaEnviados: { lt: 1 }, // aún no le enviamos aviso
+      esDemo: false,
+      pruebahasta: { not: null, lte: hoy },
+      bloqueadaPorPruebaVencida: false,
+      OR: [
+        { suscripcion: null },
+        { suscripcion: { estado: 'PENDIENTE_PAGO' } },
+      ],
     },
-    select: { id: true, nombre: true, telefonoContacto: true },
+    select: {
+      id: true,
+      nombre: true,
+      telefonoContacto: true,
+      avisosPruebaVencidaEnviados: true,
+      fechaUltimoAvisoPrueba: true,
+    },
   });
 
-  for (const empresa of empresasVencenHoy) {
+  let avisosEnviados = 0;
+  let empresasBloqueadas = 0;
+
+  for (const empresa of empresasVencidas) {
     try {
-      // Enviar plantilla de WhatsApp (si existe)
-      // await enviarPlantillaWhatsApp({
-      //   empresaId: empresa.id,
-      //   numeroDestino: empresa.telefonoContacto,
-      //   templateName: 'prueba_por_vencer',
-      //   params: { nombreNegocio: empresa.nombre }
-      // });
+      const yaTocaProximoPaso = !empresa.fechaUltimoAvisoPrueba
+        || diasEntre(hoy, empresa.fechaUltimoAvisoPrueba) >= DIAS_ENTRE_AVISOS;
 
-      // Por ahora, solo marcar que enviamos aviso
-      await prisma.empresa.update({
-        where: { id: empresa.id },
-        data: { diasAdvertenciaEnviados: 1 },
-      });
+      if (!yaTocaProximoPaso) {
+        continue; // todavía no pasó el plazo desde el último aviso
+      }
 
-      console.log(`[job] Aviso 1 enviado a ${empresa.nombre}`);
-    } catch (errAviso) {
-      console.warn(`[job] Error enviando aviso a ${empresa.id}:`, errAviso.message);
-    }
-  }
-
-  // PASO 2: Empresas en PRUEBA cuya prueba VENCE HOY + no han pagado → SEGUNDA/TERCERA ADVERTENCIA
-  const empresasConAdviso = await prisma.empresa.findMany({
-    where: {
-      estadoSuscripcion: 'PRUEBA',
-      planActivo: null,
-      pruebahasta: { lte: hoy },
-      diasAdvertenciaEnviados: { lt: 3 },
-    },
-    select: { id: true, nombre: true, diasAdvertenciaEnviados: true },
-  });
-
-  for (const empresa of empresasConAdviso) {
-    try {
-      // Si ya pasaron 3 días sin pago: BLOQUEAR
-      if (empresa.diasAdvertenciaEnviados >= 2) {
+      if (empresa.avisosPruebaVencidaEnviados < MAX_AVISOS) {
+        await enviarAvisoPruebaVencida(empresa);
         await prisma.empresa.update({
           where: { id: empresa.id },
           data: {
-            estadoSuscripcion: 'BLOQUEADA',
-            planActivo: null,
+            avisosPruebaVencidaEnviados: empresa.avisosPruebaVencidaEnviados + 1,
+            fechaUltimoAvisoPrueba: hoy,
           },
         });
-        console.log(`[job] Empresa ${empresa.nombre} BLOQUEADA por falta de pago`);
+        avisosEnviados++;
+        console.log(`[job] Aviso ${empresa.avisosPruebaVencidaEnviados + 1}/${MAX_AVISOS} enviado a ${empresa.nombre}`);
       } else {
-        // Si no: incrementar contador de avisos
+        // Ya se mandaron los MAX_AVISOS y pasó el plazo de gracia desde el
+        // último — queda lista para bloquear (el corte real depende del
+        // toggle BLOQUEO_PRUEBA_VENCIDA_ACTIVO, ver server.js).
         await prisma.empresa.update({
           where: { id: empresa.id },
-          data: { diasAdvertenciaEnviados: empresa.diasAdvertenciaEnviados + 1 },
+          data: { bloqueadaPorPruebaVencida: true, fechaBloqueoPrueba: hoy },
         });
-        console.log(`[job] Aviso ${empresa.diasAdvertenciaEnviados + 1} a ${empresa.nombre}`);
+        empresasBloqueadas++;
+        console.log(`[job] Empresa ${empresa.nombre} marcada bloqueadaPorPruebaVencida (agotó los ${MAX_AVISOS} avisos)`);
       }
-    } catch (errBloqueo) {
-      console.warn(`[job] Error bloqueando/avisando a ${empresa.id}:`, errBloqueo.message);
+    } catch (errEmpresa) {
+      console.warn(`[job] Error procesando empresa ${empresa.id} (${empresa.nombre}):`, errEmpresa.message);
     }
   }
 
-  // PASO 3: Empresas ACTIVAS cuya suscripción VENCE PRONTO → AVISO PREVENTIVO
-  // (esto es opcional — Flow.cl ya envía su propio aviso)
-  const proximas2Semanas = new Date(hoy.getTime() + 14 * 24 * 60 * 60 * 1000);
-  const empresasProximasAVencer = await prisma.empresa.findMany({
-    where: {
-      estadoSuscripcion: 'ACTIVA',
-      fechaVencimientoPago: {
-        lte: proximas2Semanas,
-        gte: hoy,
-      },
-    },
-    select: { id: true, nombre: true },
-  });
-
-  console.log(`[job] Empresas próximas a vencer (2 semanas): ${empresasProximasAVencer.length}`);
-
-  console.log('[job] Proceso finalizado: bloquearEmpresasVencidas');
+  console.log(`[job] Proceso finalizado: ${avisosEnviados} avisos enviados, ${empresasBloqueadas} empresas marcadas para bloqueo (de ${empresasVencidas.length} revisadas).`);
 }
 
 module.exports = { iniciarJobBloqueoVencidas, procesarEmpresasVencidas };

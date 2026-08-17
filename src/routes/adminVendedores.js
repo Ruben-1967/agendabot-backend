@@ -252,6 +252,18 @@ router.post('/suscripciones/:empresaId/marcar-activa', requireAuth, requireRolVe
       data: { estado: 'ACTIVA', fechaActivacion: new Date() },
     });
 
+    // Si venía de avisos/bloqueo por prueba vencida (ver
+    // bloquearEmpresasVencidas.js), pagar la limpia por completo.
+    await prisma.empresa.update({
+      where: { id: empresaId },
+      data: {
+        bloqueadaPorPruebaVencida: false,
+        avisosPruebaVencidaEnviados: 0,
+        fechaUltimoAvisoPrueba: null,
+        fechaBloqueoPrueba: null,
+      },
+    });
+
     res.json({ ok: true, suscripcion: actualizada });
   } catch (error) {
     console.error('Error marcando suscripción como activa:', error);

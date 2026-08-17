@@ -502,6 +502,32 @@ app.post('/webhook/whatsapp', verificarFirmaWebhookWhatsApp, async (req, res) =>
     }
 
     // ------------------------------------------------------------
+    // Corte de servicio por prueba vencida sin pago — ver
+    // src/jobs/bloquearEmpresasVencidas.js. La marca bloqueadaPorPruebaVencida
+    // la pone ese job; acá solo se actúa si el toggle está prendido, para
+    // poder tener el mecanismo listo sin activarlo todavía en producción.
+    // Responde al CLIENTE del negocio (quien escribió a pedir hora), no al
+    // dueño del negocio — por eso el mensaje es neutro, sin mencionar pagos.
+    // ------------------------------------------------------------
+    if (empresa.bloqueadaPorPruebaVencida && process.env.BLOQUEO_PRUEBA_VENCIDA_ACTIVO === 'true') {
+      const accessTokenBloqueo = empresa.whatsappToken || process.env.WHATSAPP_ACCESS_TOKEN;
+      if (accessTokenBloqueo) {
+        try {
+          await sendWhatsAppTextMessage({
+            phoneNumberId,
+            to: telefonoCliente,
+            accessToken: accessTokenBloqueo,
+            text: 'Este canal de atención no está disponible en este momento. Por favor contacta directamente al local.',
+          });
+        } catch (errBloqueo) {
+          console.error(`Error enviando aviso de servicio no disponible (empresa ${empresa.id}):`, errBloqueo.message);
+        }
+      }
+      return;
+    }
+    // ---- fin corte de servicio por prueba vencida ----
+
+    // ------------------------------------------------------------
     // Opt-in de campañas embebido en la conversación: intercepta el clic
     // en los botones Sí/No que manda src/jobs/enviarPreguntaOptIn.js —
     // antes de cualquier otro flujo (agendamiento o catálogo rotativo),

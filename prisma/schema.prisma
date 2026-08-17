@@ -73,6 +73,12 @@ model Empresa {
   // SUSCRIPCIÓN: solo la fecha de término de prueba (lo demás va en Suscripcion)
   pruebahasta      DateTime? // null = sin prueba | <hoy = vencida
 
+  // Avisos de prueba vencida sin pago (ver src/jobs/bloquearEmpresasVencidas.js)
+  avisosPruebaVencidaEnviados Int      @default(0)
+  fechaUltimoAvisoPrueba      DateTime?
+  bloqueadaPorPruebaVencida   Boolean  @default(false) // el corte real solo ocurre si BLOQUEO_PRUEBA_VENCIDA_ACTIVO=true
+  fechaBloqueoPrueba          DateTime?
+
   creadoEn        DateTime @default(now())
 
   usuarios        Usuario[]

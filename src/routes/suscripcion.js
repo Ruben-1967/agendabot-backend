@@ -363,6 +363,18 @@ router.post('/flow-webhook-collect', async (req, res) => {
           flowOrderId: token,
         },
       });
+
+      // Si venía de avisos/bloqueo por prueba vencida (ver
+      // bloquearEmpresasVencidas.js), pagar la limpia por completo.
+      await tx.empresa.update({
+        where: { id: empresaId },
+        data: {
+          bloqueadaPorPruebaVencida: false,
+          avisosPruebaVencidaEnviados: 0,
+          fechaUltimoAvisoPrueba: null,
+          fechaBloqueoPrueba: null,
+        },
+      });
     });
 
     console.log(`[flow-webhook-collect] Suscripcion ACTIVA para empresa ${empresaId} (plan ${suscripcion.plan} + hosting)`);
