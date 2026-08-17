@@ -19,6 +19,7 @@
 require('dotenv').config();
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
+const { eliminarEmpresaCompleta } = require('../src/lib/eliminarEmpresaCompleta');
 
 const numeroArg = process.argv[2];
 const confirmar = process.argv.includes('--confirmar');
@@ -38,7 +39,11 @@ async function main() {
     where: { OR: [{ telefono: telefonoNormalizado }, { telefonoOriginal: telefonoNormalizado }] },
     include: {
       empresaConvertida: {
-        include: { usuarios: true, suscripcion: { include: { pagos: true } } },
+        include: {
+          usuarios: true,
+          suscripcion: { include: { pagos: true } },
+          _count: { select: { clientes: true, citas: true, conversaciones: true, ventas: true, pedidos: true } },
+        },
       },
     },
   });
@@ -68,6 +73,7 @@ async function main() {
     console.log(`  usuarios: ${empresa.usuarios.map((u) => u.email).join(', ') || '(ninguno)'}`);
     console.log(`  suscripcion: ${empresa.suscripcion ? `${empresa.suscripcion.plan} / ${empresa.suscripcion.estado}` : '(ninguna)'}`);
     console.log(`  pagos registrados: ${empresa.suscripcion?.pagos.length ?? 0}`);
+    console.log(`  clientes: ${empresa._count.clientes} · citas: ${empresa._count.citas} · conversaciones: ${empresa._count.conversaciones} · ventas: ${empresa._count.ventas} · pedidos: ${empresa._count.pedidos}`);
   }
 
   if (!confirmar) {
@@ -79,12 +85,7 @@ async function main() {
 
   await prisma.$transaction(async (tx) => {
     if (empresa) {
-      if (empresa.suscripcion) {
-        await tx.pago.deleteMany({ where: { suscripcionId: empresa.suscripcion.id } });
-        await tx.suscripcion.delete({ where: { id: empresa.suscripcion.id } });
-      }
-      await tx.usuario.deleteMany({ where: { empresaId: empresa.id } });
-      await tx.empresa.delete({ where: { id: empresa.id } });
+      await eliminarEmpresaCompleta(tx, empresa.id);
     }
     await tx.demoAsignada.delete({ where: { id: demo.id } });
   });

@@ -16,6 +16,7 @@ const bcrypt = require('bcryptjs');
 const { parsePhoneNumberFromString } = require('libphonenumber-js');
 const prisma = require('../lib/prisma');
 const { obtenerUrlPanelPrincipal } = require('../lib/urlPanel');
+const { eliminarEmpresaCompleta } = require('../lib/eliminarEmpresaCompleta');
 const { requireAuth, requireRole } = require('../middleware/auth');
 const { extraerInfoSitioWeb } = require('../services/extraccionSitioWeb');
 const { sendWhatsAppTextMessage } = require('../services/whatsapp');
@@ -300,10 +301,11 @@ router.get('/clientes-convertidos', requireAuth, requireRole('VENDEDOR'), async 
 
 // ------------------------------------------------------------
 // DELETE /demos/clientes-convertidos/:empresaId — borra por completo un
-// cliente convertido (Empresa, Usuario, Suscripcion, Pago, y la
-// DemoAsignada que lo originó). Solo para rolVendedor ADMIN — pensado como
-// herramienta de limpieza de pruebas, no para uso con clientes reales.
-// Misma lógica que scripts/eliminar-empresa-prueba.js, ahora como endpoint.
+// cliente convertido y absolutamente todo lo que depende de él (ver
+// src/lib/eliminarEmpresaCompleta.js — Cliente, Cita, RecursoAgendable,
+// Servicio, Conversacion, Venta, Pedido, etc., no solo Usuario/Suscripcion).
+// Solo para rolVendedor ADMIN — pensado como herramienta de limpieza de
+// pruebas, no para uso con clientes reales.
 // ------------------------------------------------------------
 router.delete('/clientes-convertidos/:empresaId', requireAuth, requireRole('VENDEDOR'), async (req, res) => {
   try {
@@ -312,22 +314,14 @@ router.delete('/clientes-convertidos/:empresaId', requireAuth, requireRole('VEND
     }
 
     const { empresaId } = req.params;
-    const empresa = await prisma.empresa.findUnique({
-      where: { id: empresaId },
-      include: { suscripcion: true, demoOrigen: true },
-    });
+    const empresa = await prisma.empresa.findUnique({ where: { id: empresaId } });
 
     if (!empresa || !empresa.demoOrigenId) {
       return res.status(404).json({ error: 'Empresa no encontrada o no proviene de una demo convertida' });
     }
 
     await prisma.$transaction(async (tx) => {
-      if (empresa.suscripcion) {
-        await tx.pago.deleteMany({ where: { suscripcionId: empresa.suscripcion.id } });
-        await tx.suscripcion.delete({ where: { id: empresa.suscripcion.id } });
-      }
-      await tx.usuario.deleteMany({ where: { empresaId: empresa.id } });
-      await tx.empresa.delete({ where: { id: empresa.id } });
+      await eliminarEmpresaCompleta(tx, empresa.id);
       await tx.demoAsignada.delete({ where: { id: empresa.demoOrigenId } });
     });
 
