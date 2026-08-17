@@ -16,20 +16,16 @@ const GRAPH_API_VERSION = 'v21.0';
 
 async function main() {
   const tokenAInspeccionar = process.env.DEMO_WHATSAPP_ACCESS_TOKEN;
-  const appId = process.env.META_APP_ID;
-  const appSecret = process.env.META_APP_SECRET;
 
   if (!tokenAInspeccionar) {
     console.error('Falta DEMO_WHATSAPP_ACCESS_TOKEN en el entorno.');
     process.exit(1);
   }
-  if (!appId || !appSecret) {
-    console.error('Faltan META_APP_ID / META_APP_SECRET en el entorno (se usan para formar el token de la app, requerido por /debug_token).');
-    process.exit(1);
-  }
 
-  const appAccessToken = `${appId}|${appSecret}`;
-  const url = `https://graph.facebook.com/${GRAPH_API_VERSION}/debug_token?input_token=${encodeURIComponent(tokenAInspeccionar)}&access_token=${encodeURIComponent(appAccessToken)}`;
+  // El token se inspecciona a sí mismo — evita depender de META_APP_ID/SECRET,
+  // que resultaron ser de una App de Meta distinta a la que emitió este token
+  // (error "(#100) App_id in the input_token did not match the Viewing App").
+  const url = `https://graph.facebook.com/${GRAPH_API_VERSION}/debug_token?input_token=${encodeURIComponent(tokenAInspeccionar)}&access_token=${encodeURIComponent(tokenAInspeccionar)}`;
 
   const respuesta = await fetch(url);
   const datos = await respuesta.json();
@@ -37,6 +33,7 @@ async function main() {
   if (!respuesta.ok) {
     console.error('❌ Meta rechazó la consulta:');
     console.error(JSON.stringify(datos, null, 2));
+    console.error('\nSi el error es de permisos, probemos con GET /me?fields=id,name usando el mismo token, para al menos confirmar que el token está vivo.');
     process.exit(1);
   }
 
