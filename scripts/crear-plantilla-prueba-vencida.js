@@ -27,7 +27,13 @@
 require('dotenv').config();
 
 const GRAPH_API_VERSION = 'v21.0';
-const NOMBRE_PLANTILLA = 'agendabot_prueba_vencida'; // debe coincidir con TEMPLATE_PRUEBA_VENCIDA en bloquearEmpresasVencidas.js
+// v2: el nombre original (agendabot_prueba_vencida) quedó con un intento
+// rechazado — Meta no deja reusar el nombre de inmediato después de
+// borrarlo (el mensaje dice "en menos de 1 minuto", pero en la práctica
+// tardó bastante más y no valía la pena seguir reintentando). Nombre nuevo,
+// sin historial, evita el problema por completo.
+// Debe coincidir con TEMPLATE_PRUEBA_VENCIDA en bloquearEmpresasVencidas.js
+const NOMBRE_PLANTILLA = 'agendabot_prueba_vencida_v2';
 
 async function main() {
   const accessToken = process.env.DEMO_WHATSAPP_ACCESS_TOKEN;
@@ -72,45 +78,22 @@ async function main() {
     ],
   };
 
-  // Borra un intento previo rechazado con el mismo nombre, si existe, para
-  // que el POST de abajo no choque con él (ignora el error si no había nada).
-  await fetch(`https://graph.facebook.com/${GRAPH_API_VERSION}/${wabaId}/message_templates?name=${NOMBRE_PLANTILLA}`, {
-    method: 'DELETE',
-    headers: { 'Authorization': `Bearer ${accessToken}` },
-  }).catch(() => {});
-
-  const dormir = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-
   console.log(`Enviando a revisión la plantilla "${NOMBRE_PLANTILLA}" (WABA ${wabaId})...\n`);
 
-  // El borrado de arriba es asíncrono en Meta — si se crea de nuevo mientras
-  // todavía está procesando el borrado anterior, responde con
-  // error_subcode 2388025 ("category is invalid... while being deleted").
-  // Reintenta con espera creciente en vez de fallar de una.
-  const MAX_INTENTOS = 6;
-  let datos, respuesta;
-  for (let intento = 1; intento <= MAX_INTENTOS; intento++) {
-    respuesta = await fetch(`https://graph.facebook.com/${GRAPH_API_VERSION}/${wabaId}/message_templates`, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${accessToken}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(body),
-    });
-    datos = await respuesta.json();
+  const respuesta = await fetch(`https://graph.facebook.com/${GRAPH_API_VERSION}/${wabaId}/message_templates`, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${accessToken}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(body),
+  });
+  const datos = await respuesta.json();
 
-    if (respuesta.ok) break;
-
-    const sigueBorrando = datos.error?.error_subcode === 2388025;
-    if (!sigueBorrando || intento === MAX_INTENTOS) {
-      console.error('❌ Meta rechazó la solicitud:');
-      console.error(JSON.stringify(datos, null, 2));
-      process.exit(1);
-    }
-
-    console.log(`Meta todavía está procesando el borrado del intento anterior — reintentando en 10s (${intento}/${MAX_INTENTOS})...`);
-    await dormir(10000);
+  if (!respuesta.ok) {
+    console.error('❌ Meta rechazó la solicitud:');
+    console.error(JSON.stringify(datos, null, 2));
+    process.exit(1);
   }
 
   console.log('✅ Plantilla enviada a revisión:');
