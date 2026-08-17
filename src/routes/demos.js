@@ -289,6 +289,8 @@ router.get('/clientes-convertidos', requireAuth, requireRole('VENDEDOR'), async 
           // lookup por whatsappNumeroId en server.js), así que esto es la
           // señal para saber a quién contactar por el pago pendiente.
           diasSinPago: pendientePago ? Math.floor((hoy - e.suscripcion.fechaInicio) / (1000 * 60 * 60 * 24)) : null,
+          avisosPruebaVencidaEnviados: e.avisosPruebaVencidaEnviados,
+          bloqueadaPorPruebaVencida: e.bloqueadaPorPruebaVencida,
           creadoEn: e.creadoEn,
         };
       }),
@@ -371,6 +373,71 @@ router.patch('/clientes-convertidos/:empresaId/plan', requireAuth, requireRole('
     res.json({ ok: true, suscripcion: suscripcionActualizada });
   } catch (error) {
     console.error('Error cambiando plan de cliente convertido:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ------------------------------------------------------------
+// POST /demos/clientes-convertidos/:empresaId/bloquear-prueba — corta el
+// servicio a mano, sin esperar los 3 avisos automáticos de
+// bloquearEmpresasVencidas.js. Solo para rolVendedor ADMIN. El corte real
+// del chat sigue dependiendo de BLOQUEO_PRUEBA_VENCIDA_ACTIVO (ver server.js).
+// ------------------------------------------------------------
+router.post('/clientes-convertidos/:empresaId/bloquear-prueba', requireAuth, requireRole('VENDEDOR'), async (req, res) => {
+  try {
+    if (req.usuario.rolVendedor !== 'ADMIN') {
+      return res.status(403).json({ error: 'Solo un administrador puede bloquear a un cliente' });
+    }
+
+    const { empresaId } = req.params;
+    const empresa = await prisma.empresa.findUnique({ where: { id: empresaId } });
+    if (!empresa || !empresa.demoOrigenId) {
+      return res.status(404).json({ error: 'Empresa no encontrada o no proviene de una demo convertida' });
+    }
+
+    const actualizada = await prisma.empresa.update({
+      where: { id: empresaId },
+      data: { bloqueadaPorPruebaVencida: true, fechaBloqueoPrueba: new Date() },
+    });
+
+    res.json({ ok: true, bloqueadaPorPruebaVencida: actualizada.bloqueadaPorPruebaVencida });
+  } catch (error) {
+    console.error('Error bloqueando cliente convertido:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ------------------------------------------------------------
+// POST /demos/clientes-convertidos/:empresaId/desbloquear-prueba — reabre
+// el servicio y le da una vuelta completa de avisos de nuevo (resetea el
+// contador) en vez de dejarlo a un tris de que el job lo vuelva a bloquear
+// en la próxima pasada. Solo para rolVendedor ADMIN.
+// ------------------------------------------------------------
+router.post('/clientes-convertidos/:empresaId/desbloquear-prueba', requireAuth, requireRole('VENDEDOR'), async (req, res) => {
+  try {
+    if (req.usuario.rolVendedor !== 'ADMIN') {
+      return res.status(403).json({ error: 'Solo un administrador puede desbloquear a un cliente' });
+    }
+
+    const { empresaId } = req.params;
+    const empresa = await prisma.empresa.findUnique({ where: { id: empresaId } });
+    if (!empresa || !empresa.demoOrigenId) {
+      return res.status(404).json({ error: 'Empresa no encontrada o no proviene de una demo convertida' });
+    }
+
+    const actualizada = await prisma.empresa.update({
+      where: { id: empresaId },
+      data: {
+        bloqueadaPorPruebaVencida: false,
+        fechaBloqueoPrueba: null,
+        avisosPruebaVencidaEnviados: 0,
+        fechaUltimoAvisoPrueba: new Date(),
+      },
+    });
+
+    res.json({ ok: true, bloqueadaPorPruebaVencida: actualizada.bloqueadaPorPruebaVencida });
+  } catch (error) {
+    console.error('Error desbloqueando cliente convertido:', error);
     res.status(500).json({ error: error.message });
   }
 });
