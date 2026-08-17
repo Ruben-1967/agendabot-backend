@@ -26,7 +26,7 @@ const { obtenerUrlPanelPrincipal } = require('../lib/urlPanel');
 
 const MAX_AVISOS = 3;
 const DIAS_ENTRE_AVISOS = 3; // también se usa como plazo de gracia después del último aviso, antes de marcar bloqueadaPorPruebaVencida
-const TEMPLATE_PRUEBA_VENCIDA = 'agendabot_prueba_vencida_v2'; // ver scripts/crear-plantilla-prueba-vencida.js — hay que enviarla a revisión antes de que esto funcione de verdad
+const TEMPLATE_PRUEBA_VENCIDA = 'agendabot_prueba_vencida_v3'; // ver scripts/crear-plantilla-prueba-vencida.js — hay que enviarla a revisión antes de que esto funcione de verdad
 
 function diasEntre(a, b) {
   return (a - b) / (1000 * 60 * 60 * 24);

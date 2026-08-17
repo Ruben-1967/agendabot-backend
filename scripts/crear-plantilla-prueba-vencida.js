@@ -27,13 +27,11 @@
 require('dotenv').config();
 
 const GRAPH_API_VERSION = 'v21.0';
-// v2: el nombre original (agendabot_prueba_vencida) quedó con un intento
-// rechazado — Meta no deja reusar el nombre de inmediato después de
-// borrarlo (el mensaje dice "en menos de 1 minuto", pero en la práctica
-// tardó bastante más y no valía la pena seguir reintentando). Nombre nuevo,
-// sin historial, evita el problema por completo.
+// v2 también quedó rechazada (ver historial en el comentario de más abajo,
+// junto al body) — nombre nuevo de nuevo, así no hay que lidiar con el
+// cooldown de Meta para reusar un nombre recién rechazado.
 // Debe coincidir con TEMPLATE_PRUEBA_VENCIDA en bloquearEmpresasVencidas.js
-const NOMBRE_PLANTILLA = 'agendabot_prueba_vencida_v2';
+const NOMBRE_PLANTILLA = 'agendabot_prueba_vencida_v3';
 
 async function main() {
   const accessToken = process.env.DEMO_WHATSAPP_ACCESS_TOKEN;
@@ -51,22 +49,22 @@ async function main() {
     process.exit(1);
   }
 
-  // Primer intento como UTILITY fue rechazado por Meta (INCORRECT_CATEGORY):
-  // invitar a pagar/activar un plan es contenido promocional para Meta, sin
-  // importar cómo se redacte. MARKETING cuesta más por mensaje que UTILITY
-  // y depende de que el destinatario haya interactuado/dado pie a recibir
-  // mensajes — aceptable acá porque el negocio escribió primero al bot
-  // durante la prueba.
+  // v1 (UTILITY): rechazada, INCORRECT_CATEGORY — "activa tu plan aquí" leído
+  // como promocional. v2 (MARKETING): rechazada, INCORRECT_CATEGORY otra vez
+  // — el clasificador de Meta quedó indeciso con el lenguaje de venta
+  // ("reactiva el servicio", "entra... ahora"). v3: se saca todo el tono de
+  // urgencia/CTA de compra, queda como aviso neutro de estado de cuenta
+  // (mismo estilo que "tu pago falló, revisa tu cuenta"), vuelve a UTILITY.
   const body = {
     name: NOMBRE_PLANTILLA,
     language: 'es',
-    category: 'MARKETING',
+    category: 'UTILITY',
     components: [
       {
         type: 'BODY',
         // {{2}} no puede ser lo último del texto (Meta rechaza una variable
-        // pegada al final sin texto real de cierre) — de ahí el "ahora." al final.
-        text: 'Hola {{1}}, tu período de prueba gratuita de AgendaBot terminó. Para reactivar el servicio y que tus clientes sigan agendando por WhatsApp, entra a {{2}} ahora.',
+        // pegada al final sin texto real de cierre) — de ahí "cuando puedas." al final.
+        text: 'Hola {{1}}, te informamos que tu período de prueba de AgendaBot venció. Revisa el estado de tu cuenta en {{2}} cuando puedas.',
         example: {
           body_text: [['Óptica Ejemplo', 'https://agendabot-beryl.vercel.app/suscripcion/elegir-plan?empresaId=abc123']],
         },
