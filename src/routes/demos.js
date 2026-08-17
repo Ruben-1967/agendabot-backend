@@ -15,11 +15,13 @@ const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
 const { parsePhoneNumberFromString } = require('libphonenumber-js');
 const prisma = require('../lib/prisma');
+const { obtenerUrlPanelPrincipal } = require('../lib/urlPanel');
 const { requireAuth, requireRole } = require('../middleware/auth');
 const { extraerInfoSitioWeb } = require('../services/extraccionSitioWeb');
 const { sendWhatsAppTextMessage } = require('../services/whatsapp');
 const { listarLeadsConSLA } = require('../services/slaService');
 const { conversionesEnRangoPorVendedor } = require('../services/rankingService');
+const { PLANES: DETALLE_PLANES } = require('../services/contratoHtml');
 const { horaChileAFechaUTC, hoyISOEnChile } = require('../lib/horaChile');
 
 const router = express.Router();
@@ -98,7 +100,7 @@ router.get('/rubros', requireAuth, requireRole('VENDEDOR'), async (req, res) => 
 // ------------------------------------------------------------
 router.post('/prospectos', requireAuth, requireRole('VENDEDOR'), async (req, res) => {
   try {
-    const { nombreNegocio, telefono, paisTelefono, nombreEncargado, claveRubro, sitioWeb } = req.body;
+    const { nombreNegocio, telefono, paisTelefono, nombreEncargado, claveRubro, sitioWeb, email } = req.body;
 
     if (!nombreNegocio || !telefono || !paisTelefono || !nombreEncargado || !claveRubro) {
       return res.status(400).json({
@@ -153,6 +155,7 @@ router.post('/prospectos', requireAuth, requireRole('VENDEDOR'), async (req, res
         where: { telefono: telefonoNormalizado },
         data: {
           nombreProspecto: nombreEncargado,
+          email: email || null,
           vendedorId: req.usuario.vendedorId,
           paso: 0,
           historialSimulacion: [],
@@ -165,6 +168,7 @@ router.post('/prospectos', requireAuth, requireRole('VENDEDOR'), async (req, res
           telefono: telefonoNormalizado,
           empresaDemoId: empresaDemo.id,
           nombreProspecto: nombreEncargado,
+          email: email || null,
           vendedorId: req.usuario.vendedorId,
           origenDemo: 'vendedor',
         },
@@ -227,6 +231,62 @@ router.get('/prospectos', requireAuth, requireRole('VENDEDOR'), async (req, res)
     res.json({ demos: filtrados, contadorVencidos });
   } catch (error) {
     console.error('Error listando prospectos de demo:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ------------------------------------------------------------
+// GET /demos/clientes-convertidos — negocios que ya pasaron por "Convertir a
+// cliente real" (esDemo: false, vinieron de una demo). Mismo esquema de
+// scoping que GET /prospectos: un vendedor normal ve solo lo suyo, un
+// rolVendedor ADMIN ve todo o filtra por ?vendedorId=.
+//
+// Los convertidos antes de que este endpoint existiera pueden no tener
+// Suscripcion todavía (se creaba recién cuando el cliente elegía plan) — se
+// listan igual, con plan/estadoSuscripcion en null.
+// ------------------------------------------------------------
+router.get('/clientes-convertidos', requireAuth, requireRole('VENDEDOR'), async (req, res) => {
+  try {
+    const esAdmin = req.usuario.rolVendedor === 'ADMIN';
+    const vendedorIdParam = req.query.vendedorId;
+
+    const vendedorIdFiltro = esAdmin
+      ? (vendedorIdParam && vendedorIdParam !== 'todos' ? vendedorIdParam : null)
+      : req.usuario.vendedorId;
+
+    const empresas = await prisma.empresa.findMany({
+      where: {
+        esDemo: false,
+        demoOrigenId: { not: null },
+        ...(vendedorIdFiltro ? { vendedorId: vendedorIdFiltro } : {}),
+      },
+      include: {
+        suscripcion: true,
+        usuarios: { where: { rol: 'ADMIN' }, take: 1, select: { email: true, tokenActivacion: true } },
+        vendedor: { select: { nombre: true } },
+      },
+      orderBy: { creadoEn: 'desc' },
+    });
+
+    res.json({
+      clientes: empresas.map((e) => {
+        const usuarioAdmin = e.usuarios[0] || null;
+        return {
+          empresaId: e.id,
+          nombre: e.nombre,
+          telefonoContacto: e.telefonoContacto,
+          email: usuarioAdmin?.email || null,
+          activado: usuarioAdmin ? !usuarioAdmin.tokenActivacion : null,
+          vendedorNombre: e.vendedor?.nombre || null,
+          plan: e.suscripcion?.plan || null,
+          estadoSuscripcion: e.suscripcion?.estado || null,
+          montoMensualActual: e.suscripcion?.montoMensualActual ?? null,
+          creadoEn: e.creadoEn,
+        };
+      }),
+    });
+  } catch (error) {
+    console.error('Error listando clientes convertidos:', error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -396,19 +456,24 @@ router.delete('/prospectos/:id', requireAuth, requireRole('VENDEDOR'), async (re
 
 // ------------------------------------------------------------
 // POST /demos/convertir-a-cliente-real
-// body: { demoId }
+// body: { demoId, email, plan }
 // El vendedor confirma que una demo se convirtió en cliente real: crea la
-// Empresa real (vendedorId + demoOrigenId para atribución del ranking) y un
-// Usuario ADMIN con un password temporal inutilizable — el cliente define su
-// propia contraseña vía el link de activación que se le envía por WhatsApp
-// (el vendedor nunca conoce la contraseña real). No crea Suscripcion todavía:
-// eso ocurre cuando el cliente elige un plan en /suscripcion/elegir-plan.
+// Empresa real (vendedorId + demoOrigenId para atribución del ranking), un
+// Usuario ADMIN con el email real del negocio y un password temporal
+// inutilizable — el cliente define su propia contraseña vía el link de
+// activación que se le envía por WhatsApp (el vendedor nunca conoce la
+// contraseña real) — y la Suscripcion en PENDIENTE_PAGO con el plan elegido
+// por el vendedor en el momento de la conversión (antes había que esperar a
+// que el cliente mismo la eligiera en /suscripcion/elegir-plan).
 // ------------------------------------------------------------
 router.post('/convertir-a-cliente-real', requireAuth, requireRole('VENDEDOR'), async (req, res) => {
   try {
-    const { demoId } = req.body;
-    if (!demoId) {
-      return res.status(400).json({ error: 'Falta demoId' });
+    const { demoId, email, plan } = req.body;
+    if (!demoId || !email || !plan) {
+      return res.status(400).json({ error: 'Faltan campos: demoId, email, plan' });
+    }
+    if (!['A', 'B', 'C'].includes(plan)) {
+      return res.status(400).json({ error: 'Plan inválido' });
     }
 
     const demo = await prisma.demoAsignada.findUnique({
@@ -429,45 +494,71 @@ router.post('/convertir-a-cliente-real', requireAuth, requireRole('VENDEDOR'), a
     // vendedor) puede iniciar sesión con esto porque el valor real nunca se comparte.
     const passwordHashTemporal = await bcrypt.hash(crypto.randomUUID(), 10);
 
-    const { empresaReal } = await prisma.$transaction(async (tx) => {
-      const empresaReal = await tx.empresa.create({
-        data: {
-          nombre: demo.empresaDemo.nombre,
-          rubroTemplateId: demo.empresaDemo.rubroTemplateId,
-          telefonoContacto: demo.telefono,
-          sitioWeb: demo.empresaDemo.sitioWeb,
-          direccion: demo.empresaDemo.direccion,
-          informacionAdicional: demo.empresaDemo.informacionAdicional,
-          esDemo: false,
-          vendedorId: req.usuario.vendedorId,
-          demoOrigenId: demo.id,
-        },
-      });
+    const planEnum = `PLAN_${plan}`;
+    const detallePlan = DETALLE_PLANES[planEnum];
 
-      await tx.usuario.create({
-        data: {
-          empresaId: empresaReal.id,
-          nombre: demo.nombreProspecto || demo.empresaDemo.nombre,
-          // No hay infraestructura de correo en el sistema — el login es por
-          // email+password, pero la activación/entrega es por WhatsApp, así que
-          // este email es solo un identificador estable, no se usa para enviar nada.
-          email: `${demo.telefono}@cliente.totemsystem.cl`,
-          passwordHash: passwordHashTemporal,
-          rol: 'ADMIN',
-          tokenActivacion,
-          tokenActivacionExpira,
-        },
-      });
+    const fechaProximoCobro = new Date();
+    fechaProximoCobro.setMonth(fechaProximoCobro.getMonth() + 1);
+    const fechaProximoCobroHosting = new Date();
+    fechaProximoCobroHosting.setFullYear(fechaProximoCobroHosting.getFullYear() + 1);
 
-      await tx.demoAsignada.update({
-        where: { id: demo.id },
-        data: { convertidaEn: new Date() },
-      });
+    let empresaReal;
+    try {
+      ({ empresaReal } = await prisma.$transaction(async (tx) => {
+        const empresaReal = await tx.empresa.create({
+          data: {
+            nombre: demo.empresaDemo.nombre,
+            rubroTemplateId: demo.empresaDemo.rubroTemplateId,
+            telefonoContacto: demo.telefono,
+            sitioWeb: demo.empresaDemo.sitioWeb,
+            direccion: demo.empresaDemo.direccion,
+            informacionAdicional: demo.empresaDemo.informacionAdicional,
+            esDemo: false,
+            vendedorId: req.usuario.vendedorId,
+            demoOrigenId: demo.id,
+          },
+        });
 
-      return { empresaReal };
-    });
+        await tx.usuario.create({
+          data: {
+            empresaId: empresaReal.id,
+            nombre: demo.nombreProspecto || demo.empresaDemo.nombre,
+            email,
+            passwordHash: passwordHashTemporal,
+            rol: 'ADMIN',
+            tokenActivacion,
+            tokenActivacionExpira,
+          },
+        });
 
-    const linkActivacion = `${process.env.PANEL_FRONTEND_URL}/activar-cuenta?token=${tokenActivacion}`;
+        await tx.suscripcion.create({
+          data: {
+            empresaId: empresaReal.id,
+            plan: planEnum,
+            estado: 'PENDIENTE_PAGO',
+            montoMensualActual: detallePlan.montoMensual,
+            citasIncluidas: detallePlan.citasIncluidas,
+            precioCitaExcedente: detallePlan.precioCitaExcedente,
+            fechaProximoCobro,
+            fechaProximoCobroHosting,
+          },
+        });
+
+        await tx.demoAsignada.update({
+          where: { id: demo.id },
+          data: { convertidaEn: new Date() },
+        });
+
+        return { empresaReal };
+      }));
+    } catch (errTx) {
+      if (errTx.code === 'P2002') {
+        return res.status(400).json({ error: 'Ese correo ya está en uso por otra cuenta' });
+      }
+      throw errTx;
+    }
+
+    const linkActivacion = `${obtenerUrlPanelPrincipal()}/activar-cuenta?token=${tokenActivacion}`;
 
     // El envío es texto libre, que WhatsApp Business API solo permite dentro
     // de la ventana de 24h desde el último mensaje del prospecto al bot —
@@ -485,7 +576,7 @@ router.post('/convertir-a-cliente-real', requireAuth, requireRole('VENDEDOR'), a
         await sendWhatsAppTextMessage({
           phoneNumberId,
           to: demo.telefono,
-          text: `¡Gracias por confiar en nosotros! Para activar tu cuenta y elegir tu plan, define tu contraseña acá: ${linkActivacion}`,
+          text: `¡Gracias por confiar en nosotros! Para activar tu cuenta, define tu contraseña acá: ${linkActivacion}`,
           accessToken,
         });
         whatsappEnviado = true;
@@ -503,6 +594,8 @@ router.post('/convertir-a-cliente-real', requireAuth, requireRole('VENDEDOR'), a
     res.json({
       ok: true,
       empresaId: empresaReal.id,
+      plan,
+      montoMensualActual: detallePlan.montoMensual,
       whatsappEnviado,
       // Siempre se devuelve, aunque el envío automático haya reportado éxito:
       // que la API de Meta no tire error no garantiza que el mensaje se vea

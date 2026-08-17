@@ -92,6 +92,7 @@ async function listarLeadsConSLA(vendedorId) {
       telefono: d.telefono,
       nombreNegocio: d.empresaDemo.nombre,
       nombreEncargado: d.nombreProspecto,
+      email: d.email,
       rubro: d.empresaDemo.rubroTemplate.nombre,
       origenDemo: d.origenDemo,
       tipoLead,

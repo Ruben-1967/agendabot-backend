@@ -808,6 +808,7 @@ model DemoAsignada {
   empresaDemoId   String
   empresaDemo     Empresa  @relation(fields: [empresaDemoId], references: [id])
   nombreProspecto String?
+  email           String? // capturado por el vendedor, opcional — se reusa al convertir a cliente real
   creadoEn        DateTime @default(now())
   actualizadoEn   DateTime @updatedAt
   vendedor        Vendedor? @relation(fields: [vendedorId], references: [id])

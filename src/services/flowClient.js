@@ -1,11 +1,12 @@
 /**
- * src/services/flowClient.js
+ * src/services/flow  
  * 
  * Cliente para integrar con Flow.cl API v2 (suscripciones + pagos únicos).
  * Usa variables de entorno: FLOW_API_KEY, FLOW_API_SECRET
  */
 
 const crypto = require('crypto');
+const { obtenerUrlPanelPrincipal } = require('../lib/urlPanel');
 
 const FLOW_BASE_URL = process.env.FLOW_ENDPOINT || 'https://api.flow.cl/api';
 const FLOW_API_KEY = process.env.FLOW_API_KEY;
@@ -128,7 +129,7 @@ async function crearSuscripcionPlan(plan, empresaId, emailEmpresa, telefonoEmpre
     email: emailEmpresa,
     phone: telefonoEmpresa,
     urlConfirmation: `${process.env.BACKEND_URL}/suscripcion/flow-webhook-plan`,
-    urlReturn: `${process.env.PANEL_FRONTEND_URL}/suscripcion/resultado?plan=${plan}&empresaId=${empresaId}`,
+    urlReturn: `${obtenerUrlPanelPrincipal()}/suscripcion/resultado?plan=${plan}&empresaId=${empresaId}`,
   };
 
   const resultado = await requestFlowPost('/payment/create', params);
@@ -155,7 +156,7 @@ async function crearOrdenCreditos(cantidadCreditos, empresaId, emailEmpresa) {
     amount: montoClp,
     email: emailEmpresa,
     urlConfirmation: `${process.env.BACKEND_URL}/suscripcion/flow-webhook-creditos`,
-    urlReturn: `${process.env.PANEL_FRONTEND_URL}/billetera/resultado`,
+    urlReturn: `${obtenerUrlPanelPrincipal()}/billetera/resultado`,
   };
 
   const resultado = await requestFlowPost('/payment/create', params);
