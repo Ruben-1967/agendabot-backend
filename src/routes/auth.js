@@ -4,6 +4,8 @@ const jwt = require('jsonwebtoken');
 const prisma = require('../lib/prisma');
 const { requireAuth, JWT_SECRET } = require('../middleware/auth');
 const { limitadorLogin } = require('../middleware/rateLimiting');
+const { sendWhatsAppTextMessage } = require('../services/whatsapp');
+const { obtenerUrlPanelPrincipal } = require('../lib/urlPanel');
 const router = express.Router();
 const TOKEN_EXPIRA_EN = '12h';
 
@@ -107,6 +109,27 @@ router.post('/activar-cuenta', async (req, res) => {
       nombre: usuarioActivado.nombre,
     };
     const jwtToken = jwt.sign(payload, JWT_SECRET, { expiresIn: TOKEN_EXPIRA_EN });
+
+    // El link de activación es de un solo uso (tokenActivacion ya quedó en
+    // null arriba) — sin esto, el negocio no tiene forma de saber a qué URL
+    // volver la próxima vez que quiera entrar. No bloquea la respuesta si
+    // falla (mismo criterio que el envío en convertir-a-cliente-real): la
+    // cuenta ya quedó activada igual.
+    try {
+      const phoneNumberId = process.env.DEMO_PHONE_NUMBER_ID;
+      const accessToken = process.env.DEMO_WHATSAPP_ACCESS_TOKEN;
+      if (phoneNumberId && accessToken && usuarioActivado.empresa.telefonoContacto) {
+        const linkLogin = `${obtenerUrlPanelPrincipal()}/login`;
+        await sendWhatsAppTextMessage({
+          phoneNumberId,
+          to: usuarioActivado.empresa.telefonoContacto,
+          text: `¡Tu cuenta ya está activa! Para volver a entrar más adelante, usá este link con tu email y la contraseña que acabás de crear: ${linkLogin}`,
+          accessToken,
+        });
+      }
+    } catch (errWhatsapp) {
+      console.error('[activar-cuenta] Error enviando WhatsApp de confirmación de login:', errWhatsapp.message);
+    }
 
     res.json({
       token: jwtToken,

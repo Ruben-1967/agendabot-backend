@@ -272,6 +272,7 @@ router.get('/suscripciones/pendientes', requireAuth, requireRolVendedorAdmin, as
       orderBy: { fechaInicio: 'desc' },
     });
 
+    const hoy = new Date();
     res.json({
       pendientes: pendientes.map((s) => ({
         empresaId: s.empresaId,
@@ -281,6 +282,7 @@ router.get('/suscripciones/pendientes', requireAuth, requireRolVendedorAdmin, as
         plan: s.plan,
         montoMensualActual: s.montoMensualActual,
         fechaInicio: s.fechaInicio,
+        diasSinPago: Math.floor((hoy - s.fechaInicio) / (1000 * 60 * 60 * 24)),
       })),
     });
   } catch (error) {

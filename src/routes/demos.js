@@ -268,9 +268,11 @@ router.get('/clientes-convertidos', requireAuth, requireRole('VENDEDOR'), async 
       orderBy: { creadoEn: 'desc' },
     });
 
+    const hoy = new Date();
     res.json({
       clientes: empresas.map((e) => {
         const usuarioAdmin = e.usuarios[0] || null;
+        const pendientePago = e.suscripcion?.estado === 'PENDIENTE_PAGO';
         return {
           empresaId: e.id,
           nombre: e.nombre,
@@ -281,6 +283,11 @@ router.get('/clientes-convertidos', requireAuth, requireRole('VENDEDOR'), async 
           plan: e.suscripcion?.plan || null,
           estadoSuscripcion: e.suscripcion?.estado || null,
           montoMensualActual: e.suscripcion?.montoMensualActual ?? null,
+          // Días usando el bot sin pagar — el chat responde apenas el WhatsApp
+          // está conectado, sin esperar a que la Suscripcion esté ACTIVA (ver
+          // lookup por whatsappNumeroId en server.js), así que esto es la
+          // señal para saber a quién contactar por el pago pendiente.
+          diasSinPago: pendientePago ? Math.floor((hoy - e.suscripcion.fechaInicio) / (1000 * 60 * 60 * 24)) : null,
           creadoEn: e.creadoEn,
         };
       }),

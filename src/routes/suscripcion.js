@@ -30,10 +30,8 @@ router.get('/estado', requireAuth, requireRole('ADMIN'), async (req, res) => {
       select: {
         id: true,
         nombre: true,
-        estadoSuscripcion: true,
-        planActivo: true,
         pruebahasta: true,
-        fechaVencimientoPago: true,
+        suscripcion: { select: { plan: true, estado: true, fechaProximoCobro: true } },
       },
     });
 
@@ -45,15 +43,16 @@ router.get('/estado', requireAuth, requireRole('ADMIN'), async (req, res) => {
     const diasParaVencer = empresa.pruebahasta
       ? Math.ceil((empresa.pruebahasta - hoy) / (1000 * 60 * 60 * 24))
       : null;
+    const enPruebaVigente = !empresa.suscripcion && empresa.pruebahasta && hoy < empresa.pruebahasta;
 
     res.json({
-      estado: empresa.estadoSuscripcion,
-      plan: empresa.planActivo,
+      estado: empresa.suscripcion?.estado || (enPruebaVigente ? 'PRUEBA' : null),
+      plan: empresa.suscripcion?.plan || null,
       pruebahasta: empresa.pruebahasta,
-      vencimientoPago: empresa.fechaVencimientoPago,
+      vencimientoPago: empresa.suscripcion?.fechaProximoCobro || null,
       diasParaVencer,
-      enPrueba: empresa.estadoSuscripcion === 'PRUEBA' && hoy < empresa.pruebahasta,
-      vencido: empresa.pruebahasta && hoy >= empresa.pruebahasta && !empresa.planActivo,
+      enPrueba: enPruebaVigente,
+      vencido: !empresa.suscripcion && empresa.pruebahasta && hoy >= empresa.pruebahasta,
     });
   } catch (error) {
     console.error('Error en GET /suscripcion/estado:', error);
