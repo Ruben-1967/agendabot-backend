@@ -516,7 +516,9 @@ model Suscripcion {
   estado    EstadoSuscripcion @default(PENDIENTE_PAGO)
   fechaActivacion DateTime? // se setea cuando estado pasa a ACTIVA — el ranking de conversión lee este campo
 
-  tokenFlow String?
+  tokenFlow                 String? // flowSubscriptionId de la suscripción del plan (A/B/C) en Flow
+  flowCustomerId            String? // customerId de Flow, se crea una sola vez por Empresa
+  flowSubscriptionIdHosting String? // flowSubscriptionId de la suscripción de hosting anual (separada de la del plan)
 
   fechaInicio           DateTime @default(now())
   fechaCambioPrecio     DateTime?

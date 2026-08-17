@@ -1,7 +1,8 @@
 /**
- * src/services/flow  
- * 
- * Cliente para integrar con Flow.cl API v2 (suscripciones + pagos únicos).
+ * src/services/flowClient.js
+ *
+ * Cliente para integrar con Flow.cl API v2 — Suscripciones (cobro recurrente
+ * automático) + pago único (créditos de campaña).
  * Usa variables de entorno: FLOW_API_KEY, FLOW_API_SECRET
  */
 
@@ -15,17 +16,6 @@ const FLOW_API_SECRET = process.env.FLOW_API_SECRET;
 if (!FLOW_API_KEY || !FLOW_API_SECRET) {
   console.warn('[flowClient] FLOW_API_KEY o FLOW_API_SECRET no configuradas. Flow deshabilitado.');
 }
-
-/**
- * Mapeo de planes Totemsystem a precios Flow (en CLP)
- */
-const PLANES = {
-  A: { precio: 9900, nombre: 'Plan A - 100 citas', descripcion: '100 citas/mes, excedente $150/cita' },
-  B: { precio: 19900, nombre: 'Plan B - 300 citas', descripcion: '300 citas/mes, excedente $90/cita' },
-  C: { precio: 39900, nombre: 'Plan C - 700 citas', descripcion: '700 citas/mes, excedente $60/cita' },
-};
-
-const HOSTING_ANUAL_CLP = 34000; // 1 UF ≈ $34.000
 
 /**
  * Calcula el hash de autenticación para Flow (HMAC-SHA256)
@@ -60,7 +50,7 @@ async function requestFlow(endpoint, params = {}) {
     const response = await fetch(url, { method: 'GET' });
     const data = await response.json();
 
-    if (data.code !== 0) {
+    if (data.code !== undefined && data.code !== 0) {
       throw new Error(`Flow error ${data.code}: ${data.message || 'Sin detalles'}`);
     }
 
@@ -72,7 +62,7 @@ async function requestFlow(endpoint, params = {}) {
 }
 
 /**
- * Realiza una petición POST a Flow (para crear suscripciones/órdenes)
+ * Realiza una petición POST a Flow (para crear planes/clientes/suscripciones)
  */
 async function requestFlowPost(endpoint, params = {}) {
   if (!FLOW_API_KEY || !FLOW_API_SECRET) {
@@ -96,7 +86,7 @@ async function requestFlowPost(endpoint, params = {}) {
 
     const data = await response.json();
 
-    if (data.code !== 0) {
+    if (data.code !== undefined && data.code !== 0) {
       throw new Error(`Flow error ${data.code}: ${data.message || 'Sin detalles'}`);
     }
 
@@ -107,39 +97,103 @@ async function requestFlowPost(endpoint, params = {}) {
   }
 }
 
+// ------------------------------------------------------------------
+// SUSCRIPCIONES (cobro recurrente automático)
+// ------------------------------------------------------------------
+
 /**
- * Crea una suscripción de plan mensual en Flow.
- * Retorna { subscriptionId, redirectUrl }
+ * Crea un Plan en Flow (una sola vez por plan — A/B/C/Hosting, no por cliente).
+ * interval: 1=diario, 2=semanal, 3=mensual, 4=anual
  */
-async function crearSuscripcionPlan(plan, empresaId, emailEmpresa, telefonoEmpresa) {
-  if (!PLANES[plan]) {
-    throw new Error(`Plan inválido: ${plan}`);
-  }
-
-  const planData = PLANES[plan];
-  
-  // Flow espera un "order" único por empresa/plan
-  const uniqueOrder = `totemsystem-${plan}-${empresaId}-${Date.now()}`;
-
+async function crearPlanFlow({ planId, nombre, montoClp, interval, urlCallback, trialPeriodDays }) {
   const params = {
-    commerceOrder: uniqueOrder,
-    subject: planData.nombre,
+    planId,
+    name: nombre,
     currency: 'CLP',
-    amount: planData.precio,
-    email: emailEmpresa,
-    phone: telefonoEmpresa,
-    urlConfirmation: `${process.env.BACKEND_URL}/suscripcion/flow-webhook-plan`,
-    urlReturn: `${obtenerUrlPanelPrincipal()}/suscripcion/resultado?plan=${plan}&empresaId=${empresaId}`,
+    amount: montoClp,
+    interval,
+    urlCallback,
   };
-
-  const resultado = await requestFlowPost('/payment/create', params);
-
-  // Flow devuelve { token, ... }
-  return {
-    token: resultado.token,
-    url: `https://www.flow.cl/app/web/pay.php?token=${resultado.token}`,
-  };
+  if (trialPeriodDays !== undefined) {
+    params.trial_period_days = trialPeriodDays;
+  }
+  return requestFlowPost('/plans/create', params);
 }
+
+/**
+ * Crea un Cliente en Flow para una Empresa. Se llama una sola vez; el
+ * customerId resultante se guarda en Suscripcion.flowCustomerId y se reusa.
+ */
+async function crearClienteFlow({ empresaId, nombreEmpresa, emailEmpresa }) {
+  const params = {
+    name: nombreEmpresa,
+    email: emailEmpresa,
+    externalId: empresaId,
+  };
+  return requestFlowPost('/customer/create', params);
+}
+
+/**
+ * Inicia el registro de tarjeta de un Cliente Flow. Devuelve { url, token }
+ * — el frontend redirige al cliente a esa url para que ingrese su tarjeta.
+ */
+async function registrarTarjetaFlow({ customerId, empresaId, plan }) {
+  const params = {
+    customerId,
+    url_return: `${obtenerUrlPanelPrincipal()}/suscripcion/flow-callback-tarjeta?empresaId=${empresaId}&plan=${plan}`,
+  };
+  return requestFlowPost('/customer/register', params);
+}
+
+/**
+ * Consulta si el registro de tarjeta (iniciado con registrarTarjetaFlow)
+ * quedó exitoso. status: 1=Pendiente, 2=Exitoso (según doc de Flow).
+ */
+async function consultarEstadoRegistroFlow(token) {
+  return requestFlow('/customer/getRegisterStatus', { token });
+}
+
+/**
+ * Cobra un monto arbitrario a la tarjeta YA registrada de un Cliente Flow,
+ * sin volver a pedirle los datos (usado para el primer pago combinado:
+ * plan mensual + hosting anual). Es asíncrono — la confirmación real llega
+ * a `urlConfirmation` (ver flow-webhook-collect en suscripcion.js), acá solo
+ * se dispara el cobro.
+ */
+async function cobrarCollectFlow({ customerId, montoClp, asunto, ordenComercio, urlConfirmation }) {
+  const params = {
+    customerId,
+    amount: montoClp,
+    subject: asunto,
+    commerceOrder: ordenComercio,
+    currency: 'CLP',
+    urlConfirmation,
+    urlReturn: `${obtenerUrlPanelPrincipal()}/suscripcion/resultado`,
+  };
+  return requestFlowPost('/customer/collect', params);
+}
+
+/**
+ * Crea una Suscripción de un Cliente a un Plan. trialPeriodDays retrasa el
+ * primer cobro automático de ESTA suscripción — se usa para no duplicar el
+ * cobro del primer período, que ya se cobró vía cobrarCollectFlow.
+ */
+async function crearSuscripcionFlow({ planId, customerId, trialPeriodDays }) {
+  const params = { planId, customerId };
+  if (trialPeriodDays !== undefined) {
+    params.trial_period_days = trialPeriodDays;
+  }
+  return requestFlowPost('/subscription/create', params);
+}
+
+async function cancelarSuscripcionFlow(subscriptionId) {
+  return requestFlowPost('/subscription/cancel', { subscriptionId });
+}
+
+// ------------------------------------------------------------------
+// PAGO ÚNICO (créditos de campaña) — sin cambios, no forma parte de
+// suscripciones
+// ------------------------------------------------------------------
 
 /**
  * Crea una orden de compra única (créditos de campaña)
@@ -168,7 +222,10 @@ async function crearOrdenCreditos(cantidadCreditos, empresaId, emailEmpresa) {
 }
 
 /**
- * Consulta el estado de una orden/suscripción en Flow
+ * Consulta el estado de un pago único en Flow (payment/getStatus). Se usa
+ * tanto para el webhook de créditos como para confirmar el cobro combinado
+ * de customer/collect — Flow reusa este mismo servicio de status para
+ * ambos casos.
  */
 async function consultarEstado(token) {
   const resultado = await requestFlow('/payment/getStatus', { token });
@@ -187,17 +244,20 @@ async function consultarEstado(token) {
  * Verifica firma HMAC de webhook (Flow envia s=hmac en el POST)
  */
 function verificarHmacWebhook(params) {
-  const sRecibido = params.s;
-  delete params.s; // No incluir la firma en el cálculo
-
-  const sCalculado = calcularHmac(params);
-  return sRecibido === sCalculado;
+  const copia = { ...params };
+  delete copia.s; // No incluir la firma en el cálculo
+  return params.s === calcularHmac(copia);
 }
 
 module.exports = {
-  crearSuscripcionPlan,
+  crearPlanFlow,
+  crearClienteFlow,
+  registrarTarjetaFlow,
+  consultarEstadoRegistroFlow,
+  cobrarCollectFlow,
+  crearSuscripcionFlow,
+  cancelarSuscripcionFlow,
   crearOrdenCreditos,
   consultarEstado,
   verificarHmacWebhook,
-  PLANES,
 };
