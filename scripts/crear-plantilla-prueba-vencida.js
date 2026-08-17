@@ -45,10 +45,16 @@ async function main() {
     process.exit(1);
   }
 
+  // Primer intento como UTILITY fue rechazado por Meta (INCORRECT_CATEGORY):
+  // invitar a pagar/activar un plan es contenido promocional para Meta, sin
+  // importar cómo se redacte. MARKETING cuesta más por mensaje que UTILITY
+  // y depende de que el destinatario haya interactuado/dado pie a recibir
+  // mensajes — aceptable acá porque el negocio escribió primero al bot
+  // durante la prueba.
   const body = {
     name: NOMBRE_PLANTILLA,
     language: 'es',
-    category: 'UTILITY',
+    category: 'MARKETING',
     components: [
       {
         type: 'BODY',
@@ -65,6 +71,13 @@ async function main() {
       },
     ],
   };
+
+  // Borra un intento previo rechazado con el mismo nombre, si existe, para
+  // que el POST de abajo no choque con él (ignora el error si no había nada).
+  await fetch(`https://graph.facebook.com/${GRAPH_API_VERSION}/${wabaId}/message_templates?name=${NOMBRE_PLANTILLA}`, {
+    method: 'DELETE',
+    headers: { 'Authorization': `Bearer ${accessToken}` },
+  }).catch(() => {});
 
   console.log(`Enviando a revisión la plantilla "${NOMBRE_PLANTILLA}" (WABA ${wabaId})...\n`);
 
