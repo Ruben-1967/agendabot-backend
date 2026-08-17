@@ -79,23 +79,38 @@ async function main() {
     headers: { 'Authorization': `Bearer ${accessToken}` },
   }).catch(() => {});
 
+  const dormir = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
   console.log(`Enviando a revisión la plantilla "${NOMBRE_PLANTILLA}" (WABA ${wabaId})...\n`);
 
-  const respuesta = await fetch(`https://graph.facebook.com/${GRAPH_API_VERSION}/${wabaId}/message_templates`, {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${accessToken}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(body),
-  });
+  // El borrado de arriba es asíncrono en Meta — si se crea de nuevo mientras
+  // todavía está procesando el borrado anterior, responde con
+  // error_subcode 2388025 ("category is invalid... while being deleted").
+  // Reintenta con espera creciente en vez de fallar de una.
+  const MAX_INTENTOS = 6;
+  let datos, respuesta;
+  for (let intento = 1; intento <= MAX_INTENTOS; intento++) {
+    respuesta = await fetch(`https://graph.facebook.com/${GRAPH_API_VERSION}/${wabaId}/message_templates`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(body),
+    });
+    datos = await respuesta.json();
 
-  const datos = await respuesta.json();
+    if (respuesta.ok) break;
 
-  if (!respuesta.ok) {
-    console.error('❌ Meta rechazó la solicitud:');
-    console.error(JSON.stringify(datos, null, 2));
-    process.exit(1);
+    const sigueBorrando = datos.error?.error_subcode === 2388025;
+    if (!sigueBorrando || intento === MAX_INTENTOS) {
+      console.error('❌ Meta rechazó la solicitud:');
+      console.error(JSON.stringify(datos, null, 2));
+      process.exit(1);
+    }
+
+    console.log(`Meta todavía está procesando el borrado del intento anterior — reintentando en 10s (${intento}/${MAX_INTENTOS})...`);
+    await dormir(10000);
   }
 
   console.log('✅ Plantilla enviada a revisión:');
