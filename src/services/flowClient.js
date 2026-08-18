@@ -142,7 +142,10 @@ async function registrarTarjetaFlow({ customerId, empresaId, plan }) {
     customerId,
     url_return: `${obtenerUrlPanelPrincipal()}/suscripcion/flow-callback-tarjeta?empresaId=${empresaId}&plan=${plan}`,
   };
-  return requestFlowPost('/customer/register', params);
+  const resultado = await requestFlowPost('/customer/register', params);
+  // Flow devuelve `url` (la página base) y `token` por separado — igual que
+  // en el pago único clásico, hay que pegarlos para tener un link usable.
+  return { ...resultado, url: `${resultado.url}?token=${resultado.token}` };
 }
 
 /**
