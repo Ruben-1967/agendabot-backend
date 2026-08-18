@@ -27,8 +27,9 @@ async function main() {
       esDemo: true,
       whatsappNumeroId: true,
       whatsappToken: true,
+      whatsappWabaId: true,
+      whatsappPhoneNumber: true,
       telefonoContacto: true,
-      updatedAt: true,
     },
   });
 
@@ -43,8 +44,9 @@ async function main() {
     console.log(`  id: ${e.id}`);
     console.log(`  whatsappNumeroId (phone_number_id de Meta): ${e.whatsappNumeroId || '(vacío)'}`);
     console.log(`  whatsappToken guardado: ${e.whatsappToken ? 'sí' : 'NO'}`);
+    console.log(`  whatsappWabaId: ${e.whatsappWabaId || '(vacío)'}`);
+    console.log(`  whatsappPhoneNumber: ${e.whatsappPhoneNumber || '(vacío)'}`);
     console.log(`  telefonoContacto: ${e.telefonoContacto || '(vacío)'}`);
-    console.log(`  última actualización de la Empresa: ${e.updatedAt.toISOString()}`);
     console.log('');
   });
 
