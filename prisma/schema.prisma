@@ -147,6 +147,7 @@ model Usuario {
   // define su propia contraseña vía el link enviado por WhatsApp.
   tokenActivacion       String?   @unique
   tokenActivacionExpira DateTime?
+  fechaActivacionCuenta DateTime? // cuándo definió su contraseña por primera vez — ancla del aviso de pago pendiente
 
   @@index([empresaId])
 }

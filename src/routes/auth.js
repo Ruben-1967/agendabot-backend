@@ -97,7 +97,12 @@ router.post('/activar-cuenta', async (req, res) => {
 
     const usuarioActivado = await prisma.usuario.update({
       where: { id: usuario.id },
-      data: { passwordHash, tokenActivacion: null, tokenActivacionExpira: null },
+      data: {
+        passwordHash,
+        tokenActivacion: null,
+        tokenActivacionExpira: null,
+        fechaActivacionCuenta: usuario.fechaActivacionCuenta || new Date(),
+      },
       include: { empresa: { include: { rubroTemplate: true, suscripcion: true } }, recursoAgendable: true },
     });
 

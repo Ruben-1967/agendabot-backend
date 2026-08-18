@@ -49,6 +49,24 @@ router.get('/estado', requireAuth, requireRole('ADMIN'), async (req, res) => {
       : null;
     const enPruebaVigente = !empresa.suscripcion && empresa.pruebahasta && hoy < empresa.pruebahasta;
 
+    // Nivel del aviso de pago pendiente en el panel — oculto las primeras 12h
+    // desde que el cliente activó su cuenta (recién está conociendo el
+    // sistema), verde el resto de los primeros 2 días, amarillo el día 3,
+    // rojo desde el día 4. Solo aplica con la Suscripcion en PENDIENTE_PAGO.
+    let avisoPagoNivel = null;
+    if (empresa.suscripcion?.estado === 'PENDIENTE_PAGO') {
+      const usuarioActual = await prisma.usuario.findUnique({
+        where: { id: req.usuario.userId },
+        select: { fechaActivacionCuenta: true },
+      });
+      if (usuarioActual?.fechaActivacionCuenta) {
+        const horasDesdeActivacion = (hoy - usuarioActual.fechaActivacionCuenta) / (1000 * 60 * 60);
+        if (horasDesdeActivacion >= 72) avisoPagoNivel = 'rojo';
+        else if (horasDesdeActivacion >= 48) avisoPagoNivel = 'amarillo';
+        else if (horasDesdeActivacion >= 12) avisoPagoNivel = 'verde';
+      }
+    }
+
     res.json({
       estado: empresa.suscripcion?.estado || (enPruebaVigente ? 'PRUEBA' : null),
       plan: empresa.suscripcion?.plan || null,
@@ -57,6 +75,7 @@ router.get('/estado', requireAuth, requireRole('ADMIN'), async (req, res) => {
       diasParaVencer,
       enPrueba: enPruebaVigente,
       vencido: !empresa.suscripcion && empresa.pruebahasta && hoy >= empresa.pruebahasta,
+      avisoPagoNivel,
     });
   } catch (error) {
     console.error('Error en GET /suscripcion/estado:', error);
