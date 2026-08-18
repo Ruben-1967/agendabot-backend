@@ -140,7 +140,10 @@ async function crearClienteFlow({ empresaId, nombreEmpresa, emailEmpresa }) {
 async function registrarTarjetaFlow({ customerId, empresaId, plan }) {
   const params = {
     customerId,
-    url_return: `${obtenerUrlPanelPrincipal()}/suscripcion/flow-callback-tarjeta?empresaId=${empresaId}&plan=${plan}`,
+    // flow-callback-tarjeta es una ruta del BACKEND (src/routes/suscripcion.js),
+    // no del panel — obtenerUrlPanelPrincipal() apunta al panel (Vercel), que
+    // no tiene esa ruta y redirige a la home. Debe ser BACKEND_URL.
+    url_return: `${process.env.BACKEND_URL}/suscripcion/flow-callback-tarjeta?empresaId=${empresaId}&plan=${plan}`,
   };
   const resultado = await requestFlowPost('/customer/register', params);
   // Flow devuelve `url` (la página base) y `token` por separado — igual que
