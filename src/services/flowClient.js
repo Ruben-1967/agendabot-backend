@@ -153,7 +153,11 @@ async function registrarTarjetaFlow({ customerId, empresaId, plan }) {
 
 /**
  * Consulta si el registro de tarjeta (iniciado con registrarTarjetaFlow)
- * quedó exitoso. status: 1=Pendiente, 2=Exitoso (según doc de Flow).
+ * quedó exitoso. NO usar `status` para decidir esto — confirmado contra una
+ * respuesta real de sandbox que status:'1' ya viene con la tarjeta
+ * registrada (customerId/creditCardType/last4CardDigits poblados). La forma
+ * confiable de saber si funcionó es que esos campos de la tarjeta vengan con
+ * datos reales (ver flow-callback-tarjeta en suscripcion.js).
  */
 async function consultarEstadoRegistroFlow(token) {
   return requestFlow('/customer/getRegisterStatus', { token });

@@ -215,8 +215,13 @@ async function manejarCallbackTarjeta(req, res) {
     }
 
     const registro = await flowClient.consultarEstadoRegistroFlow(token);
-    // status: 1 = Pendiente/Fallido, 2 = Exitoso (según doc de Flow)
-    if (String(registro.status) !== '2' || !registro.customerId) {
+    // Confirmado contra una respuesta real de Flow (sandbox): status:'1' viene
+    // junto con customerId/creditCardType/last4CardDigits ya poblados — para
+    // este endpoint status:'1' es "registrada", no "pendiente" como en
+    // /payment/create (de donde había asumido mal el mismo patrón sin
+    // confirmarlo). La señal confiable de éxito es que los datos de la
+    // tarjeta realmente vengan poblados, no un número de estado adivinado.
+    if (!registro.customerId || !registro.creditCardType) {
       console.warn(`[flow-callback-tarjeta] Registro de tarjeta no exitoso (token recibido: ${token}):`, JSON.stringify(registro));
       return res.redirect(`${urlError}&motivo=tarjeta`);
     }
