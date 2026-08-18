@@ -275,7 +275,7 @@ router.post('/flow-webhook-collect', async (req, res) => {
     const { token } = req.body;
 
     if (!flowClient.verificarHmacWebhook(req.body)) {
-      console.warn('[flow-webhook-collect] HMAC inválido, posible falsificación');
+      console.warn('[flow-webhook-collect] HMAC inválido, posible falsificación. Body recibido:', JSON.stringify(req.body));
       return res.status(403).send('HMAC inválido');
     }
 
