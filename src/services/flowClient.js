@@ -251,6 +251,25 @@ async function consultarEstado(token) {
 }
 
 /**
+ * Igual que consultarEstado, pero busca por commerceOrder en vez de token —
+ * para reconciliar un cobro cuando el webhook de confirmación nunca llegó
+ * (ej. Flow intentó notificar justo durante un redeploy) y no quedó
+ * guardado el token en ningún lado, solo el commerceOrder que nosotros
+ * mismos generamos.
+ */
+async function consultarEstadoPorCommerceId(commerceOrder) {
+  const resultado = await requestFlow('/payment/getStatusByCommerceId', { commerceId: commerceOrder });
+
+  return {
+    token: resultado.token,
+    estado: resultado.status,
+    monto: resultado.amount,
+    comercioOrden: resultado.commerceOrder,
+    fechaPago: resultado.paymentDate,
+  };
+}
+
+/**
  * Verifica firma HMAC de webhook (Flow envia s=hmac en el POST)
  */
 function verificarHmacWebhook(params) {
@@ -269,5 +288,6 @@ module.exports = {
   cancelarSuscripcionFlow,
   crearOrdenCreditos,
   consultarEstado,
+  consultarEstadoPorCommerceId,
   verificarHmacWebhook,
 };

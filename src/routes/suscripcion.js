@@ -17,10 +17,8 @@ const { requireAuth, requireRole, JWT_SECRET } = require('../middleware/auth');
 const flowClient = require('../services/flowClient');
 const { obtenerUrlPanelPrincipal } = require('../lib/urlPanel');
 const { obtenerValorUfHoy } = require('../lib/uf');
+const { activarSuscripcionPorCobroFlow } = require('../lib/activarSuscripcionPorCobroFlow');
 const { PLANES: DETALLE_PLANES } = require('../services/contratoHtml'); // fuente única de montoMensual/citasIncluidas/precioCitaExcedente por plan
-
-const DIAS_TRIAL_PLAN = 30;
-const DIAS_TRIAL_HOSTING = 365;
 
 /**
  * GET /suscripcion/estado
@@ -296,100 +294,15 @@ router.post('/flow-webhook-collect', async (req, res) => {
     const empresaId = partes[1];
     const valorUf = Number(partes[2]);
 
-    const suscripcion = await prisma.suscripcion.findUnique({ where: { empresaId } });
-    if (!suscripcion) {
-      console.error('[flow-webhook-collect] No hay Suscripcion para empresa:', empresaId);
-      return res.status(404).send('Suscripcion no encontrada');
+    const resultado = await activarSuscripcionPorCobroFlow({ empresaId, valorUf, token });
+    if (!resultado.ok) {
+      console.error(`[flow-webhook-collect] No se pudo activar (empresa ${empresaId}):`, resultado.motivo);
+      return res.status(resultado.motivo === 'sin_suscripcion' ? 404 : 500).send(resultado.motivo);
     }
 
-    if (suscripcion.estado === 'ACTIVA') {
-      console.log(`[flow-webhook-collect] Suscripcion de empresa ${empresaId} ya estaba ACTIVA, webhook duplicado ignorado`);
-      return res.status(200).send('OK');
-    }
-
-    if (!suscripcion.flowCustomerId) {
-      console.error('[flow-webhook-collect] Suscripcion sin flowCustomerId:', empresaId);
-      return res.status(500).send('Falta flowCustomerId');
-    }
-
-    const letraPlan = suscripcion.plan.replace('PLAN_', '');
-    const flowPlanId = process.env[`FLOW_PLAN_ID_${letraPlan}`];
-    const flowPlanIdHosting = process.env.FLOW_PLAN_ID_HOSTING;
-    if (!flowPlanId || !flowPlanIdHosting) {
-      console.error('[flow-webhook-collect] Faltan FLOW_PLAN_ID_* en el entorno');
-      return res.status(500).send('Planes de Flow no configurados');
-    }
-
-    const detallePlan = DETALLE_PLANES[suscripcion.plan];
-    const montoHostingCobrado = Number.isFinite(valorUf) ? valorUf : Math.round(estadoFlow.monto - detallePlan.montoMensual);
-
-    const subscripcionPlan = await flowClient.crearSuscripcionFlow({
-      planId: flowPlanId,
-      customerId: suscripcion.flowCustomerId,
-      trialPeriodDays: DIAS_TRIAL_PLAN,
-    });
-    const subscripcionHosting = await flowClient.crearSuscripcionFlow({
-      planId: flowPlanIdHosting,
-      customerId: suscripcion.flowCustomerId,
-      trialPeriodDays: DIAS_TRIAL_HOSTING,
-    });
-
-    const ahora = new Date();
-    const fechaProximoCobro = new Date(ahora);
-    fechaProximoCobro.setDate(fechaProximoCobro.getDate() + DIAS_TRIAL_PLAN);
-    const fechaProximoCobroHosting = new Date(ahora);
-    fechaProximoCobroHosting.setDate(fechaProximoCobroHosting.getDate() + DIAS_TRIAL_HOSTING);
-
-    await prisma.$transaction(async (tx) => {
-      await tx.suscripcion.update({
-        where: { empresaId },
-        data: {
-          estado: 'ACTIVA',
-          fechaActivacion: suscripcion.fechaActivacion || ahora,
-          tokenFlow: subscripcionPlan.subscriptionId,
-          flowSubscriptionIdHosting: subscripcionHosting.subscriptionId,
-          fechaUltimoPago: ahora,
-          fechaProximoCobro,
-          fechaProximoCobroHosting,
-          intentosFallidosConsecutivos: 0,
-        },
-      });
-
-      await tx.pago.create({
-        data: {
-          suscripcionId: suscripcion.id,
-          tipo: 'PRIMER_PAGO',
-          monto: detallePlan.montoMensual,
-          estado: 'EXITOSO',
-          flowOrderId: token,
-        },
-      });
-
-      await tx.pago.create({
-        data: {
-          suscripcionId: suscripcion.id,
-          tipo: 'HOSTING',
-          monto: montoHostingCobrado,
-          valorUfDelDia: montoHostingCobrado,
-          estado: 'EXITOSO',
-          flowOrderId: token,
-        },
-      });
-
-      // Si venía de avisos/bloqueo por prueba vencida (ver
-      // bloquearEmpresasVencidas.js), pagar la limpia por completo.
-      await tx.empresa.update({
-        where: { id: empresaId },
-        data: {
-          bloqueadaPorPruebaVencida: false,
-          avisosPruebaVencidaEnviados: 0,
-          fechaUltimoAvisoPrueba: null,
-          fechaBloqueoPrueba: null,
-        },
-      });
-    });
-
-    console.log(`[flow-webhook-collect] Suscripcion ACTIVA para empresa ${empresaId} (plan ${suscripcion.plan} + hosting)`);
+    console.log(resultado.yaActiva
+      ? `[flow-webhook-collect] Suscripcion de empresa ${empresaId} ya estaba ACTIVA, webhook duplicado ignorado`
+      : `[flow-webhook-collect] Suscripcion ACTIVA para empresa ${empresaId}`);
     res.status(200).send('OK');
   } catch (error) {
     console.error('[flow-webhook-collect] Error:', error);
