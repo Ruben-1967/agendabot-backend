@@ -176,6 +176,7 @@ router.post('/elegir-plan', async (req, res) => {
     const registro = await flowClient.registrarTarjetaFlow({ customerId: flowCustomerId, empresaId, plan });
 
     console.log(`[elegir-plan] Empresa ${empresaId} eligió ${planEnum}, redirigiendo a registro de tarjeta en Flow`);
+    console.log('[elegir-plan] Respuesta cruda de /customer/register:', JSON.stringify(registro));
 
     res.json({
       exitoso: true,
