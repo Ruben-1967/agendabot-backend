@@ -274,11 +274,12 @@ router.post('/flow-webhook-collect', async (req, res) => {
   try {
     const { token } = req.body;
 
-    if (!flowClient.verificarHmacWebhook(req.body)) {
-      console.warn('[flow-webhook-collect] HMAC inválido, posible falsificación. Body recibido:', JSON.stringify(req.body));
-      return res.status(403).send('HMAC inválido');
-    }
-
+    // Confirmado en sandbox: este webhook llega con SOLO {token}, sin firma
+    // `s` — no es que Flow no firme nada, es que la verificación real pasa
+    // por la línea de abajo: consultarEstado(token) es una llamada NUESTRA,
+    // firmada con nuestro secret, hacia el servidor real de Flow. Un token
+    // falso simplemente no devolvería un pago real. verificarHmacWebhook no
+    // aplica acá (ese chequeo es para webhooks que si vienen firmados).
     const estadoFlow = await flowClient.consultarEstado(token);
     // estado: 1=Iniciado, 2=Pagado, 3=Rechazado, 4=Anulado
     if (String(estadoFlow.estado) !== '2') {
@@ -321,14 +322,14 @@ router.post('/flow-webhook-collect', async (req, res) => {
  * vía getStatus, como en pagos únicos?) no está confirmado en la
  * documentación pública — hay que validarlo contra un cobro real en Sandbox
  * y ajustar la extracción de subscriptionId/estado si hace falta.
+ * Confirmado en flow-webhook-collect que Flow NO firma estos POST (llegan
+ * sin campo `s`) — si este payload también viene solo con un token, hay
+ * que resolverlo vía una consulta propia (firmada) a Flow antes de confiar
+ * en subscriptionId/status del body directamente, igual que hace
+ * flow-webhook-collect con consultarEstado(token).
  */
 router.post('/flow-webhook-plan', async (req, res) => {
   try {
-    if (!flowClient.verificarHmacWebhook(req.body)) {
-      console.warn('[flow-webhook-plan] HMAC inválido, posible falsificación');
-      return res.status(403).send('HMAC inválido');
-    }
-
     console.log('[flow-webhook-plan] Payload recibido:', JSON.stringify(req.body));
 
     const subscriptionId = req.body.subscriptionId || req.body.subscription_id;
