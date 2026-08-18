@@ -65,6 +65,7 @@ router.post('/', requireLeadsBridgeApiKey, async (req, res) => {
       intencionDetectada,
       ultimoMensajeResumen,
       ultimaInteraccionEn,
+      motivoDerivacion,
     } = req.body;
 
     if (!ORIGENES_VALIDOS.includes(origen)) {
@@ -85,6 +86,7 @@ router.post('/', requireLeadsBridgeApiKey, async (req, res) => {
       intencionDetectada: Boolean(intencionDetectada),
       ultimoMensajeResumen: ultimoMensajeResumen || null,
       ultimaInteraccionEn: ultimaInteraccionEn ? new Date(ultimaInteraccionEn) : null,
+      motivoDerivacion: motivoDerivacion || null,
     };
 
     const lead = await prisma.lead.upsert({
