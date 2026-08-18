@@ -191,15 +191,20 @@ router.post('/elegir-plan', async (req, res) => {
 });
 
 /**
- * GET /suscripcion/flow-callback-tarjeta
+ * GET|POST /suscripcion/flow-callback-tarjeta
  * Flow redirige acá (url_return de /customer/register) después de que el
- * cliente registra su tarjeta. Si quedó registrada, dispara el cobro
- * combinado (plan + hosting) vía /customer/collect — ese cobro es asíncrono,
- * la Suscripcion recién pasa a ACTIVA cuando Flow confirma en
- * /flow-webhook-collect.
+ * cliente registra su tarjeta — en la práctica lo hace con POST (probablemente
+ * por cómo Transbank retorna del flujo OneClick), así que se acepta también.
+ * empresaId/plan siempre vienen por query (van codificados en la url_return
+ * que armamos nosotros); el token que agrega Flow puede venir en el body si
+ * fue POST.
+ * Si la tarjeta quedó registrada, dispara el cobro combinado (plan + hosting)
+ * vía /customer/collect — ese cobro es asíncrono, la Suscripcion recién pasa
+ * a ACTIVA cuando Flow confirma en /flow-webhook-collect.
  */
-router.get('/flow-callback-tarjeta', async (req, res) => {
-  const { token, empresaId, plan } = req.query;
+async function manejarCallbackTarjeta(req, res) {
+  const { empresaId, plan } = req.query;
+  const token = req.body?.token || req.query.token;
   const urlError = `${obtenerUrlPanelPrincipal()}/suscripcion/resultado?estado=error`;
   const urlProcesando = `${obtenerUrlPanelPrincipal()}/suscripcion/resultado?estado=procesando`;
 
@@ -251,7 +256,9 @@ router.get('/flow-callback-tarjeta', async (req, res) => {
     console.error('[flow-callback-tarjeta] Error:', error);
     res.redirect(`${urlError}&motivo=servidor`);
   }
-});
+}
+router.get('/flow-callback-tarjeta', manejarCallbackTarjeta);
+router.post('/flow-callback-tarjeta', manejarCallbackTarjeta);
 
 /**
  * POST /suscripcion/flow-webhook-collect
