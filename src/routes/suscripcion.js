@@ -217,7 +217,7 @@ async function manejarCallbackTarjeta(req, res) {
     const registro = await flowClient.consultarEstadoRegistroFlow(token);
     // status: 1 = Pendiente/Fallido, 2 = Exitoso (según doc de Flow)
     if (String(registro.status) !== '2' || !registro.customerId) {
-      console.warn('[flow-callback-tarjeta] Registro de tarjeta no exitoso:', registro);
+      console.warn(`[flow-callback-tarjeta] Registro de tarjeta no exitoso (token recibido: ${token}):`, JSON.stringify(registro));
       return res.redirect(`${urlError}&motivo=tarjeta`);
     }
 
