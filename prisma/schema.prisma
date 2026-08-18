@@ -526,6 +526,14 @@ model Suscripcion {
   flowCustomerId            String? // customerId de Flow, se crea una sola vez por Empresa
   flowSubscriptionIdHosting String? // flowSubscriptionId de la suscripción de hosting anual (separada de la del plan)
 
+  // Cobro combinado (plan + hosting) pendiente de confirmar por webhook — ver
+  // flow-callback-tarjeta/flow-webhook-collect. No se codifica el empresaId
+  // en el commerceOrder de Flow porque Flow lo trunca a 45 caracteres
+  // (confirmado en sandbox — un uuid ya no entra); en su lugar se guarda acá
+  // un id corto y opaco, y el webhook busca por él.
+  ordenComercioCollectPendiente String? @unique
+  valorUfCollectPendiente       Int?
+
   fechaInicio           DateTime @default(now())
   fechaCambioPrecio     DateTime?
   montoMensualActual    Int

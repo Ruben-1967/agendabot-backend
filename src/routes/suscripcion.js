@@ -11,6 +11,7 @@
 
 const express = require('express');
 const jwt = require('jsonwebtoken');
+const crypto = require('crypto');
 const router = express.Router();
 const prisma = require('../lib/prisma');
 const { requireAuth, requireRole, JWT_SECRET } = require('../middleware/auth');
@@ -239,11 +240,15 @@ async function manejarCallbackTarjeta(req, res) {
 
     const valorUf = await obtenerValorUfHoy();
     const montoCombinado = detallePlan.montoMensual + valorUf;
-    // empresaId (uuid) y valorUf viajan codificados en el commerceOrder — no
-    // hay token/registro propio para este cobro todavía, y así el webhook de
-    // confirmación puede reconstruir a qué empresa y con qué UF corresponde
-    // sin otra ida y vuelta a mindicador.cl.
-    const ordenComercio = `flow-combinado_${empresaId}_${valorUf}_${Date.now()}`;
+    // Id corto y opaco — NO se codifica empresaId/valorUf en el texto del
+    // commerceOrder porque Flow lo trunca a 45 caracteres (confirmado en
+    // sandbox: un uuid ya se corta ahí). Se guarda la relación en la propia
+    // Suscripcion, y el webhook de confirmación busca por este valor.
+    const ordenComercio = `fc_${crypto.randomBytes(16).toString('hex')}`;
+    await prisma.suscripcion.update({
+      where: { empresaId },
+      data: { ordenComercioCollectPendiente: ordenComercio, valorUfCollectPendiente: valorUf },
+    });
 
     await flowClient.cobrarCollectFlow({
       customerId: registro.customerId,
@@ -287,13 +292,14 @@ router.post('/flow-webhook-collect', async (req, res) => {
       return res.status(200).send('OK');
     }
 
-    const partes = (estadoFlow.comercioOrden || '').split('_');
-    if (partes[0] !== 'flow-combinado' || !partes[1]) {
-      console.error('[flow-webhook-collect] commerceOrder con formato inesperado:', estadoFlow.comercioOrden);
-      return res.status(200).send('OK');
+    const suscripcionPendiente = await prisma.suscripcion.findUnique({
+      where: { ordenComercioCollectPendiente: estadoFlow.comercioOrden },
+    });
+    if (!suscripcionPendiente) {
+      console.error('[flow-webhook-collect] No hay Suscripcion pendiente para commerceOrder:', estadoFlow.comercioOrden);
+      return res.status(404).send('Suscripcion no encontrada');
     }
-    const empresaId = partes[1];
-    const valorUf = Number(partes[2]);
+    const { empresaId, valorUfCollectPendiente: valorUf } = suscripcionPendiente;
 
     const resultado = await activarSuscripcionPorCobroFlow({ empresaId, valorUf, token });
     if (!resultado.ok) {

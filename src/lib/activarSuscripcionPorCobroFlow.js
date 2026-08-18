@@ -79,6 +79,8 @@ async function activarSuscripcionPorCobroFlow({ empresaId, valorUf, token }) {
         fechaProximoCobro,
         fechaProximoCobroHosting,
         intentosFallidosConsecutivos: 0,
+        ordenComercioCollectPendiente: null,
+        valorUfCollectPendiente: null,
       },
     });
 
