@@ -5,6 +5,7 @@ const prisma = require('./lib/prisma');
 const crypto = require('crypto');
 const {
   sendWhatsAppTextMessage,
+  sendWhatsAppImageMessage,
   sendWhatsAppInteractiveList,
   sendWhatsAppReplyButtons,
   decodificarFilaHorario,
@@ -34,6 +35,7 @@ const pedidosRouter = require('./routes/pedidos');
 const clientesRouter = require('./routes/clientes');
 const billeteraRouter = require('./routes/billetera');
 const empresaRouter = require('./routes/empresa');
+const catalogoRouter = require('./routes/catalogo');
 const agendaRouter = require('./routes/agenda');
 const serviciosRouter = require('./routes/servicios');
 const { procesarMensajeCatalogoRotativo } = require('./services/pedidosEngine');
@@ -68,6 +70,9 @@ const origenesPermitidos = process.env.PANEL_FRONTEND_URL
   : true;
 
 app.use(express.json({
+  // 8mb para cubrir imágenes de hasta 5MB del Catálogo Visual codificadas en
+  // base64 (~6.8MB) más margen para el resto del payload JSON.
+  limit: '8mb',
   verify: (req, res, buf) => {
     req.rawBody = buf;
   },
@@ -138,6 +143,7 @@ app.use('/pedidos', pedidosRouter);
 app.use('/clientes', clientesRouter);
 app.use('/billetera', billeteraRouter);
 app.use('/empresa', empresaRouter);
+app.use('/empresa/catalogo', catalogoRouter);
 app.use('/agenda', agendaRouter);
 app.use('/servicios', serviciosRouter);
 app.use('/plantillas-ficha', require('./routes/plantillasFicha'));
@@ -813,6 +819,25 @@ app.post('/webhook/whatsapp', verificarFirmaWebhookWhatsApp, async (req, res) =>
           titulo: hora,
         })),
       });
+    } else if (interactivo?.tipo === 'catalogo_imagenes') {
+      // Máximo 4 imágenes por respuesta (ya viene acotado desde claude.js).
+      // Se manda primero el texto y luego cada imagen por separado — la API
+      // de WhatsApp no soporta un mensaje con múltiples imágenes en uno solo.
+      await sendWhatsAppTextMessage({
+        phoneNumberId,
+        to: telefonoCliente,
+        text: respuestaTexto,
+        accessToken,
+      });
+      for (const item of interactivo.items) {
+        await sendWhatsAppImageMessage({
+          phoneNumberId,
+          to: telefonoCliente,
+          accessToken,
+          imageUrl: item.imagenUrl,
+          caption: item.nombre,
+        });
+      }
     } else if (interactivo?.tipo === 'lista_servicios') {
       await sendWhatsAppInteractiveList({
         phoneNumberId,

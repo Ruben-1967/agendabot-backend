@@ -18,8 +18,11 @@ const MODEL = 'claude-haiku-4-5-20251001';
  *   genérica sugerida por el rubro (sin ids reales), no se puede armar una
  *   lista interactiva de WhatsApp con eso, así que Claude sigue preguntando
  *   el servicio en texto en ese caso.
+ * - mostrar_catalogo_visual solo se incluye si empresa.catalogoVisualActivo
+ *   está prendido Y la empresa tiene categorías con al menos un item activo
+ *   (nunca se le asume al modelo, ver generarRespuestaChatbot).
  */
-function construirTools(empresa, incluirMostrarServicios) {
+function construirTools(empresa, incluirMostrarServicios, incluirCatalogo) {
   const agendarCitaProperties = {
     fecha: { type: 'string', description: 'Fecha de la cita, formato YYYY-MM-DD.' },
     hora: { type: 'string', description: "Hora de inicio, formato HH:MM (ej. '10:30')." },
@@ -83,6 +86,25 @@ function construirTools(empresa, incluirMostrarServicios) {
         type: 'object',
         properties: {},
         required: [],
+      },
+    }] : []),
+    ...(incluirCatalogo ? [{
+      name: 'mostrar_catalogo_visual',
+      description:
+        'Muestra al cliente fotos reales de una categoría del catálogo visual del negocio (ej. cortes de pelo, armazones, tratamientos, platos). Llámala SOLO cuando el cliente ya confirmó que quiere ver las fotos — sea porque respondió que sí a tu oferta en texto, o porque las pidió directamente él mismo, en cualquier momento de la conversación (incluso con el agendamiento ya iniciado). NUNCA la uses solo para preguntar si quiere verlas — esa oferta se hace en texto plano primero. El campo "categoria" debe ser exactamente uno de los nombres de la lista CATEGORÍAS DE CATÁLOGO VISUAL DISPONIBLES.',
+      input_schema: {
+        type: 'object',
+        properties: {
+          categoria: {
+            type: 'string',
+            description: 'Nombre exacto de la categoría, tal como aparece en la lista CATEGORÍAS DE CATÁLOGO VISUAL DISPONIBLES.',
+          },
+          pagina: {
+            type: 'integer',
+            description: 'Página de resultados (4 imágenes por página). Usar 1 la primera vez; si el cliente pide ver más después de que se lo preguntaste, volver a llamar con la página siguiente (2, 3, ...).',
+          },
+        },
+        required: ['categoria'],
       },
     }] : []),
     {
@@ -161,6 +183,33 @@ async function ejecutarHerramienta(nombre, input, contexto) {
 
   if (nombre === 'mostrar_lista_servicios') {
     return { servicios: (serviciosReales || []).map((s) => ({ id: s.id, nombre: s.nombre })) };
+  }
+
+  if (nombre === 'mostrar_catalogo_visual') {
+    const TAMANO_PAGINA = 4;
+    const pagina = Number.isInteger(input.pagina) && input.pagina > 0 ? input.pagina : 1;
+
+    const categoriaDb = await prisma.catalogoCategoria.findFirst({
+      where: { empresaId: empresa.id, nombre: { equals: input.categoria, mode: 'insensitive' } },
+    });
+    if (!categoriaDb) {
+      return { error: 'No encontramos esa categoría del catálogo.' };
+    }
+
+    const itemsActivos = await prisma.catalogoItem.findMany({
+      where: { categoriaId: categoriaDb.id, activo: true },
+      orderBy: { creadoEn: 'asc' },
+    });
+
+    const inicio = (pagina - 1) * TAMANO_PAGINA;
+    const itemsPagina = itemsActivos.slice(inicio, inicio + TAMANO_PAGINA);
+
+    return {
+      categoria: categoriaDb.nombre,
+      items: itemsPagina.map((i) => ({ nombre: i.nombre, imagenUrl: i.imagenUrl })),
+      totalActivos: itemsActivos.length,
+      mostrados: inicio + itemsPagina.length,
+    };
   }
 
   if (nombre === 'agendar_cita') {
@@ -254,9 +303,20 @@ async function generarRespuestaChatbot({ empresa, cliente, historial, mensajeEnt
   // cliente cuál prefiere antes de consultar disponibilidad.
   const recurso = await prisma.recursoAgendable.findFirst({ where: { empresaId: empresa.id } });
 
+  // Catálogo visual: solo se ofrece si el switch maestro está prendido Y hay
+  // categorías con al menos un item activo — nunca se le asume al modelo,
+  // se le pasa la lista real de nombres como contexto disponible.
+  const categoriasCatalogo = empresa.catalogoVisualActivo
+    ? await prisma.catalogoCategoria.findMany({
+        where: { empresaId: empresa.id, items: { some: { activo: true } } },
+        orderBy: { orden: 'asc' },
+      })
+    : [];
+  const incluirCatalogo = categoriasCatalogo.length > 0;
+
   const fechaHoyChile = new Date().toLocaleDateString('es-CL', { timeZone: 'America/Santiago' });
 
-  const tools = construirTools(empresa, tieneServiciosReales);
+  const tools = construirTools(empresa, tieneServiciosReales, incluirCatalogo);
 
   // Leer el tono de comunicación (default "Neutral")
   const tono = empresa.tonoComunicacion || 'Neutral';
@@ -297,6 +357,20 @@ if (empresa.sitioWeb) {
     : `- Si el cliente quiere agendar, necesitas saber el SERVICIO antes de mostrar disponibilidad. Si no lo mencionó, pregúntale ÚNICAMENTE el servicio, en un mensaje breve — NUNCA menciones "día", "fecha" ni "cuándo" en ese mensaje.
 - Si el cliente pregunta qué servicios ofrecen (y este negocio todavía no tiene servicios reales cargados), respondes ÚNICAMENTE con los nombres de la lista "SERVICIOS AGENDABLES" de arriba, tal cual están escritos — nunca los desgloses en sub-procedimientos ni los reemplaces por detalles clínicos, y nunca uses la "información adicional" para completar o ampliar esa lista.`;
 
+  // Catálogo visual: bloque de categorías e instrucciones, solo si la
+  // empresa tiene el switch prendido y hay categorías con items activos
+  // (ver incluirCatalogo más arriba).
+  const bloqueCategoriasCatalogo = incluirCatalogo
+    ? `\nCATEGORÍAS DE CATÁLOGO VISUAL DISPONIBLES (fotos reales que puedes ofrecer — el campo "categoria" de mostrar_catalogo_visual debe ser exactamente uno de estos nombres):\n${categoriasCatalogo.map((c) => `- ${c.nombre}`).join('\n')}\n`
+    : '';
+  const instruccionesCatalogo = incluirCatalogo
+    ? `- Catálogo visual: si el cliente está en fase de indagación (todavía no llamaste a consultar_disponibilidad, consultar_proximos_dias_disponibles ni agendar_cita) y lo que pregunta calza con una categoría del catálogo, puedes ofrecerle proactivamente ver fotos — en TEXTO PLANO, con una pregunta breve, ej. "¿Quieres ver algunos ejemplos de [categoría]?". NUNCA llames a mostrar_catalogo_visual solo para hacer esa oferta.
+- Llama a mostrar_catalogo_visual recién cuando el cliente confirme que quiere ver las fotos — sea porque respondió que sí a tu oferta, o porque las pidió directamente él mismo en cualquier momento (incluso con el agendamiento ya iniciado — un pedido explícito de fotos siempre se responde, sin excepción). Esto tiene prioridad sobre la obligación de llamar a una herramienta de agendamiento en ESE turno puntual: respondé primero con las fotos, y retomá el flujo de agendamiento en el mensaje siguiente, sin perder el contexto de lo que el cliente ya había confirmado antes de pedir ver fotos.
+- Apenas el cliente exprese intención de agendar (ej. "quiero una hora", "tienen disponibilidad el sábado", "quiero agendar X") sin haber pedido fotos, deja de ofrecer el catálogo proactivamente y sigue directo con el flujo de agendamiento de abajo.
+- Si tras mostrar el catálogo el cliente pide ver más opciones de esa misma categoría, vuelve a llamar a mostrar_catalogo_visual con la página siguiente (pagina: 2, luego 3, etc.).
+`
+    : '';
+
   const systemPrompt = `Eres el asistente de agendamiento de "${nombreEmpresa}", vía WhatsApp.
 Hoy es ${fechaHoyChile} (zona horaria de Chile).
 
@@ -306,7 +380,7 @@ Este tono aplica a TODA tu comunicación, incluida la interpretación de la "inf
 
 SERVICIOS AGENDABLES (la única lista válida para ofrecer o agendar — nunca agregues, separes ni inventes otros, aunque la información adicional mencione procedimientos o exámenes relacionados):
 ${serviciosBase.length ? serviciosBase.map((s) => `- ${s}`).join('\n') : '(el negocio no ha cargado servicios todavía — dile al cliente que consulte directamente)'}
-${bloquesPersonalizacion.length ? '\n' + bloquesPersonalizacion.join('\n\n') + '\n' : ''}
+${bloqueCategoriasCatalogo}${bloquesPersonalizacion.length ? '\n' + bloquesPersonalizacion.join('\n\n') + '\n' : ''}
 Instrucciones:
 - Sé breve, cordial y directo — estás en un chat de WhatsApp, no escribas párrafos largos.
 - Si el cliente usa un término genérico o ambiguo (ej. "atención oftalmológica", "revisión de la vista", "chequeo") preguntando informativamente qué significa o qué incluye ese procedimiento puntual (sin pedir la lista completa de servicios), ayúdalo agregando una explicación MUY breve y en lenguaje simple — basándote en tu conocimiento general del área, no en información específica de este negocio.
@@ -314,7 +388,7 @@ Instrucciones:
 - El campo "servicio" en agendar_cita/consultar_disponibilidad sigue debiendo ser exactamente uno de los nombres de la lista SERVICIOS AGENDABLES, tal cual.
 - La "información adicional" (si existe) es solo para responder preguntas puntuales que el cliente haga (precios, qué incluye un servicio, etc.) — nunca la uses para construir o ampliar la lista de servicios ofrecidos.
 ${instruccionServicioAgendar}
-- En cuanto sepas el servicio (aunque sea en el mismo mensaje en que el cliente te lo dice, o porque lo eligió de la lista tocable), tu SIGUIENTE ACCIÓN es obligatoriamente llamar a una herramienta — nunca preguntar en texto si quiere ver los días, nunca ofrecerlo como opción, nunca preguntar "¿qué día te gustaría?". Actúa directo:
+${instruccionesCatalogo}- En cuanto sepas el servicio (aunque sea en el mismo mensaje en que el cliente te lo dice, o porque lo eligió de la lista tocable), tu SIGUIENTE ACCIÓN es obligatoriamente llamar a una herramienta — nunca preguntar en texto si quiere ver los días, nunca ofrecerlo como opción, nunca preguntar "¿qué día te gustaría?". Actúa directo:
   - Si el cliente ya mencionó un día específico en algún momento de la conversación (ej. "el jueves", "mañana", una fecha), usa consultar_disponibilidad con esa fecha, inmediatamente.
   - Si el cliente NO ha mencionado ningún día todavía, usa consultar_proximos_dias_disponibles, inmediatamente, sin preguntar antes si quiere verlos.
 - Tienes PROHIBIDO escribir frases como "¿qué día te gustaría?", "¿prefieres que te muestre los días disponibles?" o similares — esa decisión la tomas tú llamando a la herramienta correspondiente, nunca preguntándola en texto.
@@ -360,6 +434,7 @@ if (response.stop_reason !== 'tool_use') {
     let horariosParaMostrar = null;
     let diasParaMostrar = null;
     let serviciosParaMostrar = null;
+    let catalogoParaMostrar = null;
 
     for (const block of response.content) {
       if (block.type === 'tool_use') {
@@ -389,6 +464,14 @@ if (response.stop_reason !== 'tool_use') {
         if (block.name === 'mostrar_lista_servicios' && resultado.servicios?.length > 0) {
           serviciosParaMostrar = resultado.servicios;
         }
+
+        // Mismo mecanismo, pero para las imágenes del catálogo visual. Si la
+        // categoría no existe o no tiene items en esta página (arreglo
+        // vacío), dejamos que el ciclo siga normal para que Claude responda
+        // en texto (ej. "no encontré esa categoría").
+        if (block.name === 'mostrar_catalogo_visual' && resultado.items?.length > 0) {
+          catalogoParaMostrar = resultado;
+        }
       }
     }
 
@@ -411,6 +494,14 @@ if (response.stop_reason !== 'tool_use') {
       return {
         texto: 'Estos son los próximos días con horas disponibles. Elige el que más te acomode 👇',
         interactivo: { tipo: 'lista_dias', dias: diasParaMostrar },
+      };
+    }
+
+    if (catalogoParaMostrar) {
+      const hayMas = catalogoParaMostrar.totalActivos > catalogoParaMostrar.mostrados;
+      return {
+        texto: `Aquí tienes algunos ejemplos de ${catalogoParaMostrar.categoria} 👇${hayMas ? ' ¿Quieres ver más opciones?' : ''}`,
+        interactivo: { tipo: 'catalogo_imagenes', items: catalogoParaMostrar.items },
       };
     }
 

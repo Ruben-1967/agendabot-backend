@@ -89,6 +89,51 @@ async function sendWhatsAppTemplateMessage({ phoneNumberId, to, accessToken, tem
 }
 
 /**
+ * Envía un mensaje de tipo imagen, referenciando la imagen por URL directa
+ * (Cloudinary) en vez de subirla primero a la Media API de Meta — más simple
+ * y sin lógica de expiración de media_id (vence a los 30 días). Meta cachea
+ * el link ~10min y luego vuelve a buscarlo en el origen si cambia.
+ *
+ * @param {Object} params
+ * @param {string} params.phoneNumberId
+ * @param {string} params.to
+ * @param {string} params.accessToken
+ * @param {string} params.imageUrl - URL pública de la imagen (ej. de Cloudinary).
+ * @param {string} [params.caption] - Texto bajo la imagen. Máx. 1024 caracteres (límite de WhatsApp).
+ */
+async function sendWhatsAppImageMessage({ phoneNumberId, to, accessToken, imageUrl, caption }) {
+  const url = `https://graph.facebook.com/${GRAPH_API_VERSION}/${phoneNumberId}/messages`;
+
+  const image = { link: imageUrl };
+  if (caption) {
+    image.caption = caption.slice(0, 1024);
+  }
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${accessToken}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      messaging_product: 'whatsapp',
+      to,
+      type: 'image',
+      image,
+    }),
+  });
+
+  const data = await response.json();
+
+  if (!response.ok) {
+    console.error('Error enviando imagen de WhatsApp:', JSON.stringify(data, null, 2));
+    throw new Error(`WhatsApp API error: ${data.error?.message || response.statusText}`);
+  }
+
+  return data;
+}
+
+/**
  * Envía un mensaje INTERACTIVO de lista (botón que despliega hasta 10 filas
  * seleccionables, repartidas en hasta 10 secciones). Solo se puede enviar
  * dentro de la ventana de servicio de 24h (es decir, después de que el
@@ -419,6 +464,7 @@ function decodificarBotonCategoriaGenerica(id) {
 module.exports = {
   sendWhatsAppTextMessage,
   sendWhatsAppTemplateMessage,
+  sendWhatsAppImageMessage,
   sendWhatsAppInteractiveList,
   sendWhatsAppReplyButtons,
   codificarFilaHorario,

@@ -99,6 +99,29 @@ router.put('/info', requireAuth, requireRole('ADMIN'), async (req, res) => {
 });
 
 /**
+ * Switch maestro del Catálogo Visual — controla si el bot puede ofrecer
+ * imágenes durante la conversación. Apagado por defecto para toda empresa.
+ */
+router.patch('/catalogo-visual-activo', requireAuth, requireRole('ADMIN'), async (req, res) => {
+  try {
+    if (typeof req.body.catalogoVisualActivo !== 'boolean') {
+      return res.status(400).json({ error: 'catalogoVisualActivo debe ser true o false' });
+    }
+
+    const empresa = await prisma.empresa.update({
+      where: { id: req.usuario.empresaId },
+      data: { catalogoVisualActivo: req.body.catalogoVisualActivo },
+      select: { catalogoVisualActivo: true },
+    });
+
+    res.json(empresa);
+  } catch (error) {
+    console.error('Error en PATCH /empresa/catalogo-visual-activo:', error);
+    res.status(500).json({ error: 'Error al actualizar el catálogo visual' });
+  }
+});
+
+/**
  * Cambia el "code" corto de Embedded Signup por el token permanente de
  * Meta y guarda los datos de WhatsApp de la empresa del usuario logueado.
  *
