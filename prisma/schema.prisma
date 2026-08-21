@@ -59,6 +59,7 @@ model CatalogoDemoItem {
   rubroTemplate   RubroTemplate @relation(fields: [rubroTemplateId], references: [id])
   categoria       String
   nombre          String
+  descripcion     String?
   imagenUrl       String
   activo          Boolean       @default(true)
   orden           Int           @default(0)
