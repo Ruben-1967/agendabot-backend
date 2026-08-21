@@ -24,12 +24,24 @@ function limitesDelPlan(req) {
 
 router.get('/categorias', async (req, res) => {
   try {
-    const categorias = await prisma.catalogoCategoria.findMany({
-      where: { empresaId: req.usuario.empresaId },
-      orderBy: { orden: 'asc' },
-      include: { _count: { select: { items: true } } },
+    const [categorias, totalImagenes, empresa] = await Promise.all([
+      prisma.catalogoCategoria.findMany({
+        where: { empresaId: req.usuario.empresaId },
+        orderBy: { orden: 'asc' },
+        include: { _count: { select: { items: true } } },
+      }),
+      prisma.catalogoItem.count({ where: { empresaId: req.usuario.empresaId } }),
+      prisma.empresa.findUnique({
+        where: { id: req.usuario.empresaId },
+        select: { catalogoVisualActivo: true },
+      }),
+    ]);
+    res.json({
+      categorias,
+      limites: limitesDelPlan(req),
+      totalImagenes,
+      catalogoVisualActivo: empresa.catalogoVisualActivo,
     });
-    res.json({ categorias });
   } catch (error) {
     console.error('Error listando categorías de catálogo:', error);
     res.status(500).json({ error: 'Error al listar las categorías' });
