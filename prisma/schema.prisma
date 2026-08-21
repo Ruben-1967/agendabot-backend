@@ -98,6 +98,11 @@ model Empresa {
   campanasEnvio   CampanaEnvio[]
   pedidos         Pedido[]
 
+  // Catálogo visual (imágenes que el bot puede ofrecer durante indagación)
+  catalogoVisualActivo Boolean              @default(false)
+  catalogoCategorias   CatalogoCategoria[]
+  catalogoItems        CatalogoItem[]
+
   // Créditos
   billeteraCreditos      BilleteraCreditos?
   ordenesCompraCreditos  OrdenCompraCreditos[]
@@ -579,6 +584,45 @@ model Pago {
   fecha          DateTime @default(now())
 
   @@index([suscripcionId])
+}
+
+// ------------------------------------------------------------
+// CATÁLOGO VISUAL (imágenes que el bot puede ofrecer proactivamente
+// durante indagación — cortes de pelo, armazones, tratamientos, platos,
+// etc. — nunca durante un flujo de agendamiento ya iniciado, salvo
+// pedido explícito del cliente). Controlado por Empresa.catalogoVisualActivo.
+// No confundir con el Catálogo rotativo de abajo (Producto/Pedido), que es
+// un flujo de venta propio, no imágenes para el chat.
+// ------------------------------------------------------------
+model CatalogoCategoria {
+  id        String   @id @default(uuid())
+  empresa   Empresa  @relation(fields: [empresaId], references: [id])
+  empresaId String
+
+  nombre    String
+  orden     Int      @default(0)
+  creadoEn  DateTime @default(now())
+
+  items     CatalogoItem[]
+
+  @@index([empresaId])
+}
+
+model CatalogoItem {
+  id          String            @id @default(uuid())
+  empresa     Empresa           @relation(fields: [empresaId], references: [id])
+  empresaId   String
+  categoria   CatalogoCategoria @relation(fields: [categoriaId], references: [id])
+  categoriaId String
+
+  nombre      String
+  imagenUrl   String
+  descripcion String?
+  activo      Boolean  @default(true)
+  creadoEn    DateTime @default(now())
+
+  @@index([empresaId])
+  @@index([categoriaId])
 }
 
 // ------------------------------------------------------------
