@@ -161,6 +161,7 @@ app.use('/disponibilidad', require('./routes/disponibilidad'));
 app.use('/suscripcion', suscripcionRouter);
 app.use('/website-leads', websiteLeadsRouter);
 app.use('/admin-vendedores', require('./routes/adminVendedores'));
+app.use('/admin-vendedores/catalogo-demo', require('./routes/catalogoDemoAdmin'));
 app.use('/leads', require('./routes/leads'));
 app.use('/ranking', require('./routes/ranking'));
 app.use('/gestion-venta', require('./routes/gestionVenta'));

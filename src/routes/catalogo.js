@@ -153,7 +153,7 @@ router.post('/items', async (req, res) => {
       return res.status(400).json({ error: `Alcanzaste el máximo de ${limites.maxTotal} imágenes en tu plan actual` });
     }
 
-    const { url } = await subirImagenCatalogo(imagenBase64, req.usuario.empresaId);
+    const { url } = await subirImagenCatalogo(imagenBase64, `catalogo/${req.usuario.empresaId}`);
 
     const item = await prisma.catalogoItem.create({
       data: {

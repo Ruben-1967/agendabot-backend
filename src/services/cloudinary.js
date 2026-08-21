@@ -10,15 +10,16 @@ cloudinary.config({
 
 /**
  * Sube una imagen (data URI base64, ej. "data:image/png;base64,...") a la
- * carpeta de la empresa en Cloudinary y devuelve la URL segura resultante.
+ * carpeta indicada en Cloudinary y devuelve la URL segura resultante.
  *
  * @param {string} base64DataUri
- * @param {string} empresaId
+ * @param {string} folder - ej. "catalogo/<empresaId>" (catálogo real) o
+ *   "catalogo-demo/<rubroTemplateId>" (catálogo de la demo por rubro).
  * @returns {Promise<{ url: string, publicId: string }>}
  */
-async function subirImagenCatalogo(base64DataUri, empresaId) {
+async function subirImagenCatalogo(base64DataUri, folder) {
   const resultado = await cloudinary.uploader.upload(base64DataUri, {
-    folder: `catalogo/${empresaId}`,
+    folder,
     resource_type: 'image',
   });
 

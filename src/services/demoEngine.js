@@ -200,10 +200,15 @@ function toolMostrarCatalogoVisualDemo() {
 }
 
 async function responderPreguntaSobreNegocio({ historial, empresaDemo, serviciosBase }) {
-  const itemsCatalogoDemo = await prisma.catalogoDemoItem.findMany({
-    where: { rubroTemplateId: empresaDemo.rubroTemplateId, activo: true },
-    orderBy: { orden: 'asc' },
-  });
+  // El switch (RubroTemplate.catalogoVisualDemoActivo) se chequea ANTES de
+  // consultar items, igual que empresa.catalogoVisualActivo en el flujo
+  // real — si está apagado, la tool ni se arma ni se ofrece.
+  const itemsCatalogoDemo = empresaDemo.rubroTemplate.catalogoVisualDemoActivo
+    ? await prisma.catalogoDemoItem.findMany({
+        where: { rubroTemplateId: empresaDemo.rubroTemplateId, activo: true },
+        orderBy: { orden: 'asc' },
+      })
+    : [];
   const categoriasCatalogoDemo = [...new Set(itemsCatalogoDemo.map((i) => i.categoria))];
   const incluirCatalogo = categoriasCatalogoDemo.length > 0;
 
@@ -283,6 +288,8 @@ function detectaIntencionVerFotosDemo(texto) {
 }
 
 async function intentarMostrarCatalogoDemo(empresaDemo) {
+  if (!empresaDemo.rubroTemplate.catalogoVisualDemoActivo) return null;
+
   const items = await prisma.catalogoDemoItem.findMany({
     where: { rubroTemplateId: empresaDemo.rubroTemplateId, activo: true },
     orderBy: { orden: 'asc' },
