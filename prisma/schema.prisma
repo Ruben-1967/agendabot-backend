@@ -38,6 +38,29 @@ model RubroTemplate {
   categoriasProductoSugeridas Json? // arreglo de strings sugeridos al registrar una venta, ej. ["Lente monofocal", "Lente progresivo", ...] — arma el selector en el panel y el filtro de segmentación de campañas
 
   empresas Empresa[]
+  catalogoDemoItems CatalogoDemoItem[]
+}
+
+// ------------------------------------------------------------
+// CATÁLOGO VISUAL DE LA DEMO COMERCIAL — separado del Catálogo Visual real
+// (CatalogoCategoria/CatalogoItem, por Empresa). Este es fijo POR RUBRO, no
+// por empresa: lo usa demoEngine.js para mostrarle a un prospecto ejemplos
+// reales del catálogo antes de que exista un negocio configurado. Sin
+// límites de plan ni switch maestro (no aplica en demo). Carga vía script,
+// no panel — ver scripts/seed-catalogo-demo.js.
+// ------------------------------------------------------------
+model CatalogoDemoItem {
+  id              String        @id @default(uuid())
+  rubroTemplateId String
+  rubroTemplate   RubroTemplate @relation(fields: [rubroTemplateId], references: [id])
+  categoria       String
+  nombre          String
+  imagenUrl       String
+  activo          Boolean       @default(true)
+  orden           Int           @default(0)
+  createdAt       DateTime      @default(now())
+
+  @@index([rubroTemplateId])
 }
 
 model Empresa {
