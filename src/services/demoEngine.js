@@ -27,6 +27,7 @@ const {
 } = require('./whatsapp');
 const { fechaLegibleDesdeISO } = require('../lib/formatoFechas');
 const { generarProximosDiasSimulados } = require('../lib/agendaDemoSimulada');
+const { REMATE_PANEL_POR_RUBRO } = require('../config/remateDemoPanel');
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
@@ -171,27 +172,132 @@ condiciones las confirma el equipo comercial directamente. No prometas nada que 
   return textBlock ? textBlock.text : 'Buena pregunta — te conecto con el equipo para que te lo confirmen bien.';
 }
 
+// Catálogo Visual de la demo (fijo por rubro, ver CatalogoDemoItem en el
+// schema) — a diferencia del catálogo real, acá se le da tool-calling real
+// de Anthropic a esta función (única en demoEngine.js que lo usa), porque
+// el escenario de mayor impacto de venta (pedido explícito de fotos, sin
+// perder el hilo) es demasiado delicado para replicarlo a mano con regex.
+function remateParaRubro(empresaDemo) {
+  return REMATE_PANEL_POR_RUBRO[empresaDemo.rubroTemplate.clave] || null;
+}
+
+function toolMostrarCatalogoVisualDemo() {
+  return {
+    name: 'mostrar_catalogo_visual_demo',
+    description:
+      'Muestra al prospecto fotos reales de una categoría del catálogo de ejemplo de este rubro (ej. cortes de pelo, armazones). Llámala SOLO cuando el prospecto ya confirmó que quiere ver las fotos — sea porque respondió que sí a tu oferta en texto, o porque las pidió directamente él mismo, en cualquier momento de la conversación. NUNCA la uses solo para preguntar si quiere verlas — esa oferta se hace en texto plano primero. El campo "categoria" debe ser exactamente uno de los nombres de la lista CATEGORÍAS DE CATÁLOGO DE EJEMPLO DISPONIBLES.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        categoria: {
+          type: 'string',
+          description: 'Nombre exacto de la categoría, tal como aparece en la lista CATEGORÍAS DE CATÁLOGO DE EJEMPLO DISPONIBLES.',
+        },
+      },
+      required: ['categoria'],
+    },
+  };
+}
+
 async function responderPreguntaSobreNegocio({ historial, empresaDemo, serviciosBase }) {
+  const itemsCatalogoDemo = await prisma.catalogoDemoItem.findMany({
+    where: { rubroTemplateId: empresaDemo.rubroTemplateId, activo: true },
+    orderBy: { orden: 'asc' },
+  });
+  const categoriasCatalogoDemo = [...new Set(itemsCatalogoDemo.map((i) => i.categoria))];
+  const incluirCatalogo = categoriasCatalogoDemo.length > 0;
+
+  const bloqueCategorias = incluirCatalogo
+    ? `\nCATEGORÍAS DE CATÁLOGO DE EJEMPLO DISPONIBLES (fotos reales que puedes ofrecer — el campo "categoria" de mostrar_catalogo_visual_demo debe ser exactamente uno de estos nombres):\n${categoriasCatalogoDemo.map((c) => `- ${c}`).join('\n')}\n`
+    : '';
+  const instruccionesCatalogo = incluirCatalogo
+    ? `\n- Catálogo de ejemplo: si lo que pregunta el prospecto calza con una categoría del catálogo, puedes ofrecerle proactivamente ver fotos — en TEXTO PLANO, con una pregunta breve, ej. "¿Quieres ver algunos ejemplos de [categoría]?". NUNCA llames a mostrar_catalogo_visual_demo solo para hacer esa oferta.
+- Llama a mostrar_catalogo_visual_demo recién cuando el prospecto confirme que quiere ver las fotos — sea porque respondió que sí a tu oferta, o porque las pidió directamente él mismo en cualquier momento.`
+    : '';
+
   const systemPrompt = `Eres el asistente de WhatsApp de "${empresaDemo.nombre}" (esto es una demo comercial de Totemsystem).
 Servicios que ofrece: ${serviciosBase.length ? serviciosBase.join(', ') : 'servicios generales del rubro'}.
 ${empresaDemo.direccion ? `Dirección: ${empresaDemo.direccion}.` : ''}
 ${empresaDemo.sitioWeb ? `Sitio web: ${empresaDemo.sitioWeb}` : ''}
 ${empresaDemo.informacionAdicional ? `Información adicional que puedes citar tal cual: ${empresaDemo.informacionAdicional}` : ''}
-
+${bloqueCategorias}
 Ya tienes arriba el historial completo de la conversación — úsalo para no perder el hilo. Responde en 1-3
 líneas, tono cordial y directo, como WhatsApp. Si preguntan por agendar, invítalos a decir el servicio que
 quieren para mostrarles los horarios disponibles. NUNCA inventes precios, horarios exactos, ni políticas que
-no te dieron arriba — si no lo sabes, dilo con naturalidad.`;
+no te dieron arriba — si no lo sabes, dilo con naturalidad.${instruccionesCatalogo}`;
 
-  const response = await anthropic.messages.create({
-    model: 'claude-haiku-4-5-20251001',
-    max_tokens: 200,
-    system: systemPrompt,
-    messages: historialAMensajes(historial),
+  const messages = historialAMensajes(historial);
+  const tools = incluirCatalogo ? [toolMostrarCatalogoVisualDemo()] : undefined;
+
+  for (let intentos = 0; intentos < 3; intentos++) {
+    const response = await anthropic.messages.create({
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 200,
+      system: systemPrompt,
+      ...(tools ? { tools } : {}),
+      messages,
+    });
+
+    if (response.stop_reason !== 'tool_use') {
+      const textBlock = response.content.find((b) => b.type === 'text');
+      return { texto: textBlock ? textBlock.text : '¿En qué te puedo ayudar? Puedo contarte de nuestros servicios o agendarte una hora.', interactivo: null };
+    }
+
+    messages.push({ role: 'assistant', content: response.content });
+    const toolResults = [];
+    let catalogoParaMostrar = null;
+
+    for (const block of response.content) {
+      if (block.type === 'tool_use' && block.name === 'mostrar_catalogo_visual_demo') {
+        const itemsCategoria = itemsCatalogoDemo
+          .filter((i) => i.categoria.toLowerCase() === String(block.input.categoria || '').toLowerCase())
+          .slice(0, 4);
+        const resultado = itemsCategoria.length > 0
+          ? { categoria: itemsCategoria[0].categoria, items: itemsCategoria.map((i) => ({ nombre: i.nombre, imagenUrl: i.imagenUrl })) }
+          : { error: 'No encontramos esa categoría del catálogo.' };
+        toolResults.push({ type: 'tool_result', tool_use_id: block.id, content: JSON.stringify(resultado) });
+        if (resultado.items?.length > 0) catalogoParaMostrar = resultado;
+      }
+    }
+
+    if (catalogoParaMostrar) {
+      return {
+        texto: `Aquí tienes algunos ejemplos de ${catalogoParaMostrar.categoria} 👇`,
+        interactivo: { tipo: 'catalogo_imagenes_demo', items: catalogoParaMostrar.items, remate: remateParaRubro(empresaDemo) },
+      };
+    }
+
+    messages.push({ role: 'user', content: toolResults });
+  }
+
+  return { texto: '¿En qué te puedo ayudar? Puedo contarte de nuestros servicios o agendarte una hora.', interactivo: null };
+}
+
+// Interceptor determinístico para los pasos de agendamiento en curso
+// (AGENDA_ESPERANDO_SERVICIO / AGENDA_ESPERANDO_DATOS), que no pasan por
+// Claude — si no se detecta acá, el texto se interpretaría literalmente
+// como el servicio o el nombre del prospecto. No cambia nuevoPaso, así que
+// el turno siguiente sigue esperando exactamente lo mismo que antes.
+function detectaIntencionVerFotosDemo(texto) {
+  return /\bfotos?\b|\bim[aá]genes?\b|\bejemplos?\b|\bmuestras?\b/i.test(texto);
+}
+
+async function intentarMostrarCatalogoDemo(empresaDemo) {
+  const items = await prisma.catalogoDemoItem.findMany({
+    where: { rubroTemplateId: empresaDemo.rubroTemplateId, activo: true },
+    orderBy: { orden: 'asc' },
+    take: 4,
   });
+  if (items.length === 0) return null;
 
-  const textBlock = response.content.find((b) => b.type === 'text');
-  return textBlock ? textBlock.text : '¿En qué te puedo ayudar? Puedo contarte de nuestros servicios o agendarte una hora.';
+  return {
+    texto: 'Antes de seguir, aquí tienes algunos ejemplos 👇',
+    interactivo: {
+      tipo: 'catalogo_imagenes_demo',
+      items: items.map((i) => ({ nombre: i.nombre, imagenUrl: i.imagenUrl })),
+      remate: remateParaRubro(empresaDemo),
+    },
+  };
 }
 
 function escaparRegex(texto) {
@@ -328,7 +434,9 @@ async function procesarMensajeDemo({ demoAsignada, telefonoCliente, mensaje, nom
   if (mensaje.type === 'interactive' && modoOperacion === 'AGENDAMIENTO') {
     if (idFilaElegida === ID_FILA_SERVICIO_OTRO_DEMO) {
       try {
-        respuestaTexto = await responderPreguntaSobreNegocio({ historial: nuevoHistorial, empresaDemo, serviciosBase });
+        const respuestaNegocio = await responderPreguntaSobreNegocio({ historial: nuevoHistorial, empresaDemo, serviciosBase });
+        respuestaTexto = respuestaNegocio.texto;
+        interactivo = respuestaNegocio.interactivo;
       } catch (error) {
         console.error('[DEMO] Error respondiendo tras "otro/no lo encuentro":', error.message);
         respuestaTexto = '¿En qué te puedo ayudar? Puedo contarte de nuestros servicios o agendarte una hora.';
@@ -445,7 +553,9 @@ async function procesarMensajeDemo({ demoAsignada, telefonoCliente, mensaje, nom
           }
 
           try {
-            respuestaTexto = await responderPreguntaSobreNegocio({ historial: nuevoHistorial, empresaDemo, serviciosBase });
+            const respuestaNegocio = await responderPreguntaSobreNegocio({ historial: nuevoHistorial, empresaDemo, serviciosBase });
+            respuestaTexto = respuestaNegocio.texto;
+            interactivo = respuestaNegocio.interactivo;
           } catch (error) {
             console.error('[DEMO] Error respondiendo pregunta libre de agendamiento:', error.message);
             respuestaTexto = '¿En qué te puedo ayudar? Puedo contarte de nuestros servicios o agendarte una hora.';
@@ -470,6 +580,16 @@ async function procesarMensajeDemo({ demoAsignada, telefonoCliente, mensaje, nom
       }
 
       case PASOS.AGENDA_ESPERANDO_SERVICIO: {
+        if (detectaIntencionVerFotosDemo(textoEntrante)) {
+          const resultadoFotos = await intentarMostrarCatalogoDemo(empresaDemo);
+          if (resultadoFotos) {
+            respuestaTexto = resultadoFotos.texto;
+            interactivo = resultadoFotos.interactivo;
+            nuevoPaso = PASOS.AGENDA_ESPERANDO_SERVICIO;
+            break;
+          }
+        }
+
         const servicioMencionado = detectarServicioMencionado(textoEntrante, serviciosBase);
 
         if (!servicioMencionado) {
@@ -487,6 +607,16 @@ async function procesarMensajeDemo({ demoAsignada, telefonoCliente, mensaje, nom
       }
 
       case PASOS.AGENDA_ESPERANDO_DATOS: {
+        if (detectaIntencionVerFotosDemo(textoEntrante)) {
+          const resultadoFotos = await intentarMostrarCatalogoDemo(empresaDemo);
+          if (resultadoFotos) {
+            respuestaTexto = resultadoFotos.texto;
+            interactivo = resultadoFotos.interactivo;
+            nuevoPaso = PASOS.AGENDA_ESPERANDO_DATOS;
+            break;
+          }
+        }
+
         const nombreProspecto = textoEntrante.trim();
 
         if (nombreProspecto.length < 2) {
@@ -535,7 +665,9 @@ async function procesarMensajeDemo({ demoAsignada, telefonoCliente, mensaje, nom
 
         if (modoOperacion === 'AGENDAMIENTO') {
           try {
-            respuestaTexto = await responderPreguntaSobreNegocio({ historial: nuevoHistorial, empresaDemo, serviciosBase });
+            const respuestaNegocio = await responderPreguntaSobreNegocio({ historial: nuevoHistorial, empresaDemo, serviciosBase });
+            respuestaTexto = respuestaNegocio.texto;
+            interactivo = respuestaNegocio.interactivo;
           } catch (error) {
             console.error('[DEMO] Error respondiendo tras desambiguación:', error.message);
             respuestaTexto = 'Cuéntame más — ¿qué te gustaría hacer?';

@@ -1,6 +1,7 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
+const path = require('path');
 const prisma = require('./lib/prisma');
 const crypto = require('crypto');
 const {
@@ -144,6 +145,11 @@ app.use('/clientes', clientesRouter);
 app.use('/billetera', billeteraRouter);
 app.use('/empresa', empresaRouter);
 app.use('/empresa/catalogo', catalogoRouter);
+
+// Capturas curadas del remate de venta de la demo (ver src/config/remateDemoPanel.js)
+// — asset estático versionado en el repo, se despliega junto con el código
+// en cada build, no depende de disco persistente.
+app.use('/assets/demo-panel', express.static(path.join(__dirname, '../assets/demo-panel')));
 app.use('/agenda', agendaRouter);
 app.use('/servicios', serviciosRouter);
 app.use('/plantillas-ficha', require('./routes/plantillasFicha'));
@@ -411,6 +417,41 @@ app.post('/webhook/whatsapp', verificarFirmaWebhookWhatsApp, async (req, res) =>
             titulo: hora,
           })),
         });
+      } else if (interactivo?.tipo === 'catalogo_imagenes_demo') {
+        // Máximo 4 imágenes por respuesta (ya viene acotado desde
+        // demoEngine.js). Mismo patrón que el dispatcher real: texto
+        // primero, luego cada imagen por separado. Si hay remate del panel
+        // (ver src/config/remateDemoPanel.js), se manda encadenado al final
+        // — no es una decisión del modelo, es determinista.
+        await sendWhatsAppTextMessage({
+          phoneNumberId,
+          to: telefonoCliente,
+          text: respuestaTexto,
+          accessToken: accessTokenDemo,
+        });
+        for (const item of interactivo.items) {
+          await sendWhatsAppImageMessage({
+            phoneNumberId,
+            to: telefonoCliente,
+            accessToken: accessTokenDemo,
+            imageUrl: item.imagenUrl,
+            caption: item.nombre,
+          });
+        }
+        if (interactivo.remate) {
+          await sendWhatsAppTextMessage({
+            phoneNumberId,
+            to: telefonoCliente,
+            text: interactivo.remate.texto,
+            accessToken: accessTokenDemo,
+          });
+          await sendWhatsAppImageMessage({
+            phoneNumberId,
+            to: telefonoCliente,
+            accessToken: accessTokenDemo,
+            imageUrl: interactivo.remate.imagenUrl,
+          });
+        }
       } else if (interactivo?.tipo === 'lista_servicios_demo') {
         await sendWhatsAppInteractiveList({
           phoneNumberId,
