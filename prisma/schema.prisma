@@ -39,6 +39,10 @@ model RubroTemplate {
 
   empresas Empresa[]
   catalogoDemoItems CatalogoDemoItem[]
+  // Switch maestro del Catálogo Visual de la demo, por rubro (no por
+  // empresa) — apagado por defecto. Lo administra el equipo de Multidigital
+  // desde /vendedor/admin/catalogo-demo, nunca un negocio real.
+  catalogoVisualDemoActivo Boolean @default(false)
 }
 
 // ------------------------------------------------------------
