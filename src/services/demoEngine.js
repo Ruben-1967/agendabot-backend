@@ -150,39 +150,14 @@ function construirMockupYPitch({ items, empresaDemo, modoOperacion, origenCarrit
   );
 }
 
-async function responderPreguntaAbierta({ historial, modoOperacion }) {
-  const systemPrompt = `Eres el mismo asistente de venta de Totemsystem que ya estuvo mostrando una demo.
-Ahora el prospecto está haciendo preguntas de cierre (precio, condiciones, dudas). Responde en 2-4 líneas,
-tono directo y cercano, como WhatsApp — nunca un párrafo largo. Ya tienes todo el historial de la
-conversación arriba — úsalo para no perder el hilo (ej. si preguntó cuántas citas hace y luego solo
-responde un número, entiende que es la respuesta a esa pregunta).
-
-Grilla EXACTA de planes de agendamiento — usa estos números tal cual, NUNCA inventes ni redondees otros:
-${GRILLA_PLANES_TEXTO}
-
-Modo catálogo rotativo: créditos prepagados a $149 CLP por mensaje, mínimo 50 créditos por compra.
-El producto responde WhatsApp 24/7, agenda o toma pedidos automáticamente, y se personaliza al rubro del negocio.
-
-Regla estricta: NUNCA inventes políticas de cancelación, reembolso, garantías, plazos de prueba, ni
-condiciones contractuales que no aparezcan arriba. Si preguntan algo así, sé honesto: di que esas
-condiciones las confirma el equipo comercial directamente. No prometas nada que no esté en los datos de arriba.`;
-
-  const response = await anthropic.messages.create({
-    model: 'claude-haiku-4-5-20251001',
-    max_tokens: 250,
-    system: systemPrompt,
-    messages: historialAMensajes(historial),
-  });
-
-  const textBlock = response.content.find((b) => b.type === 'text');
-  return textBlock ? textBlock.text : 'Buena pregunta — te conecto con el equipo para que te lo confirmen bien.';
-}
-
 // Catálogo Visual de la demo (fijo por rubro, ver CatalogoDemoItem en el
 // schema) — a diferencia del catálogo real, acá se le da tool-calling real
-// de Anthropic a esta función (única en demoEngine.js que lo usa), porque
-// el escenario de mayor impacto de venta (pedido explícito de fotos, sin
-// perder el hilo) es demasiado delicado para replicarlo a mano con regex.
+// de Anthropic, compartido entre responderPreguntaSobreNegocio (fase de
+// indagación) y responderPreguntaAbierta (preguntas de cierre y
+// conversación libre, incluso después de haber agendado) vía
+// generarRespuestaConCatalogoDemo — el escenario de mayor impacto de venta
+// (pedido explícito de fotos, sin perder el hilo, en cualquier momento de
+// la conversación) es demasiado delicado para replicarlo a mano con regex.
 function remateParaRubro(empresaDemo) {
   return REMATE_PANEL_POR_RUBRO[empresaDemo.rubroTemplate.clave] || null;
 }
@@ -205,7 +180,19 @@ function toolMostrarCatalogoVisualDemo() {
   };
 }
 
-async function responderPreguntaSobreNegocio({ historial, empresaDemo, serviciosBase }) {
+/**
+ * Arma el contexto del catálogo (items, tool, bloques de prompt) y corre el
+ * loop de tool-use de Claude — compartido entre responderPreguntaSobreNegocio
+ * y responderPreguntaAbierta, para que ninguna de las dos quede sin la
+ * herramienta (el bug de origen: responderPreguntaAbierta nunca la tuvo,
+ * y ante la falta de la tool el modelo inventaba una excusa sobre
+ * "limitaciones de la demo" en vez de simplemente no poder ayudar).
+ *
+ * @returns {Promise<{texto: string|null, interactivo: Object|null}>}
+ *   texto null si Claude no devolvió texto tras agotar los intentos —
+ *   quien llama pone su propio mensaje de fallback.
+ */
+async function generarRespuestaConCatalogoDemo({ empresaDemo, historial, systemPromptBase, maxTokens }) {
   // El switch (RubroTemplate.catalogoVisualDemoActivo) se chequea ANTES de
   // consultar items, igual que empresa.catalogoVisualActivo en el flujo
   // real — si está apagado, la tool ni se arma ni se ofrece.
@@ -221,21 +208,16 @@ async function responderPreguntaSobreNegocio({ historial, empresaDemo, servicios
   const bloqueCategorias = incluirCatalogo
     ? `\nCATEGORÍAS DE CATÁLOGO DE EJEMPLO DISPONIBLES (fotos reales que puedes ofrecer — el campo "categoria" de mostrar_catalogo_visual_demo debe ser exactamente uno de estos nombres):\n${categoriasCatalogoDemo.map((c) => `- ${c}`).join('\n')}\n`
     : '';
+  // Ambos casos (con y sin catálogo) incluyen una regla explícita contra
+  // inventar excusas — es el mismo patrón de alucinación (fabricar una
+  // explicación plausible ante un vacío de información) tanto si falta la
+  // tool como si simplemente no hay catálogo cargado para el rubro.
   const instruccionesCatalogo = incluirCatalogo
     ? `\n- Catálogo de ejemplo: si lo que pregunta el prospecto calza con una categoría del catálogo, puedes ofrecerle proactivamente ver fotos — en TEXTO PLANO, con una pregunta breve, ej. "¿Quieres ver algunos ejemplos de [categoría]?". NUNCA llames a mostrar_catalogo_visual_demo solo para hacer esa oferta.
-- Llama a mostrar_catalogo_visual_demo recién cuando el prospecto confirme que quiere ver las fotos — sea porque respondió que sí a tu oferta, o porque las pidió directamente él mismo en cualquier momento.`
-    : '';
+- Llama a mostrar_catalogo_visual_demo recién cuando el prospecto confirme que quiere ver las fotos — sea porque respondió que sí a tu oferta, o porque las pidió directamente él mismo en cualquier momento (incluso después de haber agendado, si sigue conversando).`
+    : `\n- Si te piden fotos y no hay catálogo cargado para esa categoría, respondé que no tenés ejemplos para mostrar en este momento — nunca digas que es una limitación de la demo o del sistema; es lo mismo que le pasaría a un negocio real que todavía no cargó su catálogo.`;
 
-  const systemPrompt = `Eres el asistente de WhatsApp de "${empresaDemo.nombre}" (esto es una demo comercial de Totemsystem).
-Servicios que ofrece: ${serviciosBase.length ? serviciosBase.join(', ') : 'servicios generales del rubro'}.
-${empresaDemo.direccion ? `Dirección: ${empresaDemo.direccion}.` : ''}
-${empresaDemo.sitioWeb ? `Sitio web: ${empresaDemo.sitioWeb}` : ''}
-${empresaDemo.informacionAdicional ? `Información adicional que puedes citar tal cual: ${empresaDemo.informacionAdicional}` : ''}
-${bloqueCategorias}
-Ya tienes arriba el historial completo de la conversación — úsalo para no perder el hilo. Responde en 1-3
-líneas, tono cordial y directo, como WhatsApp. Si preguntan por agendar, invítalos a decir el servicio que
-quieren para mostrarles los horarios disponibles. NUNCA inventes precios, horarios exactos, ni políticas que
-no te dieron arriba — si no lo sabes, dilo con naturalidad.${instruccionesCatalogo}`;
+  const systemPrompt = `${systemPromptBase}${bloqueCategorias}${instruccionesCatalogo}`;
 
   const messages = historialAMensajes(historial);
   const tools = incluirCatalogo ? [toolMostrarCatalogoVisualDemo()] : undefined;
@@ -243,7 +225,7 @@ no te dieron arriba — si no lo sabes, dilo con naturalidad.${instruccionesCata
   for (let intentos = 0; intentos < 3; intentos++) {
     const response = await anthropic.messages.create({
       model: 'claude-haiku-4-5-20251001',
-      max_tokens: 200,
+      max_tokens: maxTokens,
       system: systemPrompt,
       ...(tools ? { tools } : {}),
       messages,
@@ -251,7 +233,7 @@ no te dieron arriba — si no lo sabes, dilo con naturalidad.${instruccionesCata
 
     if (response.stop_reason !== 'tool_use') {
       const textBlock = response.content.find((b) => b.type === 'text');
-      return { texto: textBlock ? textBlock.text : '¿En qué te puedo ayudar? Puedo contarte de nuestros servicios o agendarte una hora.', interactivo: null };
+      return { texto: textBlock ? textBlock.text : null, interactivo: null };
     }
 
     messages.push({ role: 'assistant', content: response.content });
@@ -281,7 +263,51 @@ no te dieron arriba — si no lo sabes, dilo con naturalidad.${instruccionesCata
     messages.push({ role: 'user', content: toolResults });
   }
 
-  return { texto: '¿En qué te puedo ayudar? Puedo contarte de nuestros servicios o agendarte una hora.', interactivo: null };
+  return { texto: null, interactivo: null };
+}
+
+async function responderPreguntaAbierta({ historial, empresaDemo }) {
+  const systemPromptBase = `Eres el mismo asistente de venta de Totemsystem que ya estuvo mostrando una demo.
+Ahora el prospecto está haciendo preguntas de cierre (precio, condiciones, dudas) o simplemente sigue
+conversando después de haber agendado. Responde en 2-4 líneas, tono directo y cercano, como WhatsApp —
+nunca un párrafo largo. Ya tienes todo el historial de la conversación arriba — úsalo para no perder el
+hilo (ej. si preguntó cuántas citas hace y luego solo responde un número, entiende que es la respuesta a
+esa pregunta).
+
+Grilla EXACTA de planes de agendamiento — usa estos números tal cual, NUNCA inventes ni redondees otros:
+${GRILLA_PLANES_TEXTO}
+
+Modo catálogo rotativo: créditos prepagados a $149 CLP por mensaje, mínimo 50 créditos por compra.
+El producto responde WhatsApp 24/7, agenda o toma pedidos automáticamente, y se personaliza al rubro del negocio.
+
+Regla estricta: NUNCA inventes políticas de cancelación, reembolso, garantías, plazos de prueba, ni
+condiciones contractuales que no aparezcan arriba. Si preguntan algo así, sé honesto: di que esas
+condiciones las confirma el equipo comercial directamente. No prometas nada que no esté en los datos de arriba.`;
+
+  const resultado = await generarRespuestaConCatalogoDemo({ empresaDemo, historial, systemPromptBase, maxTokens: 250 });
+  return {
+    texto: resultado.texto || 'Buena pregunta — te conecto con el equipo para que te lo confirmen bien.',
+    interactivo: resultado.interactivo,
+  };
+}
+
+async function responderPreguntaSobreNegocio({ historial, empresaDemo, serviciosBase }) {
+  const systemPromptBase = `Eres el asistente de WhatsApp de "${empresaDemo.nombre}" (esto es una demo comercial de Totemsystem).
+Servicios que ofrece: ${serviciosBase.length ? serviciosBase.join(', ') : 'servicios generales del rubro'}.
+${empresaDemo.direccion ? `Dirección: ${empresaDemo.direccion}.` : ''}
+${empresaDemo.sitioWeb ? `Sitio web: ${empresaDemo.sitioWeb}` : ''}
+${empresaDemo.informacionAdicional ? `Información adicional que puedes citar tal cual: ${empresaDemo.informacionAdicional}` : ''}
+
+Ya tienes arriba el historial completo de la conversación — úsalo para no perder el hilo. Responde en 1-3
+líneas, tono cordial y directo, como WhatsApp. Si preguntan por agendar, invítalos a decir el servicio que
+quieren para mostrarles los horarios disponibles. NUNCA inventes precios, horarios exactos, ni políticas que
+no te dieron arriba — si no lo sabes, dilo con naturalidad.`;
+
+  const resultado = await generarRespuestaConCatalogoDemo({ empresaDemo, historial, systemPromptBase, maxTokens: 200 });
+  return {
+    texto: resultado.texto || '¿En qué te puedo ayudar? Puedo contarte de nuestros servicios o agendarte una hora.',
+    interactivo: resultado.interactivo,
+  };
 }
 
 // Interceptor determinístico para los pasos de agendamiento en curso
@@ -827,7 +853,9 @@ async function procesarMensajeDemo({ demoAsignada, telefonoCliente, mensaje, nom
         }
 
         try {
-          respuestaTexto = await responderPreguntaAbierta({ historial: nuevoHistorial, modoOperacion });
+          const respuestaAbierta = await responderPreguntaAbierta({ historial: nuevoHistorial, empresaDemo });
+          respuestaTexto = respuestaAbierta.texto;
+          interactivo = respuestaAbierta.interactivo;
         } catch (error) {
           console.error('[DEMO] Error respondiendo pregunta abierta:', error.message);
           respuestaTexto = `Buena pregunta — te conecto con el equipo para confirmártelo bien. Mientras, puedes ver más acá: ${LINK_LANDING}`;
