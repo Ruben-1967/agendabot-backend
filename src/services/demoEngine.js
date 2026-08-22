@@ -43,6 +43,12 @@ const PASOS = {
   DESAMBIGUANDO_PRECIO: 4,
   AGENDA_ESPERANDO_DATOS: 5,
   AGENDA_ESPERANDO_SERVICIO: 6,
+  // Nombre de servicio ambiguo con una categoría de catálogo (ej. "Corte de
+  // pelo" es servicio agendable Y categoría de CatalogoDemoItem a la vez).
+  // Antes de asumir que el prospecto quiere agendar, se le pregunta si
+  // quiere ver ejemplos primero — este paso sostiene esa pregunta hasta la
+  // respuesta del turno siguiente.
+  CATALOGO_ESPERANDO_CONFIRMACION: 7,
 };
 
 const GRILLA_PLANES_TEXTO = `- Plan A: $9.900 CLP/mes — 100 citas incluidas, excedente $150 CLP/cita
@@ -287,24 +293,55 @@ function detectaIntencionVerFotosDemo(texto) {
   return /\bfotos?\b|\bim[aá]genes?\b|\bejemplos?\b|\bmuestras?\b/i.test(texto);
 }
 
-async function intentarMostrarCatalogoDemo(empresaDemo) {
+/**
+ * @param {Object} empresaDemo
+ * @param {string|null} categoriaTexto - si se pasa, filtra a esa categoría
+ *   exacta (case-insensitive) — usado para la confirmación por ambigüedad
+ *   nombre-de-servicio/categoría. Sin filtro, trae cualquier item del rubro
+ *   (usado por el interceptor de fotos durante agendamiento en curso).
+ */
+async function intentarMostrarCatalogoDemo(empresaDemo, categoriaTexto = null) {
   if (!empresaDemo.rubroTemplate.catalogoVisualDemoActivo) return null;
 
   const items = await prisma.catalogoDemoItem.findMany({
-    where: { rubroTemplateId: empresaDemo.rubroTemplateId, activo: true },
+    where: {
+      rubroTemplateId: empresaDemo.rubroTemplateId,
+      activo: true,
+      ...(categoriaTexto ? { categoria: { equals: categoriaTexto, mode: 'insensitive' } } : {}),
+    },
     orderBy: { orden: 'asc' },
     take: 4,
   });
   if (items.length === 0) return null;
 
   return {
-    texto: 'Antes de seguir, aquí tienes algunos ejemplos 👇',
+    texto: categoriaTexto
+      ? `Aquí tienes algunos ejemplos de ${items[0].categoria} 👇`
+      : 'Antes de seguir, aquí tienes algunos ejemplos 👇',
     interactivo: {
       tipo: 'catalogo_imagenes_demo',
       items: items.map((i) => ({ nombre: i.nombre, imagenUrl: i.imagenUrl })),
       remate: remateParaRubro(empresaDemo),
     },
   };
+}
+
+/**
+ * Chequeo liviano (sin traer las imágenes) para saber si conviene ofrecer
+ * el catálogo de una categoría puntual — usado para decidir si preguntar
+ * "¿quieres ver ejemplos?" cuando un nombre de servicio es ambiguo con una
+ * categoría de catálogo real.
+ */
+async function hayCatalogoParaCategoria(empresaDemo, categoriaTexto) {
+  if (!empresaDemo.rubroTemplate.catalogoVisualDemoActivo) return false;
+  const count = await prisma.catalogoDemoItem.count({
+    where: {
+      rubroTemplateId: empresaDemo.rubroTemplateId,
+      activo: true,
+      categoria: { equals: categoriaTexto, mode: 'insensitive' },
+    },
+  });
+  return count > 0;
 }
 
 function escaparRegex(texto) {
@@ -545,6 +582,22 @@ async function procesarMensajeDemo({ demoAsignada, telefonoCliente, mensaje, nom
           const servicioMencionado = detectarServicioMencionado(textoEntrante, serviciosBase);
 
           if (servicioMencionado) {
+            // Nombre ambiguo: existe como servicio agendable Y como
+            // categoría de catálogo (ej. "Corte de pelo"). Si el prospecto
+            // todavía no expresó intención de agendar (ni antes en esta
+            // conversación, ni en este mismo mensaje), preguntamos primero
+            // si quiere ver ejemplos — no asumimos agendamiento directo.
+            const yaExpresoIntencionAgendar =
+              Boolean(nuevoCitaDemo?.servicio || nuevoCitaDemo?.fecha) ||
+              detectaIntencionAgendarGenerico(textoEntrante);
+
+            if (!yaExpresoIntencionAgendar && await hayCatalogoParaCategoria(empresaDemo, servicioMencionado)) {
+              nuevoCitaDemo = { ...(nuevoCitaDemo || {}), servicio: servicioMencionado };
+              respuestaTexto = `¿Quieres ver algunos ejemplos de ${servicioMencionado} antes de agendar? Es solo una muestra pequeña de los muchos diseños que podemos ofrecerte 😊`;
+              nuevoPaso = PASOS.CATALOGO_ESPERANDO_CONFIRMACION;
+              break;
+            }
+
             nuevoCitaDemo = { servicio: servicioMencionado };
             respuestaTexto = '¡Claro! Estos son los próximos días disponibles:';
             interactivo = { tipo: 'lista_dias', dias: generarProximosDiasSimulados() };
@@ -582,6 +635,32 @@ async function procesarMensajeDemo({ demoAsignada, telefonoCliente, mensaje, nom
         }
         respuestaTexto = respuestaMotorReal || 'Cuéntame más — ¿qué te gustaría hacer?';
         interactivo = interactivoMotorReal;
+        nuevoPaso = PASOS.SIMULACION_LIBRE;
+        break;
+      }
+
+      case PASOS.CATALOGO_ESPERANDO_CONFIRMACION: {
+        // Respuesta a "¿quieres ver ejemplos de [servicio] antes de
+        // agendar?" (ver SIMULACION_LIBRE). Si declina o pide hora/día
+        // directamente, seguimos a agendar -- el servicio ya quedó
+        // guardado en nuevoCitaDemo cuando se hizo la pregunta.
+        const declinaOPideAgendar =
+          /\bno\b/i.test(textoEntrante) ||
+          detectaIntencionAgendarGenerico(textoEntrante) ||
+          /\b(hora|horario|d[ií]a|fecha)\b/i.test(textoEntrante);
+
+        if (!declinaOPideAgendar) {
+          const resultado = await intentarMostrarCatalogoDemo(empresaDemo, nuevoCitaDemo?.servicio);
+          if (resultado) {
+            respuestaTexto = resultado.texto;
+            interactivo = resultado.interactivo;
+            nuevoPaso = PASOS.SIMULACION_LIBRE;
+            break;
+          }
+        }
+
+        respuestaTexto = '¡Dale! Estos son los próximos días disponibles:';
+        interactivo = { tipo: 'lista_dias', dias: generarProximosDiasSimulados() };
         nuevoPaso = PASOS.SIMULACION_LIBRE;
         break;
       }
