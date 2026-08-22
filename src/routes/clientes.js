@@ -39,7 +39,7 @@ router.get('/config', async (req, res) => {
     if (!empresa) return res.status(404).json({ error: 'Empresa no encontrada' });
 
 res.json({
-      camposFicha: empresa.rubroTemplate.camposFicha || {},
+      camposFicha: empresa.rubroTemplate.camposFicha || { grupos: [] },
       categoriasProductoSugeridas: Array.isArray(empresa.rubroTemplate.categoriasProductoSugeridas)
         ? empresa.rubroTemplate.categoriasProductoSugeridas
         : [],
