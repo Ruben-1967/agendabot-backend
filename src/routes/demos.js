@@ -16,7 +16,7 @@ const bcrypt = require('bcryptjs');
 const { parsePhoneNumberFromString } = require('libphonenumber-js');
 const prisma = require('../lib/prisma');
 const { obtenerUrlPanelPrincipal } = require('../lib/urlPanel');
-const { eliminarEmpresaCompleta } = require('../lib/eliminarEmpresaCompleta');
+const { eliminarEmpresaCompleta, traducirErrorRestriccionEmpresa } = require('../lib/eliminarEmpresaCompleta');
 const { requireAuth, requireRole } = require('../middleware/auth');
 const { extraerInfoSitioWeb } = require('../services/extraccionSitioWeb');
 const { sendWhatsAppTextMessage } = require('../services/whatsapp');
@@ -322,13 +322,31 @@ router.delete('/clientes-convertidos/:empresaId', requireAuth, requireRole('VEND
       return res.status(404).json({ error: 'Empresa no encontrada o no proviene de una demo convertida' });
     }
 
-    await prisma.$transaction(async (tx) => {
-      await eliminarEmpresaCompleta(tx, empresa.id);
-      await tx.demoAsignada.delete({ where: { id: empresa.demoOrigenId } });
-    });
+    await prisma.$transaction(
+      async (tx) => {
+        await eliminarEmpresaCompleta(tx, empresa.id);
+        // EventoGestionVenta.demoAsignadaId también es RESTRICT — si el vendedor
+        // registró notas/contactos sobre esta demo antes de convertirla, hay que
+        // limpiarlas antes de poder borrar la DemoAsignada misma.
+        await tx.eventoGestionVenta.deleteMany({ where: { demoAsignadaId: empresa.demoOrigenId } });
+        await tx.demoAsignada.delete({ where: { id: empresa.demoOrigenId } });
+      },
+      // eliminarEmpresaCompleta hace ~20 deleteMany secuenciales — el timeout
+      // default de Prisma (5s) alcanza a agotarse en la práctica y deja un
+      // P2028 tan crudo como el error que este fix intenta eliminar.
+      { timeout: 15000 }
+    );
 
     res.json({ ok: true });
   } catch (error) {
+    if (error.code === 'EMPRESA_ES_PLANTILLA_DEMO') {
+      return res.status(409).json({ error: error.message });
+    }
+    const mensajeRestriccion = traducirErrorRestriccionEmpresa(error);
+    if (mensajeRestriccion) {
+      console.error('Error eliminando cliente convertido (FK no contemplada):', error);
+      return res.status(409).json({ error: mensajeRestriccion });
+    }
     console.error('Error eliminando cliente convertido:', error);
     res.status(500).json({ error: error.message });
   }
