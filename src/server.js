@@ -594,6 +594,23 @@ app.post('/webhook/whatsapp', verificarFirmaWebhookWhatsApp, async (req, res) =>
             descripcion: o.descripcion,
           })),
         });
+      } else if (interactivo?.tipo === 'imagen_panel_demo') {
+        // Prospecto pidió ver "el panel" en medio de la conversación (no
+        // tras el catálogo) — misma captura real de "Remate Panel" que el
+        // remate, sin el cierre elaborado (no corresponde acá, no se mostró
+        // catálogo). Ver detectaIntencionVerPanel en demoEngine.js.
+        await sendWhatsAppTextMessage({
+          phoneNumberId,
+          to: telefonoCliente,
+          text: respuestaTexto,
+          accessToken: accessTokenDemo,
+        });
+        await sendWhatsAppImageMessage({
+          phoneNumberId,
+          to: telefonoCliente,
+          accessToken: accessTokenDemo,
+          imageUrl: interactivo.imagenUrl,
+        });
       } else {
         await sendWhatsAppTextMessage({
           phoneNumberId,
