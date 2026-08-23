@@ -1,7 +1,6 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
-const path = require('path');
 const prisma = require('./lib/prisma');
 const crypto = require('crypto');
 const {
@@ -148,10 +147,6 @@ app.use('/billetera', billeteraRouter);
 app.use('/empresa', empresaRouter);
 app.use('/empresa/catalogo', catalogoRouter);
 
-// Capturas curadas del remate de venta de la demo (ver src/config/remateDemoPanel.js)
-// — asset estático versionado en el repo, se despliega junto con el código
-// en cada build, no depende de disco persistente.
-app.use('/assets/demo-panel', express.static(path.join(__dirname, '../assets/demo-panel')));
 app.use('/agenda', agendaRouter);
 app.use('/servicios', serviciosRouter);
 app.use('/plantillas-ficha', require('./routes/plantillasFicha'));
