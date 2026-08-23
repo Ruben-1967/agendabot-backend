@@ -5,23 +5,67 @@
 // server.js) — a diferencia del Catálogo Visual real, esto no pasa por
 // Cloudinary porque nunca lo carga un negocio ni cambia en runtime.
 //
+// Qué pantalla se captura para cada rubro NO es la misma para todos —
+// se eligió según qué dolor resuelve mejor para ese tipo de negocio, sin
+// repetir el Catálogo Visual (ya se mostraron fotos ahí, sería redundante).
+// Mapeo decidido con Ruben:
+//   Óptica, Salud Privada                                  -> Pacientes/clientes
+//   Belleza/Estética, Servicios Profesionales, Construcción -> Configuración de agenda
+//   Gastronomía-Reservas, Creatividad/Marketing, Otro       -> Panel inicial (dashboard)
+//
 // PLACEHOLDERS: las imágenes actuales son un color sólido de relleno. El
 // usuario las reemplaza por capturas curadas reales (mockups con datos de
 // ejemplo, nunca datos reales de clientes) antes de usar esto con un
-// prospecto de verdad.
+// prospecto de verdad — ver empresas ficticias sembradas para captura en
+// scripts/seed-empresas-capturas-remate.js.
 const BASE_URL_BACKEND = 'https://agendabot-backend-bbw5.onrender.com';
 
+const TEXTO_REMATE_GENERICO = 'Y esto lo administras tú mismo en minutos desde tu panel 👇';
+
 const REMATE_PANEL_POR_RUBRO = {
+  // Pantalla: Pacientes/clientes
   optica: {
-    texto: 'Y esto lo administras tú mismo en minutos desde tu panel 👇',
+    texto: TEXTO_REMATE_GENERICO,
     imagenUrl: `${BASE_URL_BACKEND}/assets/demo-panel/optica-placeholder.png`,
   },
+  salud_privada: {
+    texto: TEXTO_REMATE_GENERICO,
+    imagenUrl: `${BASE_URL_BACKEND}/assets/demo-panel/salud-privada-placeholder.png`,
+  },
+
+  // Pantalla: Configuración de agenda
   belleza_estetica_bienestar: {
-    texto: 'Y esto lo administras tú mismo en minutos desde tu panel 👇',
+    texto: TEXTO_REMATE_GENERICO,
     imagenUrl: `${BASE_URL_BACKEND}/assets/demo-panel/belleza-placeholder.png`,
   },
-  // Tercer rubro a definir con Ruben (ver checklist) — agregar acá cuando
-  // se confirme cuál, con su propia imagen en assets/demo-panel/.
+  servicios_profesionales: {
+    texto: TEXTO_REMATE_GENERICO,
+    imagenUrl: `${BASE_URL_BACKEND}/assets/demo-panel/servicios-profesionales-placeholder.png`,
+  },
+  construccion_mantenimiento: {
+    texto: TEXTO_REMATE_GENERICO,
+    imagenUrl: `${BASE_URL_BACKEND}/assets/demo-panel/construccion-placeholder.png`,
+  },
+
+  // Pantalla: Panel inicial (dashboard)
+  gastronomia_reservas: {
+    texto: TEXTO_REMATE_GENERICO,
+    imagenUrl: `${BASE_URL_BACKEND}/assets/demo-panel/gastronomia-reservas-placeholder.png`,
+  },
+  creatividad_marketing: {
+    texto: TEXTO_REMATE_GENERICO,
+    imagenUrl: `${BASE_URL_BACKEND}/assets/demo-panel/creatividad-marketing-placeholder.png`,
+  },
+  otro: {
+    texto: TEXTO_REMATE_GENERICO,
+    imagenUrl: `${BASE_URL_BACKEND}/assets/demo-panel/otro-placeholder.png`,
+  },
 };
 
-module.exports = { REMATE_PANEL_POR_RUBRO };
+// Cierre elaborado, encadenado determinísticamente justo después de la
+// imagen de remate (ver server.js, bloque catalogo_imagenes_demo) — mismo
+// texto para los 8 rubros, no varía como el remate visual.
+const CIERRE_ELABORADO_DEMO =
+  'Y lo mejor de todo: nunca más pierdes un cliente por no responder a tiempo — el bot agenda, muestra tu catálogo y atiende consultas 24/7, aunque estés durmiendo o atendiendo a otra persona. Y tú sigues teniendo el control total desde tu panel.';
+
+module.exports = { REMATE_PANEL_POR_RUBRO, CIERRE_ELABORADO_DEMO };
