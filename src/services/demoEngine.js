@@ -37,8 +37,10 @@ const CATEGORIA_REMATE_PANEL = 'Remate Panel';
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
-const LINK_LANDING = 'https://multidigital.cl/totemsystem';
-const LINK_CONTRATACION = 'https://multidigital.cl/totemsystem#contratar';
+// Única URL de contacto/contratación por ahora — antes había landing y
+// contratación por separado, se consolidan en esta mientras no exista un
+// sitio más elaborado (decisión de Ruben).
+const LINK_MULTIDIGITAL = 'https://www.multidigital.cl/agendabot';
 const LINK_PANEL_DEMO = 'https://agendabot-backend-bbw5.onrender.com/demo/panel';
 
 const PASOS = {
@@ -151,7 +153,7 @@ function construirMockupYPitch({ items, empresaDemo, modoOperacion, origenCarrit
     `Los negocios no suelen perder clientes por mal servicio — los pierden por no estar ahí ` +
     `justo cuando alguien los necesitaba.\n\n` +
     `${textoPrecios(modoOperacion)}\n\n` +
-    `Detalle completo: ${LINK_LANDING}\n¿Seguimos? 👉 ${LINK_CONTRATACION}\n\n` +
+    `¿Seguimos? 👉 ${LINK_MULTIDIGITAL}\n\n` +
     `_(¿tienes dudas de precio o condiciones? Pregúntame, sigo aquí — o si quieres ver cómo se ve el panel de administración, solo dímelo)_`
   );
 }
@@ -871,7 +873,7 @@ async function procesarMensajeDemo({ demoAsignada, telefonoCliente, mensaje, nom
           interactivo = respuestaAbierta.interactivo;
         } catch (error) {
           console.error('[DEMO] Error respondiendo pregunta abierta:', error.message);
-          respuestaTexto = `Buena pregunta — te conecto con el equipo para confirmártelo bien. Mientras, puedes ver más acá: ${LINK_LANDING}`;
+          respuestaTexto = `Buena pregunta — te conecto con el equipo para confirmártelo bien. Mientras, puedes ver más acá: ${LINK_MULTIDIGITAL}`;
         }
         break;
       }

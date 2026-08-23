@@ -70,7 +70,7 @@ function renderPanelDemo() {
     <h2>Manda promociones segmentadas, sin elegir cliente por cliente</h2>
     <p class="sub">Ej. solo a quienes ya compraron antes, o a quienes no vienen hace 60 días.</p>
   </section>
-  <a class="cta" href="https://multidigital.cl/totemsystem#contratar">¿Seguimos? Hablemos de tu negocio 👉</a>
+  <a class="cta" href="https://www.multidigital.cl/agendabot">¿Seguimos? Hablemos de tu negocio 👉</a>
 </div>
 </body>
 </html>`;
