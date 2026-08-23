@@ -69,6 +69,26 @@ async function procesarMensajeEntrante({ empresa, telefonoCliente, textoEntrante
 
   const historialPrevio = Array.isArray(conversacion?.mensajes) ? conversacion.mensajes : [];
 
+  // 2.1. Coexistence: si un humano está interviniendo esta conversación
+  // (echo detectado en el webhook, ver server.js), el bot no responde nada
+  // — solo persistimos el mensaje del cliente en el historial, igual que
+  // siempre, para que el humano (o el bot, cuando se reactive) tenga el
+  // contexto completo. Ningún mensaje del cliente reinicia ni cancela la
+  // pausa — eso solo lo hace el job de src/jobs/pausaCoexistence.js.
+  if (conversacion?.pausadaPorHumanoEn) {
+    const mensajesConEsteTurno = [
+      ...historialPrevio,
+      { rol: 'usuario', contenido: textoEntrante, timestamp: new Date().toISOString() },
+    ];
+
+    await prisma.conversacion.update({
+      where: { id: conversacion.id },
+      data: { mensajes: mensajesConEsteTurno, clienteId: cliente.id },
+    });
+
+    return { respuestaTexto: null, interactivo: null, cliente };
+  }
+
   let respuestaTexto;
   let interactivo = null;
 
