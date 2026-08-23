@@ -232,6 +232,7 @@ router.get('/', async (req, res) => {
         numVentas: c.ventas.length,
         totalGastado,
         ultimaCompraFecha: c.ventas[0]?.fecha || null,
+        fechaProximaCita: c.fechaProximaCita,
       };
     });
 
