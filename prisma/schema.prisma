@@ -493,6 +493,18 @@ model Conversacion {
   mensajes  Json      // arreglo de {rol, contenido, timestamp}
   escaladoAHumano Boolean @default(false)
 
+  // Pausa del bot en Coexistence (WhatsApp Business App + Cloud API en
+  // paralelo) — conceptualmente distinto de escaladoAHumano (que es una nota
+  // interna de admin desde el panel, no una intervención real por WhatsApp).
+  // pausadaPorHumanoEn no nulo = bot pausado para esta conversación puntual.
+  // Se limpia (vuelve a null) solo por 2h de silencio del cliente — nunca por
+  // tiempo transcurrido desde la intervención humana. contencionEnviadaEn y
+  // alertaUrgenteEnviadaEn se resetean a null en el mismo momento, para que
+  // una futura intervención humana repita el ciclo completo desde cero.
+  pausadaPorHumanoEn     DateTime? // timestamp de la última intervención humana detectada (echo)
+  contencionEnviadaEn    DateTime? // cuándo se mandó el mensaje de contención (evita repetirlo)
+  alertaUrgenteEnviadaEn DateTime? // cuándo se mandó la alerta interna (evita repetirla)
+
   actualizadoEn DateTime @updatedAt
   creadoEn  DateTime @default(now())
 

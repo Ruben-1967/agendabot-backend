@@ -41,6 +41,7 @@ const agendaRouter = require('./routes/agenda');
 const serviciosRouter = require('./routes/servicios');
 const { procesarMensajeCatalogoRotativo } = require('./services/pedidosEngine');
 const { procesarMensajeDemo } = require('./services/demoEngine');
+const { CIERRE_ELABORADO_DEMO } = require('./config/remateDemoPanel');
 const authVendedorRouter = require('./routes/authVendedor');
 const demosRouter = require('./routes/demos');
 const { generarHorasSimuladasParaDia } = require('./lib/agendaDemoSimulada');
@@ -58,6 +59,7 @@ const { iniciarJobBloqueoVencidas } = require('./jobs/bloquearEmpresasVencidas')
 require('./jobs/enviarPreguntaOptIn');
 require('./jobs/rankingCache');
 require('./jobs/cierreRankingMensual');
+require('./jobs/pausaCoexistence');
 iniciarJobBloqueoVencidas();
 
 const app = express();
@@ -219,6 +221,69 @@ app.post('/webhook/whatsapp', verificarFirmaWebhookWhatsApp, async (req, res) =>
     if (change?.field && change.field !== 'messages') {
       console.log(`[WEBHOOK WHATSAPP] Campo "${change.field}" recibido (no es un mensaje):`, JSON.stringify(req.body));
     }
+
+    // ------------------------------------------------------------
+    // Coexistence (WhatsApp Business App + Cloud API activas en paralelo):
+    // un mensaje enviado por un humano desde la app de WhatsApp Business
+    // llega acá como un webhook separado, field "smb_message_echoes" — no
+    // dentro de "messages" como un mensaje entrante normal. Al detectarlo,
+    // pausamos el bot para esa conversación puntual (ver
+    // Conversacion.pausadaPorHumanoEn); el ciclo de contención/alerta/
+    // reactivación corre aparte, en src/jobs/pausaCoexistence.js.
+    //
+    // TODO-VERIFICAR-CON-CASO-REAL: esta detección se escribió contra la
+    // documentación oficial de Meta (developers.facebook.com/documentation/
+    // business-messaging/whatsapp/webhooks/reference/smb_message_echoes),
+    // sin poder probarla contra un negocio real con Coexistence conectado
+    // (no existe ninguno todavía — ver memoria del proyecto: la única
+    // conexión intentada nunca se guardó en el backend). Apenas haya un
+    // primer caso real, confirmar que el payload coincide con lo asumido
+    // acá (field="smb_message_echoes", value.message_echoes[].from = número
+    // propio del negocio, .to = número del cliente) antes de confiar en
+    // este mecanismo para un cliente real.
+    // ------------------------------------------------------------
+    if (change?.field === 'smb_message_echoes') {
+      const eco = value?.message_echoes?.[0];
+      const phoneNumberIdEco = value?.metadata?.phone_number_id;
+
+      if (eco && phoneNumberIdEco) {
+        const empresaEco = await prisma.empresa.findFirst({ where: { whatsappNumeroId: phoneNumberIdEco } });
+        const telefonoClienteEco = eco.to; // destinatario del echo = cliente (eco.from es el número propio del negocio)
+
+        if (empresaEco && telefonoClienteEco) {
+          const clienteEco = await prisma.cliente.findFirst({
+            where: { empresaId: empresaEco.id, telefono: telefonoClienteEco },
+          });
+
+          const conversacionEco = await prisma.conversacion.findFirst({
+            where: { empresaId: empresaEco.id, telefono: telefonoClienteEco },
+          });
+
+          if (conversacionEco) {
+            await prisma.conversacion.update({
+              where: { id: conversacionEco.id },
+              data: { pausadaPorHumanoEn: new Date() },
+            });
+          } else {
+            // Humano escribió primero, antes de que el cliente le hablara
+            // nunca al bot — no hay Conversacion todavía, se crea ya pausada.
+            await prisma.conversacion.create({
+              data: {
+                empresaId: empresaEco.id,
+                clienteId: clienteEco?.id || null,
+                telefono: telefonoClienteEco,
+                mensajes: [],
+                pausadaPorHumanoEn: new Date(),
+              },
+            });
+          }
+
+          console.log(`[COEXISTENCE] Echo detectado — bot pausado para ${telefonoClienteEco} (${empresaEco.nombre}).`);
+        }
+      }
+      return;
+    }
+    // ---- fin bloque de echo de Coexistence ----
 
     // Aceptamos mensajes de texto libre, clics en botones de plantillas, y
     // selecciones de listas interactivas (usadas por el catálogo rotativo).
@@ -451,6 +516,16 @@ app.post('/webhook/whatsapp', verificarFirmaWebhookWhatsApp, async (req, res) =>
             to: telefonoCliente,
             accessToken: accessTokenDemo,
             imageUrl: interactivo.remate.imagenUrl,
+          });
+          // Cierre elaborado, encadenado determinísticamente tras el remate
+          // — no depende de que el modelo detecte que la conversación está
+          // terminando (no existe ese detector), mismo criterio ya usado
+          // para el resto del encadenado catálogo → remate.
+          await sendWhatsAppTextMessage({
+            phoneNumberId,
+            to: telefonoCliente,
+            text: CIERRE_ELABORADO_DEMO,
+            accessToken: accessTokenDemo,
           });
         }
       } else if (interactivo?.tipo === 'lista_servicios_demo') {
@@ -822,6 +897,12 @@ app.post('/webhook/whatsapp', verificarFirmaWebhookWhatsApp, async (req, res) =>
       textoEntrante,
       nombreContacto,
     });
+
+    // Coexistence: conversación pausada por intervención humana — no se
+    // envía nada por WhatsApp este turno (ver chatbotEngine.js).
+    if (respuestaTexto === null) {
+      return;
+    }
 
     // Enviar la respuesta por WhatsApp
     const accessToken = empresa.whatsappToken || process.env.WHATSAPP_ACCESS_TOKEN;
