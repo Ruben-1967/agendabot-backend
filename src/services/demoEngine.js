@@ -27,7 +27,13 @@ const {
 } = require('./whatsapp');
 const { fechaLegibleDesdeISO } = require('../lib/formatoFechas');
 const { generarProximosDiasSimulados } = require('../lib/agendaDemoSimulada');
-const { REMATE_PANEL_POR_RUBRO } = require('../config/remateDemoPanel');
+const { TEXTO_REMATE_GENERICO } = require('../config/remateDemoPanel');
+
+// Categoría reservada de CatalogoDemoItem para la captura de remate del
+// panel (ver remateParaRubro más abajo) — nunca debe aparecer como
+// categoría ofrecible al prospecto ni mencionarse como tal. Se excluye
+// explícitamente en toda consulta que arme catálogo para mostrar/ofrecer.
+const CATEGORIA_REMATE_PANEL = 'Remate Panel';
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
@@ -158,8 +164,13 @@ function construirMockupYPitch({ items, empresaDemo, modoOperacion, origenCarrit
 // generarRespuestaConCatalogoDemo — el escenario de mayor impacto de venta
 // (pedido explícito de fotos, sin perder el hilo, en cualquier momento de
 // la conversación) es demasiado delicado para replicarlo a mano con regex.
-function remateParaRubro(empresaDemo) {
-  return REMATE_PANEL_POR_RUBRO[empresaDemo.rubroTemplate.clave] || null;
+async function remateParaRubro(empresaDemo) {
+  const itemRemate = await prisma.catalogoDemoItem.findFirst({
+    where: { rubroTemplateId: empresaDemo.rubroTemplateId, categoria: CATEGORIA_REMATE_PANEL, activo: true },
+    orderBy: { orden: 'asc' },
+  });
+  if (!itemRemate) return null;
+  return { texto: TEXTO_REMATE_GENERICO, imagenUrl: itemRemate.imagenUrl };
 }
 
 function toolMostrarCatalogoVisualDemo() {
@@ -198,7 +209,7 @@ async function generarRespuestaConCatalogoDemo({ empresaDemo, historial, systemP
   // real — si está apagado, la tool ni se arma ni se ofrece.
   const itemsCatalogoDemo = empresaDemo.rubroTemplate.catalogoVisualDemoActivo
     ? await prisma.catalogoDemoItem.findMany({
-        where: { rubroTemplateId: empresaDemo.rubroTemplateId, activo: true },
+        where: { rubroTemplateId: empresaDemo.rubroTemplateId, activo: true, NOT: { categoria: CATEGORIA_REMATE_PANEL } },
         orderBy: { orden: 'asc' },
       })
     : [];
@@ -256,7 +267,7 @@ async function generarRespuestaConCatalogoDemo({ empresaDemo, historial, systemP
     if (catalogoParaMostrar) {
       return {
         texto: `Aquí tienes algunos ejemplos de ${catalogoParaMostrar.categoria} 👇`,
-        interactivo: { tipo: 'catalogo_imagenes_demo', items: catalogoParaMostrar.items, remate: remateParaRubro(empresaDemo) },
+        interactivo: { tipo: 'catalogo_imagenes_demo', items: catalogoParaMostrar.items, remate: await remateParaRubro(empresaDemo) },
       };
     }
 
@@ -333,6 +344,7 @@ async function intentarMostrarCatalogoDemo(empresaDemo, categoriaTexto = null) {
     where: {
       rubroTemplateId: empresaDemo.rubroTemplateId,
       activo: true,
+      NOT: { categoria: CATEGORIA_REMATE_PANEL },
       ...(categoriaTexto ? { categoria: { equals: categoriaTexto, mode: 'insensitive' } } : {}),
     },
     orderBy: { orden: 'asc' },
@@ -347,7 +359,7 @@ async function intentarMostrarCatalogoDemo(empresaDemo, categoriaTexto = null) {
     interactivo: {
       tipo: 'catalogo_imagenes_demo',
       items: items.map((i) => ({ nombre: i.nombre, imagenUrl: i.imagenUrl })),
-      remate: remateParaRubro(empresaDemo),
+      remate: await remateParaRubro(empresaDemo),
     },
   };
 }
@@ -364,6 +376,7 @@ async function hayCatalogoParaCategoria(empresaDemo, categoriaTexto) {
     where: {
       rubroTemplateId: empresaDemo.rubroTemplateId,
       activo: true,
+      NOT: { categoria: CATEGORIA_REMATE_PANEL },
       categoria: { equals: categoriaTexto, mode: 'insensitive' },
     },
   });
