@@ -574,7 +574,16 @@ async function procesarMensajeDemo({ demoAsignada, telefonoCliente, mensaje, nom
         }
 
         if (detectaIntencionVerPanel(textoEntrante)) {
-          respuestaTexto = `¡Con gusto! Así se ve el panel donde administras todo 👇\n${LINK_PANEL_DEMO}`;
+          const remateParaPanel = await remateParaRubro(empresaDemo);
+          if (remateParaPanel) {
+            respuestaTexto = '¡Con gusto! Así se ve el panel donde administras todo 👇';
+            interactivo = { tipo: 'imagen_panel_demo', imagenUrl: remateParaPanel.imagenUrl };
+          } else {
+            // Sin captura real cargada todavía para este rubro (ver
+            // CATEGORIA_REMATE_PANEL) — fallback al mockup genérico
+            // estático, mismo criterio de no bloquear sin assets finales.
+            respuestaTexto = `¡Con gusto! Así se ve el panel donde administras todo 👇\n${LINK_PANEL_DEMO}`;
+          }
           nuevoPaso = PASOS.SIMULACION_LIBRE;
           break;
         }
@@ -843,7 +852,13 @@ async function procesarMensajeDemo({ demoAsignada, telefonoCliente, mensaje, nom
         }
 
         if (detectaIntencionVerPanel(textoEntrante)) {
-          respuestaTexto = `¡Con gusto! Así se ve el panel donde administras todo 👇\n${LINK_PANEL_DEMO}`;
+          const remateParaPanel = await remateParaRubro(empresaDemo);
+          if (remateParaPanel) {
+            respuestaTexto = '¡Con gusto! Así se ve el panel donde administras todo 👇';
+            interactivo = { tipo: 'imagen_panel_demo', imagenUrl: remateParaPanel.imagenUrl };
+          } else {
+            respuestaTexto = `¡Con gusto! Así se ve el panel donde administras todo 👇\n${LINK_PANEL_DEMO}`;
+          }
           nuevoPaso = PASOS.PREGUNTAS_ABIERTAS;
           break;
         }
