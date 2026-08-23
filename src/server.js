@@ -41,6 +41,7 @@ const agendaRouter = require('./routes/agenda');
 const serviciosRouter = require('./routes/servicios');
 const { procesarMensajeCatalogoRotativo } = require('./services/pedidosEngine');
 const { procesarMensajeDemo } = require('./services/demoEngine');
+const { CIERRE_ELABORADO_DEMO } = require('./config/remateDemoPanel');
 const authVendedorRouter = require('./routes/authVendedor');
 const demosRouter = require('./routes/demos');
 const { generarHorasSimuladasParaDia } = require('./lib/agendaDemoSimulada');
@@ -515,6 +516,16 @@ app.post('/webhook/whatsapp', verificarFirmaWebhookWhatsApp, async (req, res) =>
             to: telefonoCliente,
             accessToken: accessTokenDemo,
             imageUrl: interactivo.remate.imagenUrl,
+          });
+          // Cierre elaborado, encadenado determinísticamente tras el remate
+          // — no depende de que el modelo detecte que la conversación está
+          // terminando (no existe ese detector), mismo criterio ya usado
+          // para el resto del encadenado catálogo → remate.
+          await sendWhatsAppTextMessage({
+            phoneNumberId,
+            to: telefonoCliente,
+            text: CIERRE_ELABORADO_DEMO,
+            accessToken: accessTokenDemo,
           });
         }
       } else if (interactivo?.tipo === 'lista_servicios_demo') {

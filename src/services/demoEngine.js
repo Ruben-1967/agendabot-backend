@@ -454,7 +454,7 @@ async function procesarMensajeDemo({ demoAsignada, telefonoCliente, mensaje, nom
     const nombreParaSaludo = demoAsignada.nombreProspecto || nombreContacto;
     const respuestaTexto =
       `¡Dale! 🔄 Reiniciamos la demo desde cero.\n\n` +
-      `¡Hola${nombreParaSaludo ? ` ${nombreParaSaludo}` : ''}! 👋 Soy el asistente de *Totemsystem*.\n\n` +
+      `¡Hola${nombreParaSaludo ? ` ${nombreParaSaludo}` : ''}! 👋 Soy el asistente de *Totemsystem*. Ya no perderás clientes por no contestar a tiempo.\n\n` +
       `Te voy a responder como si fuera *"${empresaDemo.nombre}"* — ${fraseUsoMarca(demoAsignada)}.\n\n` +
       `Pruébalo tú mismo — escríbeme algo, como si fueras un cliente tuyo 👇`;
 
@@ -540,7 +540,7 @@ async function procesarMensajeDemo({ demoAsignada, telefonoCliente, mensaje, nom
  case PASOS.INICIO: {
         const nombreParaSaludo = demoAsignada.nombreProspecto || nombreContacto;
         respuestaTexto =
-          `¡Hola${nombreParaSaludo ? ` ${nombreParaSaludo}` : ''}! 👋 Soy el asistente de *Totemsystem*.\n\n` +
+          `¡Hola${nombreParaSaludo ? ` ${nombreParaSaludo}` : ''}! 👋 Soy el asistente de *Totemsystem*. Ya no perderás clientes por no contestar a tiempo.\n\n` +
           `Te voy a responder como si fuera *"${empresaDemo.nombre}"* — ${fraseUsoMarca(demoAsignada)}.\n\n` +
           `Pruébalo tú mismo — ` +
           `escríbeme algo, como si fueras un cliente tuyo 👇`;
