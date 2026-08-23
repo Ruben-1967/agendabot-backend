@@ -13,11 +13,9 @@
 //   Belleza/Estética, Servicios Profesionales, Construcción -> Configuración de agenda
 //   Gastronomía-Reservas, Creatividad/Marketing, Otro       -> Panel inicial (dashboard)
 //
-// PLACEHOLDERS: las imágenes actuales son un color sólido de relleno. El
-// usuario las reemplaza por capturas curadas reales (mockups con datos de
-// ejemplo, nunca datos reales de clientes) antes de usar esto con un
-// prospecto de verdad — ver empresas ficticias sembradas para captura en
-// scripts/seed-empresas-capturas-remate.js.
+// Capturas reales (no placeholders) tomadas por Ruben desde su celular
+// contra las empresas ficticias de scripts/seed-empresas-capturas-remate.js
+// (esDemo:true, datos de ejemplo — nunca datos reales de clientes).
 const BASE_URL_BACKEND = 'https://agendabot-backend-bbw5.onrender.com';
 
 const TEXTO_REMATE_GENERICO = 'Y esto lo administras tú mismo en minutos desde tu panel 👇';
@@ -26,39 +24,39 @@ const REMATE_PANEL_POR_RUBRO = {
   // Pantalla: Pacientes/clientes
   optica: {
     texto: TEXTO_REMATE_GENERICO,
-    imagenUrl: `${BASE_URL_BACKEND}/assets/demo-panel/optica-placeholder.png`,
+    imagenUrl: `${BASE_URL_BACKEND}/assets/demo-panel/optica-remate.jpeg`,
   },
   salud_privada: {
     texto: TEXTO_REMATE_GENERICO,
-    imagenUrl: `${BASE_URL_BACKEND}/assets/demo-panel/salud-privada-placeholder.png`,
+    imagenUrl: `${BASE_URL_BACKEND}/assets/demo-panel/salud-privada-remate.jpeg`,
   },
 
   // Pantalla: Configuración de agenda
   belleza_estetica_bienestar: {
     texto: TEXTO_REMATE_GENERICO,
-    imagenUrl: `${BASE_URL_BACKEND}/assets/demo-panel/belleza-placeholder.png`,
+    imagenUrl: `${BASE_URL_BACKEND}/assets/demo-panel/belleza-remate.jpeg`,
   },
   servicios_profesionales: {
     texto: TEXTO_REMATE_GENERICO,
-    imagenUrl: `${BASE_URL_BACKEND}/assets/demo-panel/servicios-profesionales-placeholder.png`,
+    imagenUrl: `${BASE_URL_BACKEND}/assets/demo-panel/servicios-profesionales-remate.jpeg`,
   },
   construccion_mantenimiento: {
     texto: TEXTO_REMATE_GENERICO,
-    imagenUrl: `${BASE_URL_BACKEND}/assets/demo-panel/construccion-placeholder.png`,
+    imagenUrl: `${BASE_URL_BACKEND}/assets/demo-panel/construccion-remate.jpeg`,
   },
 
   // Pantalla: Panel inicial (dashboard)
   gastronomia_reservas: {
     texto: TEXTO_REMATE_GENERICO,
-    imagenUrl: `${BASE_URL_BACKEND}/assets/demo-panel/gastronomia-reservas-placeholder.png`,
+    imagenUrl: `${BASE_URL_BACKEND}/assets/demo-panel/gastronomia-reservas-remate.jpeg`,
   },
   creatividad_marketing: {
     texto: TEXTO_REMATE_GENERICO,
-    imagenUrl: `${BASE_URL_BACKEND}/assets/demo-panel/creatividad-marketing-placeholder.png`,
+    imagenUrl: `${BASE_URL_BACKEND}/assets/demo-panel/creatividad-marketing-remate.jpeg`,
   },
   otro: {
     texto: TEXTO_REMATE_GENERICO,
-    imagenUrl: `${BASE_URL_BACKEND}/assets/demo-panel/otro-placeholder.png`,
+    imagenUrl: `${BASE_URL_BACKEND}/assets/demo-panel/otro-remate.jpeg`,
   },
 };
 
