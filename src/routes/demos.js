@@ -617,10 +617,10 @@ router.delete('/prospectos/:id', requireAuth, requireRole('VENDEDOR'), async (re
 
 // ------------------------------------------------------------
 // GET /demos/pool y POST /demos/pool/:id/tomar se movieron a
-// GET /leads/pool y POST /leads/pool/:id/tomar (ver src/routes/leads.js) —
+// GET /leads/pool y POST /leads/pool/:id/asignar (ver src/routes/leads.js) —
 // ahora leen/escriben sobre el modelo Lead, que unifica leads de WhatsApp
 // (esta demo) y de otras fuentes (ej. app de captura de emails), en vez de
-// leer DemoAsignada directo.
+// leer DemoAsignada directo. La distribución es admin-only, no autoservicio.
 // ------------------------------------------------------------
 
 // ------------------------------------------------------------

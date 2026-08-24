@@ -921,11 +921,12 @@ async function procesarMensajeDemo({ demoAsignada, telefonoCliente, mensaje, nom
     datosActualizacion.intencionPrecioEn = new Date();
   }
 
-  // Si esta demo ya fue derivada a vendedor (ya tiene un Lead en el pool,
-  // tomado o no), el prospecto puede seguir escribiendo por WhatsApp — el
-  // resumen/última interacción del Lead no es un snapshot de una sola vez,
-  // tiene que reflejar la conversación más reciente (ver leadSync.js). No se
-  // pasa motivoDerivacion acá: eso no cambia por seguir conversando.
+  // Toda demo orgánica tiene Lead desde el primer mensaje (se crea al crear
+  // la DemoAsignada, ver server.js) — derivada o no, el resumen/última
+  // interacción/días de interacción tienen que reflejar la conversación más
+  // reciente en cada turno (ver leadSync.js). No se pasa motivoDerivacion
+  // acá: eso no cambia por seguir conversando, y rubro tampoco (no cambia en
+  // la vida de la demo, ya quedó fijado al crearla).
   //
   // Se intenta ANTES del update principal de DemoAsignada (no después) para
   // poder fusionar el resultado — éxito o error — en esa misma escritura,
@@ -934,7 +935,7 @@ async function procesarMensajeDemo({ demoAsignada, telefonoCliente, mensaje, nom
   // tiene contenido cuando refleja un problema vigente, se limpia apenas una
   // sincronización posterior tiene éxito.
   const camposErrorLead = {};
-  if (demoAsignada.derivadoAVendedor) {
+  if (demoAsignada.origenDemo === 'organico') {
     try {
       await sincronizarLeadDesdeDemo({
         id: demoAsignada.id,
