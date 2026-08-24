@@ -178,6 +178,28 @@ router.post('/pool/:id/asignar', requireAuth, requireRolVendedorAdmin, async (re
       });
     }
 
+    // El Lead es la capa unificada del pool, pero "Mis casos" del vendedor
+    // (GET /demos/prospectos, ver listarLeadsConSLA en slaService.js) lee
+    // directo de DemoAsignada.vendedorId, no de Lead — sin este paso, asignar
+    // acá no tenía ningún efecto visible para el vendedor. Solo aplica a
+    // leads de origen whatsapp_demo; email_campana no tiene una DemoAsignada
+    // equivalente (esos leads no aparecen hoy en "Mis casos", fuera de
+    // alcance de este fix). derivadoAVendedor: true además evita que
+    // seguimientoDemo.js siga tratando esta demo como sin derivar y le siga
+    // mandando seguimientos automáticos por su cuenta.
+    const lead = await prisma.lead.findUnique({ where: { id: req.params.id }, select: { origen: true, origenId: true } });
+    if (lead?.origen === 'whatsapp_demo') {
+      await prisma.demoAsignada.update({
+        where: { id: lead.origenId },
+        data: {
+          vendedorId,
+          derivadoAVendedor: true,
+          derivadoEn: new Date(),
+          motivoDerivacion: 'asignado_manual_admin',
+        },
+      });
+    }
+
     res.json({ ok: true });
   } catch (error) {
     console.error('Error asignando lead del pool:', error);
