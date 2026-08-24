@@ -40,6 +40,7 @@ const agendaRouter = require('./routes/agenda');
 const serviciosRouter = require('./routes/servicios');
 const { procesarMensajeCatalogoRotativo } = require('./services/pedidosEngine');
 const { procesarMensajeDemo } = require('./services/demoEngine');
+const { sincronizarLeadDesdeDemo } = require('./services/leadSync');
 const { CIERRE_ELABORADO_DEMO } = require('./config/remateDemoPanel');
 const authVendedorRouter = require('./routes/authVendedor');
 const demosRouter = require('./routes/demos');
@@ -387,6 +388,16 @@ app.post('/webhook/whatsapp', verificarFirmaWebhookWhatsApp, async (req, res) =>
           });
 
           console.log(`[DEMO] Número desconocido ${telefonoCliente} eligió "${rubroTemplate.nombre}" — empresa privada ${empresaNueva.id} creada.`);
+
+          // Captura inmediata: el Lead nace acá, en el primer mensaje real,
+          // no cuando (o si) la demo se derive a un vendedor más tarde — ver
+          // el gate ampliado en demoEngine.js. Best-effort: un error acá no
+          // debe tumbar la respuesta de la demo al prospecto.
+          try {
+            await sincronizarLeadDesdeDemo(demoAsignada, null, rubroTemplate.nombre);
+          } catch (errorLead) {
+            console.error(`[DEMO] Error creando Lead inmediato para ${telefonoCliente}:`, errorLead.message);
+          }
         } catch (error) {
           if (error.code === 'P2002') {
             // Condición de carrera: otro mensaje casi simultáneo del mismo

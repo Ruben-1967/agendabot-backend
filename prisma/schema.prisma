@@ -1034,6 +1034,14 @@ model Lead {
 
   intencionDetectada   Boolean   @default(false)
 
+  // Días de calendario (hora Chile) distintos en los que el prospecto
+  // interactuó — no cuenta mensajes, cuenta días. Se actualiza en cada
+  // sincronización desde DemoAsignada (ver fechaISOEnChile en horaChile.js y
+  // la lógica en leadSync.js); null en leads que vienen de email_campana,
+  // que no pasan por este cálculo.
+  diasInteraccion      Int       @default(1)
+  ultimoDiaInteraccion DateTime?
+
   ultimoMensajeResumen String?   @db.Text
   ultimaInteraccionEn  DateTime?
 
