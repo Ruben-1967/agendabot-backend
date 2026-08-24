@@ -9,19 +9,25 @@
  * usuario logueado del panel — se autentica con un API key compartido
  * (X-Api-Key contra LEADS_BRIDGE_API_KEY), no con el JWT de vendedor/negocio.
  *
- * GET /leads/pool y POST /leads/pool/:id/tomar reemplazan a los antiguos
+ * GET /leads/pool y POST /leads/pool/:id/asignar reemplazan a los antiguos
  * GET /demos/pool y POST /demos/pool/:id/tomar (que leían DemoAsignada
  * directo) — ahora leen/escriben sobre Lead, que unifica ambos orígenes.
+ * La distribución es manual y centralizada en el admin (rolVendedor: 'ADMIN'),
+ * no autoservicio de cualquier vendedor — por eso no existe un /tomar acá:
+ * un endpoint así, aunque el panel no lo llame, seguiría siendo alcanzable
+ * por cualquier vendedor con acceso directo a la API, saltándose el control
+ * que se pidió explícitamente.
  */
 
 const express = require('express');
 const crypto = require('crypto');
 const prisma = require('../lib/prisma');
-const { requireAuth, requireRole } = require('../middleware/auth');
+const { requireAuth, requireRolVendedorAdmin } = require('../middleware/auth');
 
 const router = express.Router();
 
 const ORIGENES_VALIDOS = ['whatsapp_demo', 'email_campana'];
+const TURNOS_HISTORIAL_EN_POOL = 6;
 
 // Comparación en tiempo constante, mismo criterio que la verificación de
 // firma del webhook de WhatsApp en server.js — evita timing attacks contra
@@ -104,16 +110,39 @@ router.post('/', requireLeadsBridgeApiKey, async (req, res) => {
 
 // ------------------------------------------------------------
 // GET /leads/pool — leads sin asignar, de cualquier origen. Reemplaza a
-// GET /demos/pool.
+// GET /demos/pool. Solo Vendedor ADMIN: la distribución es manual desde el
+// panel de administración, no autoservicio de cualquier vendedor (decisión
+// explícita del usuario — ver POST /pool/:id/asignar más abajo).
 // ------------------------------------------------------------
-router.get('/pool', requireAuth, requireRole('VENDEDOR'), async (req, res) => {
+router.get('/pool', requireAuth, requireRolVendedorAdmin, async (req, res) => {
   try {
     const leads = await prisma.lead.findMany({
       where: { estado: 'sin_asignar' },
       orderBy: { ultimaInteraccionEn: 'desc' },
     });
 
-    res.json({ leads });
+    // El historial completo de la conversación vive en DemoAsignada, no en
+    // Lead (ver leadSync.js) — para que el vendedor tenga contexto antes de
+    // tomar el lead, se van a buscar acá los últimos N turnos, solo para los
+    // leads de origen whatsapp_demo (email_campana no tiene equivalente).
+    const idsDemo = leads.filter((l) => l.origen === 'whatsapp_demo').map((l) => l.origenId);
+    const demos = idsDemo.length
+      ? await prisma.demoAsignada.findMany({
+          where: { id: { in: idsDemo } },
+          select: { id: true, historialSimulacion: true },
+        })
+      : [];
+    const historialPorDemoId = new Map(demos.map((d) => [d.id, d.historialSimulacion]));
+
+    const leadsConHistorial = leads.map((lead) => {
+      const historial = historialPorDemoId.get(lead.origenId);
+      return {
+        ...lead,
+        ultimosTurnos: Array.isArray(historial) ? historial.slice(-TURNOS_HISTORIAL_EN_POOL) : [],
+      };
+    });
+
+    res.json({ leads: leadsConHistorial });
   } catch (error) {
     console.error('Error listando el pool de leads:', error);
     res.status(500).json({ error: error.message });
@@ -121,28 +150,38 @@ router.get('/pool', requireAuth, requireRole('VENDEDOR'), async (req, res) => {
 });
 
 // ------------------------------------------------------------
-// POST /leads/pool/:id/tomar — un vendedor se autoasigna un lead del pool.
-// El where con estado: 'sin_asignar' hace que, si dos vendedores lo intentan
-// casi al mismo tiempo, solo el primero lo tome (el segundo recibe 409).
-// Reemplaza a POST /demos/pool/:id/tomar.
+// POST /leads/pool/:id/asignar — el admin distribuye manualmente un lead del
+// pool a un vendedor específico. El where con estado: 'sin_asignar' hace que,
+// si el admin hace doble clic o dos pestañas quedaron abiertas, solo la
+// primera asignación se aplique (la segunda recibe 409).
 // ------------------------------------------------------------
-router.post('/pool/:id/tomar', requireAuth, requireRole('VENDEDOR'), async (req, res) => {
+router.post('/pool/:id/asignar', requireAuth, requireRolVendedorAdmin, async (req, res) => {
   try {
+    const { vendedorId } = req.body;
+    if (!vendedorId) {
+      return res.status(400).json({ error: 'Falta vendedorId' });
+    }
+
+    const vendedor = await prisma.vendedor.findUnique({ where: { id: vendedorId }, select: { activo: true } });
+    if (!vendedor || !vendedor.activo) {
+      return res.status(400).json({ error: 'El vendedor elegido no existe o está bloqueado' });
+    }
+
     const resultado = await prisma.lead.updateMany({
       where: { id: req.params.id, estado: 'sin_asignar' },
-      data: { vendedorId: req.usuario.vendedorId, estado: 'asignado' },
+      data: { vendedorId, estado: 'asignado' },
     });
 
     if (resultado.count === 0) {
       return res.status(409).json({
-        error: 'Este lead ya no está disponible en el pool (puede que otro vendedor ya lo haya tomado).',
+        error: 'Este lead ya no está disponible en el pool (puede que ya se haya asignado).',
       });
     }
 
     res.json({ ok: true });
   } catch (error) {
-    console.error('Error tomando lead del pool:', error);
-    res.status(500).json({ error: 'Error al tomar el lead' });
+    console.error('Error asignando lead del pool:', error);
+    res.status(500).json({ error: 'Error al asignar el lead' });
   }
 });
 

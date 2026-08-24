@@ -69,7 +69,14 @@ function estaEnHorarioHabilChile(fecha = new Date()) {
 // Fecha de "hoy" en Chile como YYYY-MM-DD, para defaults de filtros de rango
 // de fecha (ej. GET /demos/kpis-diarios) — no la fecha del servidor.
 function hoyISOEnChile() {
-  return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Santiago' }).format(new Date());
+  return fechaISOEnChile();
 }
 
-module.exports = { horaChileAFechaUTC, estaEnHorarioHabilChile, hoyISOEnChile };
+// Igual que hoyISOEnChile pero para una fecha arbitraria, no solo "ahora" —
+// usado para comparar si dos instantes caen en el mismo día de calendario en
+// Chile (ej. el conteo de días de interacción de un Lead en leadSync.js).
+function fechaISOEnChile(fecha = new Date()) {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Santiago' }).format(fecha);
+}
+
+module.exports = { horaChileAFechaUTC, estaEnHorarioHabilChile, hoyISOEnChile, fechaISOEnChile };
