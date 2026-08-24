@@ -135,7 +135,12 @@ router.patch('/catalogo-visual-activo', requireAuth, requireRole('ADMIN'), async
  * que alguien pueda apuntar el intercambio a una empresa ajena.
  */
 router.post('/whatsapp/conectar', requireAuth, requireRole('ADMIN'), async (req, res) => {
-  const { code, wabaId, phoneNumberId } = req.body;
+  const { code, wabaId } = req.body;
+  // phoneNumberId es opcional: en el flujo "conectar app existente"
+  // (Coexistence), Meta manda el evento FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING
+  // por postMessage, que solo trae waba_id (no phone_number_id) — ver
+  // GET /{wabaId}/phone_numbers más abajo, que lo resuelve en ese caso.
+  let phoneNumberId = req.body.phoneNumberId;
 
   if (!code || typeof code !== 'string') {
     return res.status(400).json({ error: 'Falta "code" (el token corto que entrega FB.login())' });
@@ -143,8 +148,8 @@ router.post('/whatsapp/conectar', requireAuth, requireRole('ADMIN'), async (req,
   if (!wabaId || typeof wabaId !== 'string') {
     return res.status(400).json({ error: 'Falta "wabaId"' });
   }
-  if (!phoneNumberId || typeof phoneNumberId !== 'string') {
-    return res.status(400).json({ error: 'Falta "phoneNumberId"' });
+  if (phoneNumberId != null && typeof phoneNumberId !== 'string') {
+    return res.status(400).json({ error: '"phoneNumberId" debe ser texto si se envía' });
   }
 
   const appId = process.env.META_APP_ID;
@@ -171,6 +176,27 @@ router.post('/whatsapp/conectar', requireAuth, requireRole('ADMIN'), async (req,
     }
 
     const accessToken = datosIntercambio.access_token;
+
+    // Paso 1.5: si el frontend no mandó phoneNumberId (flujo Coexistence,
+    // evento FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING — solo trae waba_id),
+    // lo resolvemos acá. Documentado por Meta: el número ya está registrado
+    // en ese flujo, así que no hay que registrarlo, solo identificarlo.
+    if (!phoneNumberId) {
+      const urlNumerosWaba = `https://graph.facebook.com/${GRAPH_API_VERSION}/${encodeURIComponent(wabaId)}/phone_numbers?access_token=${encodeURIComponent(accessToken)}`;
+      const respuestaNumeros = await fetch(urlNumerosWaba);
+      const datosNumeros = await respuestaNumeros.json();
+
+      if (!respuestaNumeros.ok || !Array.isArray(datosNumeros.data)) {
+        console.error('[EMBEDDED SIGNUP] Error al listar phone_numbers de la WABA:', JSON.stringify(datosNumeros));
+        return res.status(502).json({ error: 'No se pudo obtener el número de WhatsApp de la cuenta conectada', detalle: datosNumeros.error?.message });
+      }
+      if (datosNumeros.data.length !== 1) {
+        console.error(`[EMBEDDED SIGNUP] La WABA ${wabaId} tiene ${datosNumeros.data.length} números, se esperaba exactamente 1:`, JSON.stringify(datosNumeros.data));
+        return res.status(502).json({ error: `La cuenta de WhatsApp conectada tiene ${datosNumeros.data.length} números — se esperaba exactamente uno` });
+      }
+
+      phoneNumberId = datosNumeros.data[0].id;
+    }
 
     // Paso 2: confirmar el número real antes de guardar (valida además que
     // el token recién obtenido efectivamente tiene acceso a ese phoneNumberId).
