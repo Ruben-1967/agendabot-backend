@@ -18,7 +18,7 @@
  */
 const prisma = require('../lib/prisma');
 
-const ORIGENES_CALIENTES = ['organico', 'vendedor'];
+const ORIGENES_CALIENTES = ['organico', 'vendedor', 'email_campana'];
 
 const CONFIG_SLA_POR_DEFECTO = {
   CALIENTE: { diasPrimerContactoAmarillo: 2, diasPrimerContactoRojo: 3, diasAgingAmarillo: 5, diasAgingRojo: 8 },
