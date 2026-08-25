@@ -144,6 +144,10 @@ model Empresa {
   vendedorId     String?
   demoOrigen     DemoAsignada? @relation("DemoConvertida", fields: [demoOrigenId], references: [id])
   demoOrigenId   String?       @unique
+  // Copiado desde DemoAsignada.origenCaso al convertir (ver POST
+  // /demos/convertir-a-cliente-real) — 'heredado' | 'organico'. Base del
+  // reporte de bonos por vendedor (ver GET /demos/reporte-origen-caso).
+  origenCaso     String?
 
   @@index([rubroTemplateId])
   @@index([vendedorId])
@@ -969,6 +973,18 @@ model DemoAsignada {
   // el caso puede volver a aparecer en Mis casos.
   cerradaEn                 DateTime?
   eventosGestion            EventoGestionVenta[]
+
+  // ====== TRAZABILIDAD DE ORIGEN (heredado vs orgánico, ver Empresa.origenCaso) ======
+  // Se marca acá (no recién en Empresa) porque el momento de asignación/creación
+  // ocurre antes de que exista una Empresa real — se copia a Empresa.origenCaso
+  // en POST /demos/convertir-a-cliente-real. null = demo histórica, previa a este
+  // campo (se trata como 'organico' al convertir, ver ese mismo endpoint).
+  origenCaso                String?             // 'heredado' | 'organico'
+  // Vínculo inverso al Lead de email que originó esta demo, cuando la creó
+  // POST /leads/pool/:id/asignar automáticamente (ver ese endpoint) — mismo
+  // patrón que Empresa.demoOrigenId. null para demos que no nacieron de un
+  // Lead de email (WhatsApp orgánico, o creadas a mano por el vendedor).
+  leadOrigenId              String?             @unique
 }
 
 enum RolVendedor {
@@ -1044,6 +1060,14 @@ model Lead {
 
   ultimoMensajeResumen String?   @db.Text
   ultimaInteraccionEn  DateTime?
+
+  // Nivel de interés de leads email_campana — el nivel nunca baja (jerarquía
+  // 'respuesta' > 'formulario' > 'clic'), ver POST /leads. null en leads de
+  // whatsapp_demo, que no pasan por este tracking (usan intencionDetectada).
+  // No hay un campo emailContacto separado: el campo `email` de arriba ya
+  // cumple esa función, no hace falta duplicarlo.
+  nivelInteresEmail    String?
+  ultimoEventoEmailEn  DateTime?
 
   estado               String    @default("sin_asignar") // 'sin_asignar' | 'asignado' | 'contactado' | 'convertido' | 'perdido'
   vendedorId           String?
