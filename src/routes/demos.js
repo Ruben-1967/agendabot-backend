@@ -172,6 +172,10 @@ router.post('/prospectos', requireAuth, requireRole('VENDEDOR'), async (req, res
           email: email || null,
           vendedorId: req.usuario.vendedorId,
           origenDemo: 'vendedor',
+          // Creación 100% manual del vendedor, sin pasar por el pool — ver
+          // trazabilidad de origen (heredado/organico) en POST
+          // /demos/convertir-a-cliente-real, que copia esto a Empresa.
+          origenCaso: 'organico',
         },
       });
     }
@@ -292,11 +296,58 @@ router.get('/clientes-convertidos', requireAuth, requireRole('VENDEDOR'), async 
           avisosPruebaVencidaEnviados: e.avisosPruebaVencidaEnviados,
           bloqueadaPorPruebaVencida: e.bloqueadaPorPruebaVencida,
           creadoEn: e.creadoEn,
+          origenCaso: e.origenCaso,
         };
       }),
     });
   } catch (error) {
     console.error('Error listando clientes convertidos:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ------------------------------------------------------------
+// GET /demos/reporte-origen-caso — casos convertidos y con pago confirmado
+// (Suscripcion.estado ACTIVA), agrupados por vendedor y por origenCaso
+// (heredado/organico). Base para el cálculo de bonos — "el esfuerzo de
+// venta no es nada sin un pago asociado" (decisión de negocio), por eso se
+// filtra por ACTIVA y no por DemoAsignada.convertidaEn. Mismo scoping que
+// GET /prospectos: un vendedor ve solo lo suyo, un ADMIN ve todo o filtra
+// por ?vendedorId=.
+// ------------------------------------------------------------
+router.get('/reporte-origen-caso', requireAuth, requireRole('VENDEDOR'), async (req, res) => {
+  try {
+    const esAdmin = req.usuario.rolVendedor === 'ADMIN';
+    const vendedorIdParam = req.query.vendedorId;
+    const vendedorIdFiltro = esAdmin
+      ? (vendedorIdParam && vendedorIdParam !== 'todos' ? vendedorIdParam : null)
+      : req.usuario.vendedorId;
+
+    const empresas = await prisma.empresa.findMany({
+      where: {
+        esDemo: false,
+        demoOrigenId: { not: null },
+        vendedorId: { not: null },
+        suscripcion: { estado: 'ACTIVA' },
+        ...(vendedorIdFiltro ? { vendedorId: vendedorIdFiltro } : {}),
+      },
+      select: { vendedorId: true, origenCaso: true, vendedor: { select: { nombre: true } } },
+    });
+
+    const porVendedor = new Map();
+    for (const e of empresas) {
+      if (!porVendedor.has(e.vendedorId)) {
+        porVendedor.set(e.vendedorId, { vendedorId: e.vendedorId, nombre: e.vendedor?.nombre || null, heredado: 0, organico: 0 });
+      }
+      const fila = porVendedor.get(e.vendedorId);
+      if (e.origenCaso === 'heredado') fila.heredado++;
+      else fila.organico++; // null (no debería quedar ninguno tras la migración) también cuenta como organico
+    }
+
+    const reporte = Array.from(porVendedor.values()).sort((a, b) => (b.heredado + b.organico) - (a.heredado + a.organico));
+    res.json({ reporte });
+  } catch (error) {
+    console.error('Error generando reporte de origen de caso:', error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -685,6 +736,10 @@ router.post('/convertir-a-cliente-real', requireAuth, requireRole('VENDEDOR'), a
             esDemo: false,
             vendedorId: req.usuario.vendedorId,
             demoOrigenId: demo.id,
+            // Demos anteriores a este campo (origenCaso null) se tratan como
+            // 'organico' — mismo criterio que "se asumía que todo era
+            // esfuerzo propio" antes de esta feature (decisión de negocio).
+            origenCaso: demo.origenCaso || 'organico',
           },
         });
 
