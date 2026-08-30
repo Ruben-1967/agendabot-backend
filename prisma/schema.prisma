@@ -599,6 +599,16 @@ model Suscripcion {
   citasIncluidas        Int
   precioCitaExcedente   Int
 
+  // Términos especiales por cliente (decisión 2026-08-30) — solo los aplica
+  // un Vendedor ADMIN, vía POST /admin-vendedores/suscripciones/:empresaId/terminos-especiales.
+  // exentoDePlan + exentoDeHosting juntos = 100% gratis. mesesGratisPlan es
+  // un período de gracia temporal (después de eso vuelve a cobrarse normal,
+  // vía el propio trial_period_days de la suscripción de Flow — no hace
+  // falta un job que lo "gradúe" a mano).
+  exentoDeHosting Boolean @default(false)
+  exentoDePlan    Boolean @default(false)
+  mesesGratisPlan Int     @default(0)
+
   fechaProximoCobro         DateTime
   fechaProximoCobroHosting  DateTime
 

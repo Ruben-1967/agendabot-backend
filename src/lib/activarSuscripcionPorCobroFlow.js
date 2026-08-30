@@ -18,6 +18,7 @@ const { PLANES: DETALLE_PLANES } = require('../services/contratoHtml');
 
 const DIAS_TRIAL_PLAN = 30;
 const DIAS_TRIAL_HOSTING = 365;
+const DIAS_POR_MES_GRATIS = 30;
 
 /**
  * @param {Object} params
@@ -50,12 +51,23 @@ async function activarSuscripcionPorCobroFlow({ empresaId, valorUf, token }) {
   const detallePlan = DETALLE_PLANES[suscripcion.plan];
   const montoHostingCobrado = Number.isFinite(valorUf) ? valorUf : 0;
 
-  const subscripcionPlan = await flowClient.crearSuscripcionFlow({
+  // Términos especiales (ver Suscripcion.exentoDePlan/exentoDeHosting/mesesGratisPlan
+  // en schema.prisma): si el plan está exento, nunca se crea su suscripción
+  // recurrente de Flow — no hay nada que cobrarle jamás. Si solo tiene meses
+  // de gracia, sí se crea, pero con un trial más largo — Flow mismo empieza
+  // a cobrar solo cuando el trial termina, sin necesidad de un job que lo
+  // "gradúe" a cobro normal.
+  const planExento = suscripcion.exentoDePlan;
+  const diasTrialPlan = suscripcion.mesesGratisPlan > 0
+    ? suscripcion.mesesGratisPlan * DIAS_POR_MES_GRATIS
+    : DIAS_TRIAL_PLAN;
+
+  const subscripcionPlan = planExento ? null : await flowClient.crearSuscripcionFlow({
     planId: flowPlanId,
     customerId: suscripcion.flowCustomerId,
-    trialPeriodDays: DIAS_TRIAL_PLAN,
+    trialPeriodDays: diasTrialPlan,
   });
-  const subscripcionHosting = await flowClient.crearSuscripcionFlow({
+  const subscripcionHosting = suscripcion.exentoDeHosting ? null : await flowClient.crearSuscripcionFlow({
     planId: flowPlanIdHosting,
     customerId: suscripcion.flowCustomerId,
     trialPeriodDays: DIAS_TRIAL_HOSTING,
@@ -63,7 +75,7 @@ async function activarSuscripcionPorCobroFlow({ empresaId, valorUf, token }) {
 
   const ahora = new Date();
   const fechaProximoCobro = new Date(ahora);
-  fechaProximoCobro.setDate(fechaProximoCobro.getDate() + DIAS_TRIAL_PLAN);
+  fechaProximoCobro.setDate(fechaProximoCobro.getDate() + diasTrialPlan);
   const fechaProximoCobroHosting = new Date(ahora);
   fechaProximoCobroHosting.setDate(fechaProximoCobroHosting.getDate() + DIAS_TRIAL_HOSTING);
 
@@ -73,8 +85,8 @@ async function activarSuscripcionPorCobroFlow({ empresaId, valorUf, token }) {
       data: {
         estado: 'ACTIVA',
         fechaActivacion: suscripcion.fechaActivacion || ahora,
-        tokenFlow: subscripcionPlan.subscriptionId,
-        flowSubscriptionIdHosting: subscripcionHosting.subscriptionId,
+        tokenFlow: subscripcionPlan?.subscriptionId,
+        flowSubscriptionIdHosting: subscripcionHosting?.subscriptionId,
         fechaUltimoPago: ahora,
         fechaProximoCobro,
         fechaProximoCobroHosting,
@@ -84,26 +96,33 @@ async function activarSuscripcionPorCobroFlow({ empresaId, valorUf, token }) {
       },
     });
 
-    await tx.pago.create({
-      data: {
-        suscripcionId: suscripcion.id,
-        tipo: 'PRIMER_PAGO',
-        monto: detallePlan.montoMensual,
-        estado: 'EXITOSO',
-        flowOrderId: token,
-      },
-    });
+    // Sin Pago si no hubo cobro real este ciclo (exento, o en período de
+    // gracia) — el ledger de Pago solo registra plata que efectivamente
+    // se cobró.
+    if (!planExento && suscripcion.mesesGratisPlan === 0) {
+      await tx.pago.create({
+        data: {
+          suscripcionId: suscripcion.id,
+          tipo: 'PRIMER_PAGO',
+          monto: detallePlan.montoMensual,
+          estado: 'EXITOSO',
+          flowOrderId: token,
+        },
+      });
+    }
 
-    await tx.pago.create({
-      data: {
-        suscripcionId: suscripcion.id,
-        tipo: 'HOSTING',
-        monto: montoHostingCobrado,
-        valorUfDelDia: montoHostingCobrado,
-        estado: 'EXITOSO',
-        flowOrderId: token,
-      },
-    });
+    if (!suscripcion.exentoDeHosting) {
+      await tx.pago.create({
+        data: {
+          suscripcionId: suscripcion.id,
+          tipo: 'HOSTING',
+          monto: montoHostingCobrado,
+          valorUfDelDia: montoHostingCobrado,
+          estado: 'EXITOSO',
+          flowOrderId: token,
+        },
+      });
+    }
 
     // Si venía de avisos/bloqueo por prueba vencida (ver
     // bloquearEmpresasVencidas.js), pagar la limpia por completo.

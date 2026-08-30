@@ -12,6 +12,7 @@ const { requireAuth, requireRolVendedorAdmin } = require('../middleware/auth');
 const { resumenLeadsPorVendedor } = require('../services/slaService');
 const { conversionesDelMesPorVendedor } = require('../services/rankingService');
 const { obtenerCupoMaximo } = require('../services/distribucionLeadsService');
+const flowClient = require('../services/flowClient');
 
 const router = express.Router();
 
@@ -273,6 +274,65 @@ router.post('/suscripciones/:empresaId/marcar-activa', requireAuth, requireRolVe
 });
 
 // ------------------------------------------------------------
+// PATCH /admin-vendedores/suscripciones/:empresaId/terminos-especiales
+// body: { exentoDeHosting?, exentoDePlan?, mesesGratisPlan? } (cualquier subconjunto)
+//
+// Términos especiales por cliente (decisión 2026-08-30) — solo un vendedor
+// ADMIN puede aplicarlos, nunca el vendedor que convierte la demo. Si la
+// suscripción ya estaba ACTIVA y se marca exento algo que ya se le estaba
+// cobrando recurrentemente en Flow, se cancela esa suscripción de Flow para
+// que no se le siga cobrando. Si queda 100% gratis (ambas exenciones) y
+// todavía no había pasado por Flow, se activa directo — no tiene sentido
+// esperar un cobro que nunca va a llegar.
+// ------------------------------------------------------------
+router.patch('/suscripciones/:empresaId/terminos-especiales', requireAuth, requireRolVendedorAdmin, async (req, res) => {
+  try {
+    const { empresaId } = req.params;
+    const { exentoDeHosting, exentoDePlan, mesesGratisPlan } = req.body;
+
+    const suscripcion = await prisma.suscripcion.findUnique({ where: { empresaId } });
+    if (!suscripcion) {
+      return res.status(404).json({ error: 'Esta empresa no tiene una suscripción (todavía no eligió un plan)' });
+    }
+
+    const datos = {};
+    if (exentoDeHosting !== undefined) datos.exentoDeHosting = Boolean(exentoDeHosting);
+    if (exentoDePlan !== undefined) datos.exentoDePlan = Boolean(exentoDePlan);
+    if (mesesGratisPlan !== undefined) {
+      if (!Number.isInteger(mesesGratisPlan) || mesesGratisPlan < 0) {
+        return res.status(400).json({ error: 'mesesGratisPlan debe ser un entero mayor o igual a 0' });
+      }
+      datos.mesesGratisPlan = mesesGratisPlan;
+    }
+
+    let actualizada = await prisma.suscripcion.update({ where: { empresaId }, data: datos });
+
+    if (actualizada.estado === 'ACTIVA') {
+      if (datos.exentoDePlan && actualizada.tokenFlow) {
+        await flowClient.cancelarSuscripcionFlow(actualizada.tokenFlow).catch((err) => {
+          console.error(`[terminos-especiales] No se pudo cancelar la suscripción de plan en Flow (empresa ${empresaId}):`, err.message);
+        });
+      }
+      if (datos.exentoDeHosting && actualizada.flowSubscriptionIdHosting) {
+        await flowClient.cancelarSuscripcionFlow(actualizada.flowSubscriptionIdHosting).catch((err) => {
+          console.error(`[terminos-especiales] No se pudo cancelar la suscripción de hosting en Flow (empresa ${empresaId}):`, err.message);
+        });
+      }
+    } else if (actualizada.estado === 'PENDIENTE_PAGO' && actualizada.exentoDePlan && actualizada.exentoDeHosting) {
+      actualizada = await prisma.suscripcion.update({
+        where: { empresaId },
+        data: { estado: 'ACTIVA', fechaActivacion: new Date() },
+      });
+    }
+
+    res.json({ ok: true, suscripcion: actualizada });
+  } catch (error) {
+    console.error('Error guardando términos especiales:', error);
+    res.status(500).json({ error: 'Error al guardar los términos especiales' });
+  }
+});
+
+// ------------------------------------------------------------
 // GET /admin-vendedores/suscripciones/pendientes
 // Lista empresas con Suscripcion en PENDIENTE_PAGO (vino de un vendedor,
 // esperando que el admin confirme el cobro y la marque activa).
@@ -463,6 +523,66 @@ router.post('/distribucion/config', requireAuth, requireRolVendedorAdmin, async 
   } catch (error) {
     console.error('Error guardando configuración de distribución:', error);
     res.status(500).json({ error: 'Error al guardar la configuración' });
+  }
+});
+
+// ------------------------------------------------------------
+// GET /admin-vendedores/excedente-citas
+//
+// Reporte de solo lectura (decisión 2026-08-30: "primero contar y mostrar,
+// cobro automático después de validar un par de ciclos") — cuenta las citas
+// del ciclo de facturación en curso por empresa ACTIVA y compara contra
+// citasIncluidas. No crea ningún Pago ni dispara ningún cobro en Flow; es
+// para que un admin revise a mano quién se excedió y decida cómo cobrarlo.
+//
+// El ciclo en curso se aproxima como [fechaProximoCobro - 1 mes, ahora] —
+// no es exacto al día si el ciclo real de Flow corrió distinto (ej. reintentos
+// de cobro), pero alcanza para una primera visibilidad.
+// ------------------------------------------------------------
+router.get('/excedente-citas', requireAuth, requireRolVendedorAdmin, async (req, res) => {
+  try {
+    const suscripciones = await prisma.suscripcion.findMany({
+      where: { estado: 'ACTIVA' },
+      include: { empresa: { select: { nombre: true } } },
+    });
+
+    const ahora = new Date();
+    const reporte = [];
+
+    for (const s of suscripciones) {
+      const inicioCiclo = new Date(s.fechaProximoCobro);
+      inicioCiclo.setMonth(inicioCiclo.getMonth() - 1);
+
+      const citasDelCiclo = await prisma.cita.count({
+        where: {
+          empresaId: s.empresaId,
+          fechaHoraInicio: { gte: inicioCiclo, lt: ahora },
+          estado: { not: 'CANCELADA' },
+        },
+      });
+
+      const exceso = Math.max(0, citasDelCiclo - s.citasIncluidas);
+      if (exceso > 0) {
+        reporte.push({
+          empresaId: s.empresaId,
+          nombreEmpresa: s.empresa.nombre,
+          plan: s.plan,
+          citasDelCiclo,
+          citasIncluidas: s.citasIncluidas,
+          exceso,
+          precioCitaExcedente: s.precioCitaExcedente,
+          montoSugerido: exceso * s.precioCitaExcedente,
+          inicioCiclo,
+        });
+      }
+    }
+
+    reporte.sort((a, b) => b.montoSugerido - a.montoSugerido);
+
+    res.json({ reporte });
+  } catch (error) {
+    console.error('Error calculando excedente de citas:', error);
+    res.status(500).json({ error: 'Error al calcular el excedente de citas' });
   }
 });
 

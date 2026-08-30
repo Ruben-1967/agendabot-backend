@@ -225,6 +225,7 @@ async function manejarCallbackTarjeta(req, res) {
   const token = req.body?.token || req.query.token;
   const urlError = `${obtenerUrlPanelPrincipal()}/suscripcion/resultado?estado=error`;
   const urlProcesando = `${obtenerUrlPanelPrincipal()}/suscripcion/resultado?estado=procesando`;
+  const urlExito = `${obtenerUrlPanelPrincipal()}/suscripcion/resultado?estado=exito`;
 
   try {
     if (!token || !empresaId || !plan) {
@@ -257,8 +258,27 @@ async function manejarCallbackTarjeta(req, res) {
       return res.redirect(`${urlError}&motivo=suscripcion`);
     }
 
-    const valorUf = await obtenerValorUfHoy();
-    const montoCombinado = detallePlan.montoMensual + valorUf;
+    // Términos especiales (ver Suscripcion.exentoDePlan/exentoDeHosting/
+    // mesesGratisPlan): lo que esté exento (o en período de gracia) no entra
+    // al primer cobro combinado — nunca se le pide plata por algo que no
+    // corresponde cobrarle.
+    const valorUf = suscripcion.exentoDeHosting ? 0 : await obtenerValorUfHoy();
+    const cobraPlanAhora = !suscripcion.exentoDePlan && suscripcion.mesesGratisPlan === 0;
+    const montoCombinado = (cobraPlanAhora ? detallePlan.montoMensual : 0) + valorUf;
+
+    if (montoCombinado <= 0) {
+      // Nada que cobrar este ciclo (100% gratis, o exento de ambos) —
+      // activar directo sin pasar por el Collect de Flow.
+      const tokenGratis = `gratis_${crypto.randomBytes(8).toString('hex')}`;
+      const resultado = await activarSuscripcionPorCobroFlow({ empresaId, valorUf: 0, token: tokenGratis });
+      if (!resultado.ok) {
+        console.error(`[flow-callback-tarjeta] No se pudo activar sin cobro (empresa ${empresaId}):`, resultado.motivo);
+        return res.redirect(`${urlError}&motivo=activacion`);
+      }
+      console.log(`[flow-callback-tarjeta] Empresa ${empresaId} activada sin cobro (términos especiales)`);
+      return res.redirect(`${urlExito}&empresaId=${empresaId}`);
+    }
+
     // Id corto y opaco — NO se codifica empresaId/valorUf en el texto del
     // commerceOrder porque Flow lo trunca a 45 caracteres (confirmado en
     // sandbox: un uuid ya se corta ahí). Se guarda la relación en la propia
@@ -269,10 +289,14 @@ async function manejarCallbackTarjeta(req, res) {
       data: { ordenComercioCollectPendiente: ordenComercio, valorUfCollectPendiente: valorUf },
     });
 
+    const asuntoCobro = cobraPlanAhora
+      ? `AgendaBot — Primer pago: Plan ${plan} + Hosting anual`
+      : `AgendaBot — Primer pago: Hosting anual (plan con términos especiales)`;
+
     await flowClient.cobrarCollectFlow({
       customerId: registro.customerId,
       montoClp: montoCombinado,
-      asunto: `AgendaBot — Primer pago: Plan ${plan} + Hosting anual`,
+      asunto: asuntoCobro,
       ordenComercio,
       urlConfirmation: `${process.env.BACKEND_URL}/suscripcion/flow-webhook-collect`,
     });
