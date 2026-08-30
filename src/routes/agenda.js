@@ -221,12 +221,111 @@ const agendaHoy = await prisma.cita.findMany({
       };
     });
 
+    // ------------------------------------------------------------
+    // KPIs de negocio para el Dashboard (gráficos) — ver Venta en
+    // schema.prisma, ya usado por POST /clientes/:id/ventas. Las ventas no
+    // están asociadas a un profesional, así que filtroRecurso no aplica acá.
+    // ------------------------------------------------------------
+    function fechaChileISO(fecha) {
+      const p = formatter.formatToParts(fecha);
+      return `${p.find(x => x.type === 'year').value}-${p.find(x => x.type === 'month').value}-${p.find(x => x.type === 'day').value}`;
+    }
+    function mesChileISO(fecha) {
+      const p = formatter.formatToParts(fecha);
+      return `${p.find(x => x.type === 'year').value}-${p.find(x => x.type === 'month').value}`;
+    }
+
+    // 6. MONTO DEL DÍA / SEMANA (lunes a hoy, hora Chile)
+    const diasDesdeLunes = (hoyChile.getUTCDay() + 6) % 7;
+    const inicioSemanaChile = new Date(hoyChile.getTime() - diasDesdeLunes * 24 * 60 * 60 * 1000);
+
+    const [ventasHoyAgg, ventasSemanaAgg] = await Promise.all([
+      prisma.venta.aggregate({ where: { empresaId, fecha: { gte: hoyChile, lt: mañanaChile } }, _sum: { monto: true } }),
+      prisma.venta.aggregate({ where: { empresaId, fecha: { gte: inicioSemanaChile, lt: mañanaChile } }, _sum: { monto: true } }),
+    ]);
+    const montoHoy = ventasHoyAgg._sum.monto || 0;
+    const montoSemana = ventasSemanaAgg._sum.monto || 0;
+
+    // 7. CITAS POR DÍA — últimos 14 días (incluye hoy)
+    const hace14Dias = new Date(hoyChile.getTime() - 13 * 24 * 60 * 60 * 1000);
+    const citasUltimos14Dias = await prisma.cita.findMany({
+      where: { empresaId, ...filtroRecurso, fechaHoraInicio: { gte: hace14Dias, lt: mañanaChile } },
+      select: { fechaHoraInicio: true },
+    });
+    const citasPorDiaMap = new Map();
+    for (let i = 0; i < 14; i++) {
+      citasPorDiaMap.set(fechaChileISO(new Date(hace14Dias.getTime() + i * 24 * 60 * 60 * 1000)), 0);
+    }
+    citasUltimos14Dias.forEach((c) => {
+      const key = fechaChileISO(c.fechaHoraInicio);
+      if (citasPorDiaMap.has(key)) citasPorDiaMap.set(key, citasPorDiaMap.get(key) + 1);
+    });
+    const citasPorDia = Array.from(citasPorDiaMap, ([fecha, cantidad]) => ({ fecha, cantidad }));
+
+    // 8. ATENCIONES POR TIPO DE SERVICIO — Venta.categoriaProducto, último año
+    const hace1Anio = new Date(hoyChile.getTime() - 365 * 24 * 60 * 60 * 1000);
+    const ventasParaTipo = await prisma.venta.findMany({
+      where: { empresaId, fecha: { gte: hace1Anio, lt: mañanaChile } },
+      select: { categoriaProducto: true },
+    });
+    const tipoMap = new Map();
+    ventasParaTipo.forEach((v) => {
+      const categoria = v.categoriaProducto || 'Sin categoría';
+      tipoMap.set(categoria, (tipoMap.get(categoria) || 0) + 1);
+    });
+    const atencionesPorTipo = Array.from(tipoMap, ([categoria, cantidad]) => ({ categoria, cantidad }))
+      .sort((a, b) => b.cantidad - a.cantidad);
+
+    // 9 y 10. EVOLUCIÓN MENSUAL DE CITAS Y DINERO — últimos 6 meses
+    const inicioRangoMensual = new Date(hoyChile);
+    inicioRangoMensual.setMonth(inicioRangoMensual.getMonth() - 5);
+    inicioRangoMensual.setDate(1);
+    inicioRangoMensual.setHours(0, 0, 0, 0);
+
+    const [citasParaMensual, ventasParaMensual] = await Promise.all([
+      prisma.cita.findMany({
+        where: { empresaId, ...filtroRecurso, fechaHoraInicio: { gte: inicioRangoMensual, lt: mañanaChile } },
+        select: { fechaHoraInicio: true },
+      }),
+      prisma.venta.findMany({
+        where: { empresaId, fecha: { gte: inicioRangoMensual, lt: mañanaChile } },
+        select: { fecha: true, monto: true },
+      }),
+    ]);
+
+    const mesesOrdenados = [];
+    for (let i = 5; i >= 0; i--) {
+      const d = new Date(hoyChile);
+      d.setMonth(d.getMonth() - i);
+      mesesOrdenados.push(mesChileISO(d));
+    }
+
+    const citasPorMesMap = new Map(mesesOrdenados.map((m) => [m, 0]));
+    citasParaMensual.forEach((c) => {
+      const key = mesChileISO(c.fechaHoraInicio);
+      if (citasPorMesMap.has(key)) citasPorMesMap.set(key, citasPorMesMap.get(key) + 1);
+    });
+    const citasPorMes = mesesOrdenados.map((mes) => ({ mes, cantidad: citasPorMesMap.get(mes) }));
+
+    const dineroPorMesMap = new Map(mesesOrdenados.map((m) => [m, 0]));
+    ventasParaMensual.forEach((v) => {
+      const key = mesChileISO(v.fecha);
+      if (dineroPorMesMap.has(key)) dineroPorMesMap.set(key, dineroPorMesMap.get(key) + v.monto);
+    });
+    const dineroPorMes = mesesOrdenados.map((mes) => ({ mes, monto: dineroPorMesMap.get(mes) }));
+
     res.json({
       citasHoy,
       confirmadas,
       listaEspera,
       asistencia30dias,
       agendaHoy: agendaFormato,
+      montoHoy,
+      montoSemana,
+      citasPorDia,
+      atencionesPorTipo,
+      citasPorMes,
+      dineroPorMes,
     });
   } catch (error) {
     console.error('Error en GET /agenda/dashboard/:empresaId:', error);
