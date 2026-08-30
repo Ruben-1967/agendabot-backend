@@ -2,6 +2,7 @@ const express = require('express');
 const prisma = require('../lib/prisma');
 const { requireAuth } = require('../middleware/auth');
 const { sendWhatsAppTextMessage } = require('../services/whatsapp');
+const { listarEjemplosParaResumen, obtenerEjemploCompleto } = require('../lib/ejemplosDemoChats');
 
 const router = express.Router();
 
@@ -13,6 +14,8 @@ router.get('/:empresaId', requireAuth, async (req, res) => {
     if (!req.usuario || req.usuario.empresaId !== empresaId) {
       return res.status(403).json({ error: 'No autorizado' });
     }
+
+    const empresa = await prisma.empresa.findUnique({ where: { id: empresaId }, select: { esDemo: true } });
 
     const conversaciones = await prisma.conversacion.findMany({
       where: { empresaId },
@@ -32,7 +35,7 @@ router.get('/:empresaId', requireAuth, async (req, res) => {
     const conversacionesProcesadas = conversaciones.map((conv) => {
       const mensajesList = Array.isArray(conv.mensajes) ? conv.mensajes : [];
       const ultimoMensaje = mensajesList[mensajesList.length - 1];
-      
+
       return {
         id: conv.id,
         clienteNombre: conv.cliente?.nombre || conv.telefono,
@@ -44,12 +47,23 @@ router.get('/:empresaId', requireAuth, async (req, res) => {
         totalMensajes: mensajesList.length,
         escaladoAHumano: conv.escaladoAHumano,
         actualizadoEn: conv.actualizadoEn,
+        esEjemplo: false,
       };
     });
 
+    // Empresas demo muestran además 3 conversaciones de ejemplo (siempre
+    // dentro de las últimas 48h, calculadas al vuelo — ver ejemplosDemoChats.js)
+    // para que el prospecto vea cómo luce el panel con varias conversaciones
+    // activas, sin mezclarlas con sus propias interacciones reales.
+    const listaCompleta = empresa?.esDemo
+      ? [...conversacionesProcesadas, ...listarEjemplosParaResumen()].sort(
+          (a, b) => new Date(b.actualizadoEn) - new Date(a.actualizadoEn)
+        )
+      : conversacionesProcesadas;
+
     res.json({
-      total: conversacionesProcesadas.length,
-      conversaciones: conversacionesProcesadas,
+      total: listaCompleta.length,
+      conversaciones: listaCompleta,
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -63,6 +77,14 @@ router.get('/:empresaId/:conversacionId', requireAuth, async (req, res) => {
 
     if (!req.usuario || req.usuario.empresaId !== empresaId) {
       return res.status(403).json({ error: 'No autorizado' });
+    }
+
+    if (conversacionId.startsWith('ejemplo-')) {
+      const ejemplo = obtenerEjemploCompleto(conversacionId);
+      if (!ejemplo) {
+        return res.status(404).json({ error: 'Conversación no encontrada' });
+      }
+      return res.json({ conversacion: ejemplo });
     }
 
     const conversacion = await prisma.conversacion.findUnique({
@@ -115,6 +137,10 @@ router.post('/:empresaId/:conversacionId/mensaje', requireAuth, async (req, res)
 
     if (!req.usuario || req.usuario.empresaId !== empresaId) {
       return res.status(403).json({ error: 'No autorizado' });
+    }
+
+    if (conversacionId.startsWith('ejemplo-')) {
+      return res.status(400).json({ error: 'Esta es una conversación de ejemplo, no se puede responder' });
     }
 
     // Obtener conversación actual

@@ -177,6 +177,39 @@ const NOMBRES_CATEGORIA_GENERICA = {
 };
 
 // ------------------------------------------------------------
+// Espejo de la conversación de demo en Conversacion, para que la pantalla
+// "Chats en vivo" del panel (pensada originalmente solo para clientes
+// reales) también muestre y permita responder demos — sin tocar el motor
+// de demo (demoEngine.js) ni su propio historial (DemoAsignada.historialSimulacion).
+// ------------------------------------------------------------
+function extraerTextoLegibleDeMensaje(mensaje) {
+  if (mensaje.type === 'text') return mensaje.text?.body || '';
+  if (mensaje.type === 'button') return mensaje.button?.text || '[botón]';
+  if (mensaje.type === 'interactive') {
+    return mensaje.interactive?.list_reply?.title || mensaje.interactive?.button_reply?.title || '[selección]';
+  }
+  return '[mensaje]';
+}
+
+async function registrarTurnoDemoEnConversacion({ empresaId, telefono, textoUsuario, textoAsistente }) {
+  const conversacion = await prisma.conversacion.findFirst({ where: { empresaId, telefono } });
+  const historialPrevio = Array.isArray(conversacion?.mensajes) ? conversacion.mensajes : [];
+  const mensajesActualizados = [
+    ...historialPrevio,
+    { rol: 'usuario', contenido: textoUsuario, timestamp: new Date().toISOString() },
+    ...(textoAsistente ? [{ rol: 'asistente', contenido: textoAsistente, timestamp: new Date().toISOString() }] : []),
+  ];
+
+  await prisma.conversacion.upsert({
+    where: { id: conversacion?.id || '00000000-0000-0000-0000-000000000000' },
+    update: { mensajes: mensajesActualizados },
+    create: { empresaId, telefono, mensajes: mensajesActualizados },
+  });
+
+  return conversacion;
+}
+
+// ------------------------------------------------------------
 // WEBHOOK DE WHATSAPP (Meta) — verificación inicial
 // ------------------------------------------------------------
 app.get('/webhook/whatsapp', (req, res) => {
@@ -306,6 +339,24 @@ app.post('/webhook/whatsapp', verificarFirmaWebhookWhatsApp, async (req, res) =>
 
       const accessTokenDemo = process.env.DEMO_WHATSAPP_ACCESS_TOKEN;
 
+      // Si un admin le respondió manualmente a esta demo desde "Chats en
+      // vivo", el bot se pausa igual que en el flujo real (ver
+      // pausadaPorHumanoEn en chatbotEngine.js) — solo persistimos el
+      // mensaje del prospecto y no seguimos al motor de demo.
+      if (demoAsignada) {
+        const conversacionDemoPausada = await prisma.conversacion.findFirst({
+          where: { empresaId: demoAsignada.empresaDemoId, telefono: telefonoCliente },
+        });
+        if (conversacionDemoPausada?.pausadaPorHumanoEn) {
+          await registrarTurnoDemoEnConversacion({
+            empresaId: demoAsignada.empresaDemoId,
+            telefono: telefonoCliente,
+            textoUsuario: extraerTextoLegibleDeMensaje(mensaje),
+          });
+          return;
+        }
+      }
+
      if (!demoAsignada) {
         // Único paso del menú genérico: se muestran directamente los
         // rubros Reactivos (AGENDAMIENTO). Catálogo (Proactivo) queda
@@ -434,19 +485,29 @@ app.post('/webhook/whatsapp', verificarFirmaWebhookWhatsApp, async (req, res) =>
         if (diaElegidoDemo) {
           const horasDemo = generarHorasSimuladasParaDia(diaElegidoDemo.fecha);
           if (horasDemo.length === 0) {
+            const textoSinCupo = 'Ese día ya no tiene cupo disponible, ¿quieres que te muestre otro?';
             await sendWhatsAppTextMessage({
               phoneNumberId, to: telefonoCliente, accessToken: accessTokenDemo,
-              text: 'Ese día ya no tiene cupo disponible, ¿quieres que te muestre otro?',
+              text: textoSinCupo,
+            });
+            await registrarTurnoDemoEnConversacion({
+              empresaId: demoAsignada.empresaDemoId, telefono: telefonoCliente,
+              textoUsuario: extraerTextoLegibleDeMensaje(mensaje), textoAsistente: textoSinCupo,
             });
             return;
           }
           const fechaLegibleDemo = fechaLegibleDesdeISO(diaElegidoDemo.fecha);
+          const textoHorariosDemo = `Estos son los horarios disponibles para el ${fechaLegibleDemo}. Elige el que más te acomode 👇`;
           await sendWhatsAppInteractiveList({
             phoneNumberId, to: telefonoCliente, accessToken: accessTokenDemo,
-            textoCuerpo: `Estos son los horarios disponibles para el ${fechaLegibleDemo}. Elige el que más te acomode 👇`,
+            textoCuerpo: textoHorariosDemo,
             textoBoton: 'Ver horarios',
             textoHeader: demoAsignada.empresaDemo.nombre?.slice(0, 60),
             filas: horasDemo.map((hora) => ({ id: codificarFilaHorario(diaElegidoDemo.fecha, hora), titulo: hora })),
+          });
+          await registrarTurnoDemoEnConversacion({
+            empresaId: demoAsignada.empresaDemoId, telefono: telefonoCliente,
+            textoUsuario: extraerTextoLegibleDeMensaje(mensaje), textoAsistente: textoHorariosDemo,
           });
           return;
         }
@@ -457,6 +518,13 @@ app.post('/webhook/whatsapp', verificarFirmaWebhookWhatsApp, async (req, res) =>
         telefonoCliente,
         mensaje,
         nombreContacto,
+      });
+
+      await registrarTurnoDemoEnConversacion({
+        empresaId: demoAsignada.empresaDemoId,
+        telefono: telefonoCliente,
+        textoUsuario: extraerTextoLegibleDeMensaje(mensaje),
+        textoAsistente: respuestaTexto,
       });
 
       if (interactivo?.tipo === 'lista_dias') {
