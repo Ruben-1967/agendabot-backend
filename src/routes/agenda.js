@@ -239,9 +239,10 @@ const agendaHoy = await prisma.cita.findMany({
     const diasDesdeLunes = (hoyChile.getUTCDay() + 6) % 7;
     const inicioSemanaChile = new Date(hoyChile.getTime() - diasDesdeLunes * 24 * 60 * 60 * 1000);
 
-    const [ventasHoyAgg, ventasSemanaAgg] = await Promise.all([
+    const [ventasHoyAgg, ventasSemanaAgg, atencionesHoy] = await Promise.all([
       prisma.venta.aggregate({ where: { empresaId, fecha: { gte: hoyChile, lt: mañanaChile } }, _sum: { monto: true } }),
       prisma.venta.aggregate({ where: { empresaId, fecha: { gte: inicioSemanaChile, lt: mañanaChile } }, _sum: { monto: true } }),
+      prisma.venta.count({ where: { empresaId, fecha: { gte: hoyChile, lt: mañanaChile } } }),
     ]);
     const montoHoy = ventasHoyAgg._sum.monto || 0;
     const montoSemana = ventasSemanaAgg._sum.monto || 0;
@@ -322,6 +323,7 @@ const agendaHoy = await prisma.cita.findMany({
       agendaHoy: agendaFormato,
       montoHoy,
       montoSemana,
+      atencionesHoy,
       citasPorDia,
       atencionesPorTipo,
       citasPorMes,

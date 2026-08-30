@@ -22,6 +22,7 @@ const express = require('express');
 const router = express.Router();
 const prisma = require('../lib/prisma');
 const { requireAuth, requireRole } = require('../middleware/auth');
+const { horaChileAFechaUTC } = require('../lib/horaChile');
 
 router.use(requireAuth, requireRole('ADMIN', 'RECEPCION'));
 
@@ -360,7 +361,10 @@ router.post('/:id/ventas', async (req, res) => {
         monto: Math.round(montoNum),
         categoriaProducto: categoriaProducto || null,
         estadoPago: 'PAGADO',
-        fecha: fecha ? new Date(fecha) : new Date(),
+        // fecha llega como "YYYY-MM-DD" (sin hora) desde el panel — hay que
+        // anclarla al mediodía de Chile, no a medianoche UTC, para que caiga
+        // en el día correcto al sumar los KPIs de "hoy" del Dashboard.
+        fecha: fecha ? horaChileAFechaUTC(fecha, '12:00') : new Date(),
       },
     });
 
@@ -407,7 +411,7 @@ router.patch('/:id/ventas/:ventaId', async (req, res) => {
         ...(descripcion !== undefined && { descripcion: descripcion.trim() }),
         ...(montoNum !== undefined && { monto: Math.round(montoNum) }),
         ...(categoriaProducto !== undefined && { categoriaProducto: categoriaProducto || null }),
-        ...(fecha !== undefined && { fecha: new Date(fecha) }),
+        ...(fecha !== undefined && { fecha: horaChileAFechaUTC(fecha, '12:00') }),
       },
     });
 
