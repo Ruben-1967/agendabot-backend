@@ -19,7 +19,12 @@ const AHOROPTICA_ID = 'ahoroptica-lautaro-seed-id';
 const WHATSAPP_NUMERO_ID = '135018715483508';
 const WHATSAPP_WABA_ID = '2156101751629995';
 const WHATSAPP_PHONE_NUMBER = '+56921738221';
-const WHATSAPP_TOKEN = process.env.AHOROPTICA_WHATSAPP_TOKEN || 'EAAPIdZBLXcn8BSKSUnrQvTSBATUKmCy6OvfYZBEpZBOAIhb2EptBmPMVMtpZCboN7ie5Bq0rZA6yjSFqsxoqjB7gi3XEDhXEg3x0xFRfE1jgwBBRCTZADlZCm3B9WmAf64asiOvlvue8nlYrbZBP2wfQu3PhMJUC3VuRAW6ZAq8B1QC51KR1AVdqt';
+const WHATSAPP_TOKEN = process.env.AHOROPTICA_WHATSAPP_TOKEN;
+
+if (!WHATSAPP_TOKEN) {
+  console.error('❌ ERROR: falta la variable de entorno AHOROPTICA_WHATSAPP_TOKEN.');
+  process.exit(1);
+}
 
 async function main() {
   console.log('\n╔════════════════════════════════════════════════════════════╗');

@@ -1,6 +1,7 @@
 const express = require('express');
 const prisma = require('../lib/prisma');
 const { requireAuth } = require('../middleware/auth');
+const { sendWhatsAppTextMessage } = require('../services/whatsapp');
 
 const router = express.Router();
 
@@ -125,9 +126,30 @@ router.post('/:empresaId/:conversacionId/mensaje', requireAuth, async (req, res)
       return res.status(404).json({ error: 'Conversación no encontrada' });
     }
 
+    const empresa = await prisma.empresa.findUnique({ where: { id: empresaId } });
+    const accessToken = empresa?.whatsappToken || process.env.WHATSAPP_ACCESS_TOKEN;
+
+    if (!accessToken || !empresa?.whatsappNumeroId) {
+      return res.status(400).json({ error: 'Esta empresa no tiene WhatsApp conectado, no se puede enviar el mensaje' });
+    }
+
+    // Enviar primero por WhatsApp — si falla, no guardamos el mensaje como
+    // si hubiera llegado al cliente (antes este endpoint solo lo guardaba
+    // en la BD sin enviarlo nunca de verdad).
+    try {
+      await sendWhatsAppTextMessage({
+        phoneNumberId: empresa.whatsappNumeroId,
+        to: conversacion.telefono,
+        text: contenido.trim(),
+        accessToken,
+      });
+    } catch (errorEnvio) {
+      return res.status(502).json({ error: `No se pudo enviar el mensaje por WhatsApp: ${errorEnvio.message}` });
+    }
+
     // Construir array de mensajes
     const mensajesList = Array.isArray(conversacion.mensajes) ? conversacion.mensajes : [];
-    
+
     // Agregar nuevo mensaje
     const nuevoMensaje = {
       rol: 'admin',
@@ -137,12 +159,16 @@ router.post('/:empresaId/:conversacionId/mensaje', requireAuth, async (req, res)
 
     mensajesList.push(nuevoMensaje);
 
-    // Actualizar conversación
+    // Actualizar conversación. pausadaPorHumanoEn reusa el mismo mecanismo
+    // de pausa que Coexistence (ver src/jobs/pausaCoexistence.js) — así el
+    // bot deja de responder automáticamente mientras un humano responde
+    // desde el panel, igual que si hubiera respondido desde la app.
     const actualizada = await prisma.conversacion.update({
       where: { id: conversacionId },
       data: {
         mensajes: mensajesList,
-        escaladoAHumano: true, // Marcar como ya respondido por admin
+        escaladoAHumano: true,
+        pausadaPorHumanoEn: new Date(),
       },
       include: {
         cliente: {
