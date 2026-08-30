@@ -343,7 +343,7 @@ router.post('/:id/ventas', async (req, res) => {
     });
     if (!cliente) return res.status(404).json({ error: 'Cliente no encontrado' });
 
-    const { descripcion, monto, categoriaProducto, fecha } = req.body;
+    const { descripcion, monto, categoriaProducto, fecha, recursoAgendableId } = req.body;
 
     if (!descripcion || !descripcion.trim()) {
       return res.status(400).json({ error: 'Falta la descripción de la venta' });
@@ -353,6 +353,16 @@ router.post('/:id/ventas', async (req, res) => {
       return res.status(400).json({ error: 'monto debe ser un número válido' });
     }
 
+    // Opcional: no toda venta corresponde a un profesional puntual (venta de
+    // producto, cobro hecho por recepción). Si viene, debe ser un recurso
+    // real de esta misma empresa.
+    if (recursoAgendableId) {
+      const recurso = await prisma.recursoAgendable.findFirst({
+        where: { id: recursoAgendableId, empresaId: req.usuario.empresaId },
+      });
+      if (!recurso) return res.status(400).json({ error: 'El profesional indicado no existe' });
+    }
+
     const venta = await prisma.venta.create({
       data: {
         empresaId: req.usuario.empresaId,
@@ -360,6 +370,7 @@ router.post('/:id/ventas', async (req, res) => {
         descripcion: descripcion.trim(),
         monto: Math.round(montoNum),
         categoriaProducto: categoriaProducto || null,
+        recursoAgendableId: recursoAgendableId || null,
         estadoPago: 'PAGADO',
         // fecha llega como "YYYY-MM-DD" (sin hora) desde el panel — hay que
         // anclarla al mediodía de Chile, no a medianoche UTC, para que caiga
@@ -392,7 +403,7 @@ router.patch('/:id/ventas/:ventaId', async (req, res) => {
     });
     if (!venta) return res.status(404).json({ error: 'Venta no encontrada' });
 
-    const { descripcion, monto, categoriaProducto, fecha } = req.body;
+    const { descripcion, monto, categoriaProducto, fecha, recursoAgendableId } = req.body;
 
     if (descripcion !== undefined && !descripcion.trim()) {
       return res.status(400).json({ error: 'La descripción no puede quedar vacía' });
@@ -404,6 +415,12 @@ router.patch('/:id/ventas/:ventaId', async (req, res) => {
         return res.status(400).json({ error: 'monto debe ser un número válido' });
       }
     }
+    if (recursoAgendableId) {
+      const recurso = await prisma.recursoAgendable.findFirst({
+        where: { id: recursoAgendableId, empresaId: req.usuario.empresaId },
+      });
+      if (!recurso) return res.status(400).json({ error: 'El profesional indicado no existe' });
+    }
 
     const ventaActualizada = await prisma.venta.update({
       where: { id: venta.id },
@@ -411,6 +428,7 @@ router.patch('/:id/ventas/:ventaId', async (req, res) => {
         ...(descripcion !== undefined && { descripcion: descripcion.trim() }),
         ...(montoNum !== undefined && { monto: Math.round(montoNum) }),
         ...(categoriaProducto !== undefined && { categoriaProducto: categoriaProducto || null }),
+        ...(recursoAgendableId !== undefined && { recursoAgendableId: recursoAgendableId || null }),
         ...(fecha !== undefined && { fecha: horaChileAFechaUTC(fecha, '12:00') }),
       },
     });

@@ -209,6 +209,7 @@ model RecursoAgendable {
   citas        Cita[]
   usuarios     Usuario[]
   servicios    ServicioRecurso[]
+  ventas       Venta[]
 
   @@index([empresaId])
 }
@@ -538,6 +539,14 @@ model Venta {
 
   fichaAsociadaId String? // referencia opcional a la receta/ficha vigente al momento de la venta
   categoriaProducto String? // ej. "Lente monofocal", "Lente progresivo", "Lente de contacto", "Solo atención" — permite segmentar campañas por tipo de producto/servicio comprado, igual que productoId lo hace en el catálogo rotativo
+
+  // Opcional a propósito: muchas ventas (venta de un producto suelto, cobro
+  // hecho por recepción) no corresponden a la atención de un profesional
+  // puntual. Dejarlo null nunca bloquea el registro ni afecta los KPIs de
+  // ingresos totales del Dashboard — solo habilita a futuro un desglose de
+  // ingresos por profesional para las ventas que sí lo tengan asignado.
+  recursoAgendable   RecursoAgendable? @relation(fields: [recursoAgendableId], references: [id])
+  recursoAgendableId String?
 
   fecha     DateTime @default(now())
   creadoEn  DateTime @default(now())

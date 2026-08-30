@@ -462,7 +462,7 @@ router.post('/profesionales', requireRole('ADMIN'), async (req, res) => {
 // que el panel pueda mostrar "2 de 2 profesionales usados" y deshabilitar
 // o redirigir a upsell el botón de agregar cuando corresponda).
 // ------------------------------------------------------------
-router.get('/profesionales', requireRole('ADMIN'), async (req, res) => {
+router.get('/profesionales', requireRole('ADMIN', 'RECEPCION'), async (req, res) => {
   try {
     const empresaId = req.usuario.empresaId;
 
