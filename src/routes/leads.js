@@ -21,34 +21,18 @@
 
 const express = require('express');
 const crypto = require('crypto');
-const { parsePhoneNumberFromString } = require('libphonenumber-js');
 const prisma = require('../lib/prisma');
 const { requireAuth, requireRolVendedorAdmin } = require('../middleware/auth');
+const {
+  MOTIVO_ASIGNACION_MANUAL,
+  asignarLeadAVendedor,
+  distribuirLeadNuevo,
+} = require('../services/distribucionLeadsService');
 
 const router = express.Router();
 
 const ORIGENES_VALIDOS = ['whatsapp_demo', 'email_campana'];
 const TURNOS_HISTORIAL_EN_POOL = 6;
-
-// Lead.rubro trae formas distintas según origen: para whatsapp_demo es el
-// nombre de RubroTemplate (ej. "Óptica"); para email_campana, según el
-// puente de multidigital-captura-emails, puede ser una clave real (ej.
-// "optica") o el texto libre viejo de una campaña sin catálogo. Se intenta
-// clave exacta primero, después nombre insensible a mayúsculas, y si nada
-// matchea se usa el rubro catch-all "otro" del catálogo — nunca se bloquea
-// la creación del caso por esto.
-async function resolverRubroTemplate(rubroTexto) {
-  if (rubroTexto) {
-    const porClave = await prisma.rubroTemplate.findUnique({ where: { clave: rubroTexto } });
-    if (porClave) return porClave;
-
-    const porNombre = await prisma.rubroTemplate.findFirst({
-      where: { nombre: { equals: rubroTexto, mode: 'insensitive' } },
-    });
-    if (porNombre) return porNombre;
-  }
-  return prisma.rubroTemplate.findUnique({ where: { clave: 'otro' } });
-}
 
 // El nivel de interés de email nunca baja — si el puente manda un nivel
 // menor al ya guardado (ej. llega "clic" después de que ya se había
@@ -126,11 +110,13 @@ router.post('/', requireLeadsBridgeApiKey, async (req, res) => {
       motivoDerivacion: motivoDerivacion || null,
     };
 
+    const leadExistente = await prisma.lead.findUnique({
+      where: { origen_origenId: { origen, origenId } },
+      select: { nivelInteresEmail: true },
+    });
+    const esLeadNuevo = !leadExistente;
+
     if (nivelInteresEmail) {
-      const leadExistente = await prisma.lead.findUnique({
-        where: { origen_origenId: { origen, origenId } },
-        select: { nivelInteresEmail: true },
-      });
       const nivelPrevio = leadExistente?.nivelInteresEmail;
       const noBaja = !nivelPrevio || JERARQUIA_NIVEL_INTERES_EMAIL[nivelInteresEmail] > JERARQUIA_NIVEL_INTERES_EMAIL[nivelPrevio];
       if (noBaja) {
@@ -144,6 +130,15 @@ router.post('/', requireLeadsBridgeApiKey, async (req, res) => {
       create: { origen, origenId, ...datos },
       update: datos,
     });
+
+    // Distribución automática: solo tiene sentido en la creación — un Lead
+    // que ya existía puede estar asignado o gestionado, no hay que tocarlo
+    // solo porque el puente mandó una actualización de interacción.
+    if (esLeadNuevo && lead.estado === 'sin_asignar') {
+      distribuirLeadNuevo(lead.id).catch((err) => {
+        console.error(`[LEADS] Error en distribución automática del lead ${lead.id}:`, err);
+      });
+    }
 
     res.status(201).json({ lead });
   } catch (error) {
@@ -218,81 +213,15 @@ router.post('/pool/:id/asignar', requireAuth, requireRolVendedorAdmin, async (re
       return res.status(400).json({ error: 'El vendedor elegido no existe o está bloqueado' });
     }
 
-    const resultado = await prisma.lead.updateMany({
-      where: { id: req.params.id, estado: 'sin_asignar' },
-      data: { vendedorId, estado: 'asignado' },
-    });
+    // Marca 'asignado_manual_admin' a propósito (no la automática): un
+    // traspaso a mano significa que el caso pesa más, y listarLeadsConSLA lo
+    // usa para mostrarlo al inicio de "Mis Casos" mientras siga sin gestionar.
+    const resultado = await asignarLeadAVendedor(req.params.id, vendedorId, MOTIVO_ASIGNACION_MANUAL);
 
-    if (resultado.count === 0) {
+    if (!resultado.ok) {
       return res.status(409).json({
         error: 'Este lead ya no está disponible en el pool (puede que ya se haya asignado).',
       });
-    }
-
-    // El Lead es la capa unificada del pool, pero "Mis casos" del vendedor
-    // (GET /demos/prospectos, ver listarLeadsConSLA en slaService.js) lee
-    // directo de DemoAsignada.vendedorId, no de Lead — sin este paso, asignar
-    // acá no tenía ningún efecto visible para el vendedor. derivadoAVendedor:
-    // true además evita que seguimientoDemo.js siga tratando esta demo como
-    // sin derivar y le siga mandando seguimientos automáticos por su cuenta.
-    // origenCaso: 'heredado' en ambas ramas — es la marca de trazabilidad
-    // para el reporte de bonos (ver POST /demos/convertir-a-cliente-real,
-    // que la copia a Empresa cuando el caso se convierte).
-    const lead = await prisma.lead.findUnique({ where: { id: req.params.id } });
-    let demoCreadaId = null;
-    if (lead?.origen === 'whatsapp_demo') {
-      await prisma.demoAsignada.update({
-        where: { id: lead.origenId },
-        data: {
-          vendedorId,
-          derivadoAVendedor: true,
-          derivadoEn: new Date(),
-          motivoDerivacion: 'asignado_manual_admin',
-          origenCaso: 'heredado',
-        },
-      });
-    } else if (lead?.origen === 'email_campana') {
-      // A diferencia de whatsapp_demo, acá no existe todavía ninguna
-      // DemoAsignada — el Lead nació directo de un NegocioProspecto externo
-      // (multidigital-captura-emails). Se crea acá mismo, con el mismo
-      // patrón que POST /demos/prospectos, para que el lead "precargue" como
-      // caso de trabajo real en Mis Casos en vez de quedar invisible.
-      const numeroParseado = lead.telefono ? parsePhoneNumberFromString(lead.telefono, 'CL') : null;
-      const telefonoNormalizado = numeroParseado?.isValid() ? numeroParseado.number.replace('+', '') : null;
-
-      if (!telefonoNormalizado) {
-        console.warn(`[LEADS] Lead ${lead.id} (email_campana) asignado sin teléfono válido — no se pudo crear la DemoAsignada automáticamente. telefono="${lead.telefono}"`);
-      } else {
-        const rubroTemplate = await resolverRubroTemplate(lead.rubro);
-        try {
-          const demoCreada = await prisma.$transaction(async (tx) => {
-            const empresaDemo = await tx.empresa.create({
-              data: { nombre: lead.nombreProspecto || 'Prospecto de campaña de email', rubroTemplateId: rubroTemplate.id, esDemo: true },
-            });
-            return tx.demoAsignada.create({
-              data: {
-                telefono: telefonoNormalizado,
-                empresaDemoId: empresaDemo.id,
-                nombreProspecto: lead.nombreProspecto,
-                email: lead.email,
-                vendedorId,
-                origenDemo: 'email_campana',
-                origenCaso: 'heredado',
-                leadOrigenId: lead.id,
-                derivadoAVendedor: true,
-                derivadoEn: new Date(),
-                motivoDerivacion: 'asignado_manual_admin',
-              },
-            });
-          });
-          demoCreadaId = demoCreada.id;
-        } catch (errCreacion) {
-          // Conflicto típico: ya existe una DemoAsignada con ese teléfono
-          // (P2002) — no se bloquea la asignación del Lead por esto, sólo se
-          // deja registrado para revisión manual.
-          console.error(`[LEADS] Error creando DemoAsignada automática para lead ${lead.id}:`, errCreacion.message);
-        }
-      }
     }
 
     res.json({
@@ -300,8 +229,8 @@ router.post('/pool/:id/asignar', requireAuth, requireRolVendedorAdmin, async (re
       // Solo relevante para email_campana — permite al panel avisar si el
       // caso de trabajo no se pudo precargar solo (sin teléfono válido o
       // error de creación) y hace falta completarlo a mano.
-      demoCreadaId,
-      requiereCasoManual: lead?.origen === 'email_campana' && !demoCreadaId,
+      demoCreadaId: resultado.demoCreadaId,
+      requiereCasoManual: resultado.requiereCasoManual,
     });
   } catch (error) {
     console.error('Error asignando lead del pool:', error);

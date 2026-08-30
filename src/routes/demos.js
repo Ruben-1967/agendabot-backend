@@ -21,6 +21,7 @@ const { requireAuth, requireRole } = require('../middleware/auth');
 const { extraerInfoSitioWeb } = require('../services/extraccionSitioWeb');
 const { sendWhatsAppTextMessage } = require('../services/whatsapp');
 const { listarLeadsConSLA } = require('../services/slaService');
+const { intentarRepoblarCupo } = require('../services/distribucionLeadsService');
 const { conversionesEnRangoPorVendedor } = require('../services/rankingService');
 const { PLANES: DETALLE_PLANES } = require('../services/contratoHtml');
 const { horaChileAFechaUTC, hoyISOEnChile } = require('../lib/horaChile');
@@ -781,6 +782,13 @@ router.post('/convertir-a-cliente-real', requireAuth, requireRole('VENDEDOR'), a
       }
       throw errTx;
     }
+
+    // El caso recién convertido deja de contar como "activo" para este
+    // vendedor — si le quedó cupo libre y hay algo esperando en el pool, le
+    // entra el siguiente automáticamente. No bloquea la respuesta al vendedor.
+    intentarRepoblarCupo(demo.vendedorId).catch((err) => {
+      console.error(`[convertir-a-cliente-real] Error repoblando cupo del vendedor ${demo.vendedorId}:`, err);
+    });
 
     const linkActivacion = `${obtenerUrlPanelPrincipal()}/activar-cuenta?token=${tokenActivacion}`;
 

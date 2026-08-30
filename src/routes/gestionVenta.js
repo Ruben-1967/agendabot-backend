@@ -14,6 +14,7 @@ const express = require('express');
 const prisma = require('../lib/prisma');
 const { requireAuth, requireRole } = require('../middleware/auth');
 const { CATALOGO_RESULTADOS, CATALOGO_MOTIVOS_DESCARTE, obtenerResultado, esMotivoDescarteValido } = require('../services/catalogoGestionVenta');
+const { intentarRepoblarCupo } = require('../services/distribucionLeadsService');
 
 const router = express.Router();
 
@@ -34,13 +35,33 @@ async function recomputarDerivadosDemo(demoAsignadaId, tx) {
   const eventosCierre = eventos.filter((e) => e.resultado === 'cerrado_perdido');
   const ultimoCierre = eventosCierre[eventosCierre.length - 1] || null;
 
-  await tx.demoAsignada.update({
+  const demoAntes = await tx.demoAsignada.findUnique({ where: { id: demoAsignadaId }, select: { cerradaEn: true } });
+  const nuevaCerradaEn = ultimoCierre ? ultimoCierre.creadoEn : null;
+
+  const demoActualizada = await tx.demoAsignada.update({
     where: { id: demoAsignadaId },
     data: {
       primerContactoVendedorEn: primerEvento ? primerEvento.creadoEn : null,
       ultimoContactoEfectivoEn: ultimoQueResetea ? ultimoQueResetea.creadoEn : null,
-      cerradaEn: ultimoCierre ? ultimoCierre.creadoEn : null,
+      cerradaEn: nuevaCerradaEn,
     },
+  });
+
+  // Señal para que el caller (fuera de la transacción, una vez que ya
+  // commiteó) intente repoblar el cupo del vendedor — recién ahí el conteo
+  // de "casos activos" refleja este cierre.
+  const seCerroRecienAhora = !demoAntes.cerradaEn && Boolean(nuevaCerradaEn);
+  return { vendedorId: demoActualizada.vendedorId, seCerroRecienAhora };
+}
+
+// Llamar DESPUÉS de que el prisma.$transaction que llamó a
+// recomputarDerivadosDemo ya haya resuelto — nunca desde dentro de la
+// transacción, porque el conteo de casos activos necesita ver el cierre ya
+// commiteado. No bloquea la respuesta al vendedor.
+function repoblarSiCorresponde({ vendedorId, seCerroRecienAhora }) {
+  if (!seCerroRecienAhora || !vendedorId) return;
+  intentarRepoblarCupo(vendedorId).catch((err) => {
+    console.error(`[gestion-venta] Error repoblando cupo del vendedor ${vendedorId}:`, err);
   });
 }
 
@@ -134,7 +155,7 @@ router.post('/:demoId/eventos', requireAuth, requireRole('VENDEDOR'), async (req
       return res.status(400).json({ error: validacion.error });
     }
 
-    const evento = await prisma.$transaction(async (tx) => {
+    const { evento, senalRepoblar } = await prisma.$transaction(async (tx) => {
       const nuevoEvento = await tx.eventoGestionVenta.create({
         data: {
           demoAsignadaId: demo.id,
@@ -145,9 +166,10 @@ router.post('/:demoId/eventos', requireAuth, requireRole('VENDEDOR'), async (req
           reseteaTimer: validacion.config.reseteaTimer,
         },
       });
-      await recomputarDerivadosDemo(demo.id, tx);
-      return nuevoEvento;
+      const senalRepoblar = await recomputarDerivadosDemo(demo.id, tx);
+      return { evento: nuevoEvento, senalRepoblar };
     });
+    repoblarSiCorresponde(senalRepoblar);
 
     res.json({ ok: true, evento });
   } catch (error) {
@@ -188,14 +210,15 @@ router.patch('/eventos/:id', requireAuth, requireRole('VENDEDOR'), async (req, r
       return res.status(400).json({ error: validacion.error });
     }
 
-    const evento = await prisma.$transaction(async (tx) => {
+    const { evento, senalRepoblar } = await prisma.$transaction(async (tx) => {
       const actualizado = await tx.eventoGestionVenta.update({
         where: { id: eventoExistente.id },
         data: { canal, resultado, motivoDescarte: motivoDescarte || null, reseteaTimer: validacion.config.reseteaTimer },
       });
-      await recomputarDerivadosDemo(demo.id, tx);
-      return actualizado;
+      const senalRepoblar = await recomputarDerivadosDemo(demo.id, tx);
+      return { evento: actualizado, senalRepoblar };
     });
+    repoblarSiCorresponde(senalRepoblar);
 
     res.json({ ok: true, evento });
   } catch (error) {
@@ -218,10 +241,11 @@ router.delete('/eventos/:id', requireAuth, requireRole('VENDEDOR'), async (req, 
       return res.status(404).json({ error: 'Evento no encontrado' });
     }
 
-    await prisma.$transaction(async (tx) => {
+    const senalRepoblar = await prisma.$transaction(async (tx) => {
       await tx.eventoGestionVenta.delete({ where: { id: eventoExistente.id } });
-      await recomputarDerivadosDemo(demo.id, tx);
+      return recomputarDerivadosDemo(demo.id, tx);
     });
+    repoblarSiCorresponde(senalRepoblar);
 
     res.json({ ok: true });
   } catch (error) {

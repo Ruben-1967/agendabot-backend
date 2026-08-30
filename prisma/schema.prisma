@@ -1092,6 +1092,15 @@ model Lead {
   @@index([vendedorId])
 }
 
+// Fila única (singleton) — cupo máximo de casos activos por vendedor para la
+// distribución automática del pool de leads (ver src/services/distribucionLeadsService.js).
+// Vive en la base de datos (no env var) para que el admin lo pueda ajustar
+// desde el panel sin necesitar un despliegue nuevo cada vez.
+model ConfiguracionDistribucionLeads {
+  id                     String @id @default(cuid())
+  cupoMaximoCasosActivos Int    @default(30)
+}
+
 // ===== HISTORIAL DE SUSCRIPCIONES =====
 model HistorialSuscripcion {
   id                  String    @id @default(cuid())

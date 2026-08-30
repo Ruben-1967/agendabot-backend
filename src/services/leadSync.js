@@ -17,6 +17,7 @@
 // dentro del webhook y cortaría la conexión de Prisma de todo el server.
 const prisma = require('../lib/prisma');
 const { fechaISOEnChile } = require('../lib/horaChile');
+const { distribuirLeadNuevo } = require('./distribucionLeadsService');
 
 // historialSimulacion es un array de turnos { rol: 'prospecto' | 'asistente',
 // texto: string } (ver demoEngine.js) — no un string concatenado. El resumen
@@ -80,11 +81,25 @@ async function sincronizarLeadDesdeDemo(demo, motivoDerivacion, rubro) {
     ...(rubro ? { rubro } : {}),
   };
 
-  await prisma.lead.upsert({
+  const existiaAntes = await prisma.lead.findUnique({
+    where: { origen_origenId: { origen: 'whatsapp_demo', origenId: demo.id } },
+    select: { id: true },
+  });
+
+  const lead = await prisma.lead.upsert({
     where: { origen_origenId: { origen: 'whatsapp_demo', origenId: demo.id } },
     create: { origen: 'whatsapp_demo', origenId: demo.id, motivoDerivacion: motivoDerivacion ?? null, ...datos },
     update: datos,
   });
+
+  // Distribución automática solo en la creación — sincronizaciones
+  // posteriores del mismo Lead (el prospecto sigue escribiendo) no deben
+  // reintentar la asignación de algo que ya está en el pool o ya asignado.
+  if (!existiaAntes && lead.estado === 'sin_asignar') {
+    distribuirLeadNuevo(lead.id).catch((err) => {
+      console.error(`[LEADS] Error en distribución automática del lead ${lead.id}:`, err);
+    });
+  }
 }
 
 module.exports = { extraerResumenHistorial, sincronizarLeadDesdeDemo };

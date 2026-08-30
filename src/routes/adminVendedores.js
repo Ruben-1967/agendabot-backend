@@ -11,6 +11,7 @@ const prisma = require('../lib/prisma');
 const { requireAuth, requireRolVendedorAdmin } = require('../middleware/auth');
 const { resumenLeadsPorVendedor } = require('../services/slaService');
 const { conversionesDelMesPorVendedor } = require('../services/rankingService');
+const { obtenerCupoMaximo } = require('../services/distribucionLeadsService');
 
 const router = express.Router();
 
@@ -418,6 +419,49 @@ router.post('/sla/config', requireAuth, requireRolVendedorAdmin, async (req, res
     res.json({ ok: true });
   } catch (error) {
     console.error('Error guardando configuración de SLA:', error);
+    res.status(500).json({ error: 'Error al guardar la configuración' });
+  }
+});
+
+// ------------------------------------------------------------
+// GET /admin-vendedores/distribucion/config — cupo máximo de casos activos
+// por vendedor, usado por la distribución automática del pool de leads (ver
+// src/services/distribucionLeadsService.js). Fila única (singleton).
+// ------------------------------------------------------------
+router.get('/distribucion/config', requireAuth, requireRolVendedorAdmin, async (req, res) => {
+  try {
+    const cupoMaximoCasosActivos = await obtenerCupoMaximo();
+    res.json({ cupoMaximoCasosActivos });
+  } catch (error) {
+    console.error('Error obteniendo configuración de distribución:', error);
+    res.status(500).json({ error: 'Error al obtener la configuración' });
+  }
+});
+
+// ------------------------------------------------------------
+// POST /admin-vendedores/distribucion/config
+// body: { cupoMaximoCasosActivos: number }
+// ------------------------------------------------------------
+router.post('/distribucion/config', requireAuth, requireRolVendedorAdmin, async (req, res) => {
+  try {
+    const { cupoMaximoCasosActivos } = req.body;
+    if (!Number.isInteger(cupoMaximoCasosActivos) || cupoMaximoCasosActivos < 1) {
+      return res.status(400).json({ error: 'cupoMaximoCasosActivos debe ser un entero mayor a 0' });
+    }
+
+    const existente = await prisma.configuracionDistribucionLeads.findFirst();
+    if (existente) {
+      await prisma.configuracionDistribucionLeads.update({
+        where: { id: existente.id },
+        data: { cupoMaximoCasosActivos },
+      });
+    } else {
+      await prisma.configuracionDistribucionLeads.create({ data: { cupoMaximoCasosActivos } });
+    }
+
+    res.json({ ok: true, cupoMaximoCasosActivos });
+  } catch (error) {
+    console.error('Error guardando configuración de distribución:', error);
     res.status(500).json({ error: 'Error al guardar la configuración' });
   }
 });

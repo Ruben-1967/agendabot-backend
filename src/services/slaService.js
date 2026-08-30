@@ -17,6 +17,7 @@
  *   tenga reseteaTimer = true).
  */
 const prisma = require('../lib/prisma');
+const { MOTIVO_ASIGNACION_MANUAL } = require('./distribucionLeadsService');
 
 const ORIGENES_CALIENTES = ['organico', 'vendedor', 'email_campana'];
 
@@ -105,10 +106,16 @@ async function listarLeadsConSLA(vendedorId) {
       ultimoContactoEfectivoEn: d.ultimoContactoEfectivoEn,
       vendedorId: d.vendedorId,
       vendedorNombre: d.vendedor?.nombre || null,
+      // Un traspaso manual del admin significa que el caso pesa más — se
+      // muestra al inicio de la lista mientras siga sin gestionar (fase
+      // 'primer_contacto'). Apenas el vendedor lo gestiona una vez, pasa a
+      // ordenarse por SLA como cualquier otro caso (decisión 2026-08-30).
+      prioritarioManual: d.motivoDerivacion === MOTIVO_ASIGNACION_MANUAL && fase === 'primer_contacto',
     };
   });
 
   leads.sort((a, b) => {
+    if (a.prioritarioManual !== b.prioritarioManual) return a.prioritarioManual ? -1 : 1;
     const diffUrgencia = RANGO_URGENCIA[a.estadoSLA] - RANGO_URGENCIA[b.estadoSLA];
     if (diffUrgencia !== 0) return diffUrgencia;
     return b.diasEnEstado - a.diasEnEstado;
