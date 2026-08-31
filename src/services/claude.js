@@ -1,6 +1,7 @@
 const Anthropic = require('@anthropic-ai/sdk');
 const prisma = require('../lib/prisma');
 const { obtenerHorariosDisponibles, crearCita, obtenerProximosDiasConDisponibilidad, obtenerHorasDisponiblesParaServicio, obtenerProximosDiasParaServicio } = require('./disponibilidad');
+const { normalizarRut, esRutValido } = require('../lib/rut');
 
 const { fechaLegibleDesdeISO } = require('../lib/formatoFechas');
 
@@ -9,6 +10,14 @@ const anthropic = new Anthropic({
 });
 
 const MODEL = 'claude-haiku-4-5-20251001';
+
+// Sin esto, un "rut" mal extraído por el modelo (texto libre, un id, lo que
+// sea) se guardaba tal cual en Cliente.rut — visto en producción como un
+// string larguísimo en la columna Rut del panel.
+function normalizarYValidarRut(rutCrudo) {
+  const normalizado = normalizarRut(rutCrudo);
+  return esRutValido(normalizado) ? normalizado : null;
+}
 
 /**
  * Arma la lista de herramientas para una empresa específica.
@@ -41,6 +50,11 @@ function construirTools(empresa, incluirMostrarServicios, incluirCatalogo) {
       description: "RUT del cliente (con guión, ej. '12345678-9'). Este negocio exige RUT para agendar.",
     };
     agendarCitaRequired.push('rut');
+    agendarCitaProperties.telefono = {
+      type: 'string',
+      description: "Teléfono de contacto del cliente, tal como él lo dice explícitamente en la conversación — pregúntalo siempre, aunque le estés escribiendo desde el mismo número de WhatsApp (puede ser distinto, ej. alguien agendando por otra persona). Formato libre, tal como el cliente lo entregue.",
+    };
+    agendarCitaRequired.push('telefono');
   }
 
   return [
@@ -174,9 +188,9 @@ async function ejecutarHerramienta(nombre, input, contexto) {
       if (!resuelto.recursoId) {
         return { error: 'Esta empresa no tiene un recurso agendable configurado todavía.' };
       }
-      dias = await obtenerProximosDiasConDisponibilidad(resuelto.recursoId, 4);
+      dias = await obtenerProximosDiasConDisponibilidad(resuelto.recursoId, 7);
     } else {
-      dias = await obtenerProximosDiasParaServicio(resuelto.servicioDb.id, 4);
+      dias = await obtenerProximosDiasParaServicio(resuelto.servicioDb.id, 7);
     }
     return { dias: dias.map((d) => ({ fecha: d.fecha, primeraHora: d.horas[0] })) };
   }
@@ -231,10 +245,17 @@ async function ejecutarHerramienta(nombre, input, contexto) {
       if (!input.nombre) {
         return { error: 'Este negocio exige el nombre completo del cliente para agendar. Pídeselo explícitamente antes de reintentar — no asumas el nombre de perfil de WhatsApp.' };
       }
-      if (cliente.rut !== input.rut || cliente.nombre !== input.nombre) {
+      if (!input.telefono) {
+        return { error: 'Este negocio exige un teléfono de contacto para agendar. Pídeselo explícitamente antes de reintentar.' };
+      }
+      const rutValidado = normalizarYValidarRut(input.rut);
+      if (!rutValidado) {
+        return { error: `"${input.rut}" no tiene formato de RUT chileno válido (ej. 12345678-9). Pídeselo de nuevo al cliente antes de reintentar.` };
+      }
+      if (cliente.rut !== rutValidado || cliente.nombre !== input.nombre || cliente.telefono !== input.telefono) {
         await prisma.cliente.update({
           where: { id: cliente.id },
-          data: { rut: input.rut, nombre: input.nombre },
+          data: { rut: rutValidado, nombre: input.nombre, telefono: input.telefono },
         });
       }
     }
@@ -383,6 +404,7 @@ ${serviciosBase.length ? serviciosBase.map((s) => `- ${s}`).join('\n') : '(el ne
 ${bloqueCategoriasCatalogo}${bloquesPersonalizacion.length ? '\n' + bloquesPersonalizacion.join('\n\n') + '\n' : ''}
 Instrucciones:
 - Sé breve, cordial y directo — estás en un chat de WhatsApp, no escribas párrafos largos.
+- El historial de este chat puede incluir mensajes de una conversación anterior, a veces de hace semanas o meses. Si el cliente vuelve a saludar ahora (ej. "hola", "buenas", "buenos días"), trátalo como el INICIO de una interacción nueva: preséntate brevemente y pregúntale en qué lo puedes ayudar hoy — nunca asumas que sigue en medio de un trámite de la vez anterior, ni te saltes ese saludo solo porque ya apareció antes en el historial. Esto no afecta sus datos ya guardados (nombre, RUT si corresponde) — solo cómo lo recibes al volver a escribir.
 - Si el cliente usa un término genérico o ambiguo (ej. "atención oftalmológica", "revisión de la vista", "chequeo") preguntando informativamente qué significa o qué incluye ese procedimiento puntual (sin pedir la lista completa de servicios), ayúdalo agregando una explicación MUY breve y en lenguaje simple — basándote en tu conocimiento general del área, no en información específica de este negocio.
 - Esa explicación es solo DEFINICIÓN de un procedimiento puntual — nunca le digas al cliente cuál necesita según sus síntomas ni hagas ninguna sugerencia clínica. Que él elija con la información, tú no decides por él.
 - El campo "servicio" en agendar_cita/consultar_disponibilidad sigue debiendo ser exactamente uno de los nombres de la lista SERVICIOS AGENDABLES, tal cual.
@@ -393,7 +415,7 @@ ${instruccionesCatalogo}- En cuanto sepas el servicio (aunque sea en el mismo me
   - Si el cliente NO ha mencionado ningún día todavía, usa consultar_proximos_dias_disponibles, inmediatamente, sin preguntar antes si quiere verlos.
 - Tienes PROHIBIDO escribir frases como "¿qué día te gustaría?", "¿prefieres que te muestre los días disponibles?" o similares — esa decisión la tomas tú llamando a la herramienta correspondiente, nunca preguntándola en texto.
 - NUNCA inventes horas ni días disponibles.
-${empresa.requiereRut ? '- Este negocio EXIGE nombre completo y RUT para agendar. Antes de llamar a agendar_cita, además de fecha/hora/servicio, pide el RUT del cliente Y su nombre completo si aún no los tienes en la conversación — NUNCA asumas el nombre a partir del perfil de WhatsApp del contacto, siempre pregúntalo explícitamente.\n' : ''}- Una vez que el cliente confirme fecha, hora${empresa.requiereRut ? ', servicio, nombre y RUT' : ' y servicio'} específicos, usa agendar_cita para crear la cita de verdad. El campo "servicio" debe ser exactamente uno de los nombres de la lista SERVICIOS AGENDABLES.
+${empresa.requiereRut ? '- Este negocio EXIGE nombre completo, RUT y teléfono de contacto para agendar. Antes de llamar a agendar_cita, además de fecha/hora/servicio, pide estos 3 datos si aún no los tienes en la conversación — NUNCA asumas el nombre a partir del perfil de WhatsApp del contacto, NUNCA asumas el teléfono a partir del número desde el que te escribe (puede ser distinto, ej. alguien agendando por otra persona), siempre pregúntalos explícitamente.\n' : ''}- Una vez que el cliente confirme fecha, hora${empresa.requiereRut ? ', servicio, nombre, RUT y teléfono' : ' y servicio'} específicos, usa agendar_cita para crear la cita de verdad. El campo "servicio" debe ser exactamente uno de los nombres de la lista SERVICIOS AGENDABLES.
 - Si agendar_cita falla porque el horario ya no está disponible, discúlpate y ofrece consultar otra hora.
 - Cuando confirmes una cita agendada, NUNCA muestres el "citaId" (es un identificador interno de la base de datos, sin ningún valor para el cliente) — el resumen debe incluir solo servicio, fecha, hora, y dirección si corresponde.
 - Si el cliente pregunta algo que no está cubierto en la información de este mensaje (precios, condiciones, detalles clínicos), no inventes: dile que lo puede confirmar directamente con el negocio.

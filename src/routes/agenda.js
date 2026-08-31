@@ -23,9 +23,20 @@ const router = express.Router();
 const prisma = require('../lib/prisma');
 const { requireAuth, requireRole } = require('../middleware/auth');
 const { horaChileAFechaUTC } = require('../lib/horaChile');
+const { normalizarRut, esRutValido } = require('../lib/rut');
 
 const REGEX_HORA = /^([01]\d|2[0-3]):([0-5]\d)$/;
 const REGEX_FECHA = /^\d{4}-\d{2}-\d{2}$/;
+
+function horaAMinutosLocal(horaStr) {
+  const [h, m] = horaStr.split(':').map(Number);
+  return h * 60 + m;
+}
+function minutosAHoraLocal(minutos) {
+  const h = Math.floor(minutos / 60).toString().padStart(2, '0');
+  const m = (minutos % 60).toString().padStart(2, '0');
+  return `${h}:${m}`;
+}
 
 function horaAMinutos(horaStr) {
   const h = parseInt(horaStr.split(':')[0], 10);
@@ -911,7 +922,65 @@ router.get('/citas', requireRole('ADMIN', 'RECEPCION'), async (req, res) => {
       recursoAgendableId: c.recursoAgendableId,
       profesional: c.recurso?.nombre || 'Sin asignar',
       estado: c.estado,
+      vacio: false,
     }));
+
+    // Si se pidió un profesional puntual, se agregan filas "vacías" por cada
+    // horario libre ese día (según su horario semanal y bloqueos) — para
+    // que la tabla muestre el día completo, no solo los horarios con
+    // paciente (pedido explícito del usuario: comparar contra otro
+    // calendario para adivinar los huecos era justo lo que quería evitar).
+    // Solo tiene sentido con UN recurso puntual — con "todos los
+    // profesionales" cada uno tiene su propio horario en paralelo, mezclar
+    // huecos de varios sería engañoso.
+    if (recursoId) {
+      const recurso = await prisma.recursoAgendable.findUnique({ where: { id: recursoId } });
+      const [anio, mes, dia] = fecha.split('-').map(Number);
+      const diaSemana = new Date(Date.UTC(anio, mes - 1, dia)).getUTCDay();
+
+      const horarios = await prisma.horarioSemanal.findMany({
+        where: { recursoAgendableId: recursoId, diaSemana, activo: true },
+      });
+      const bloqueos = await prisma.bloqueo.findMany({
+        where: { recursoAgendableId: recursoId, fechaInicio: { lte: finDia }, fechaFin: { gte: inicioDia } },
+      });
+
+      const duracion = recurso.duracionCitaMinutos;
+      const horasConCita = new Set(resultado.map((r) => r.hora));
+
+      for (const bloque of horarios) {
+        let cursor = horaAMinutosLocal(bloque.horaInicio);
+        const finBloque = horaAMinutosLocal(bloque.horaFin);
+
+        while (cursor + duracion <= finBloque) {
+          const horaSlot = minutosAHoraLocal(cursor);
+          if (!horasConCita.has(horaSlot)) {
+            const inicioSlot = horaChileAFechaUTC(fecha, horaSlot);
+            const finSlot = new Date(inicioSlot.getTime() + duracion * 60000);
+            const chocaConBloqueo = bloqueos.some((b) => inicioSlot < b.fechaFin && finSlot > b.fechaInicio);
+            if (!chocaConBloqueo) {
+              resultado.push({
+                id: `vacio-${horaSlot}`,
+                hora: horaSlot,
+                clienteId: null,
+                nombre: null,
+                rut: null,
+                telefono: null,
+                servicioId: null,
+                servicio: null,
+                recursoAgendableId: recurso.id,
+                profesional: recurso.nombre,
+                estado: null,
+                vacio: true,
+              });
+            }
+          }
+          cursor += duracion;
+        }
+      }
+
+      resultado.sort((a, b) => a.hora.localeCompare(b.hora));
+    }
 
     res.json({ citas: resultado });
   } catch (error) {
@@ -941,28 +1010,77 @@ router.post('/citas', requireRole('ADMIN', 'RECEPCION'), async (req, res) => {
       return res.status(400).json({ error: 'Falta "clienteId" o "clienteNuevo.nombre"' });
     }
 
-    // Resolver el recurso: el que se pida, o si la empresa solo tiene uno
-    // (caso normal, ver nota de cabecera del archivo), ese por defecto.
-    let recurso;
-    if (recursoAgendableId) {
-      recurso = await prisma.recursoAgendable.findFirst({ where: { id: recursoAgendableId, empresaId } });
-      if (!recurso) return res.status(400).json({ error: 'recursoAgendableId no pertenece a esta empresa' });
-    } else {
-      // Filtra por tipo:'profesional' para calzar exactamente con la lista
-      // que ve el panel en GET /agenda/profesionales — si no, una empresa
-      // con box/equipo además de su único profesional vería acá "más de un
-      // recurso" y le pediría elegir uno que ni siquiera le muestran.
-      const recursos = await prisma.recursoAgendable.findMany({ where: { empresaId, tipo: 'profesional' } });
-      if (recursos.length !== 1) {
-        return res.status(400).json({ error: 'Falta "recursoAgendableId" (la empresa tiene más de un profesional)' });
-      }
-      [recurso] = recursos;
-    }
-
     let servicio = null;
     if (servicioId) {
       servicio = await prisma.servicio.findFirst({ where: { id: servicioId, empresaId } });
       if (!servicio) return res.status(400).json({ error: 'servicioId no pertenece a esta empresa' });
+    }
+
+    const fechaHoraInicio = horaChileAFechaUTC(fecha, hora);
+
+    async function tieneConflicto(recursoId, fin) {
+      const c = await prisma.cita.findFirst({
+        where: {
+          recursoAgendableId: recursoId,
+          estado: { not: 'CANCELADA' },
+          fechaHoraInicio: { lt: fin },
+          fechaHoraFin: { gt: fechaHoraInicio },
+        },
+      });
+      return Boolean(c);
+    }
+
+    // Resolver el recurso: el que se pida, el único que tenga la empresa, o
+    // — cuando el panel manda "no especificar" con 2+ profesionales — el
+    // menos ocupado ese día que además esté libre justo a esa hora (ver
+    // conversación 2026-08-31: exigir elegir uno a mano bloqueaba el
+    // guardado cuando al admin no le importa quién, o no sabe de antemano
+    // quién está libre).
+    let recurso;
+    let fechaHoraFin;
+    if (recursoAgendableId) {
+      recurso = await prisma.recursoAgendable.findFirst({ where: { id: recursoAgendableId, empresaId } });
+      if (!recurso) return res.status(400).json({ error: 'recursoAgendableId no pertenece a esta empresa' });
+      const duracionMinutos = servicio?.duracionMinutos || recurso.duracionCitaMinutos || 30;
+      fechaHoraFin = new Date(fechaHoraInicio.getTime() + duracionMinutos * 60 * 1000);
+      if (await tieneConflicto(recurso.id, fechaHoraFin)) {
+        return res.status(400).json({ error: 'Hay un conflicto con otra cita en ese horario' });
+      }
+    } else {
+      // Filtra por tipo:'profesional' para calzar exactamente con la lista
+      // que ve el panel en GET /agenda/profesionales.
+      const recursos = await prisma.recursoAgendable.findMany({ where: { empresaId, tipo: 'profesional' } });
+      if (recursos.length === 0) {
+        return res.status(400).json({ error: 'La empresa no tiene ningún profesional configurado' });
+      }
+
+      const inicioDia = horaChileAFechaUTC(fecha, '00:00');
+      const finDia = horaChileAFechaUTC(fecha, '23:59');
+      const conteos = await Promise.all(
+        recursos.map((r) =>
+          prisma.cita.count({
+            where: { recursoAgendableId: r.id, estado: { not: 'CANCELADA' }, fechaHoraInicio: { gte: inicioDia, lte: finDia } },
+          })
+        )
+      );
+      const candidatos = recursos
+        .map((r, idx) => ({ r, conteo: conteos[idx] }))
+        .sort((a, b) => a.conteo - b.conteo)
+        .map((x) => x.r);
+
+      for (const candidato of candidatos) {
+        const duracionMinutos = servicio?.duracionMinutos || candidato.duracionCitaMinutos || 30;
+        const finTentativo = new Date(fechaHoraInicio.getTime() + duracionMinutos * 60 * 1000);
+        if (!(await tieneConflicto(candidato.id, finTentativo))) {
+          recurso = candidato;
+          fechaHoraFin = finTentativo;
+          break;
+        }
+      }
+
+      if (!recurso) {
+        return res.status(400).json({ error: 'Todos los profesionales tienen un conflicto de horario a esa hora' });
+      }
     }
 
     // Resolver el cliente: existente por id, existente por rut/teléfono, o nuevo.
@@ -971,7 +1089,14 @@ router.post('/citas', requireRole('ADMIN', 'RECEPCION'), async (req, res) => {
       cliente = await prisma.cliente.findFirst({ where: { id: clienteId, empresaId } });
       if (!cliente) return res.status(400).json({ error: 'clienteId no pertenece a esta empresa' });
     } else {
-      const rut = clienteNuevo.rut?.trim() || null;
+      // Normaliza igual que el flujo del bot (claude.js) — si no, "12.345.678-9"
+      // tecleado acá y "12345678-9" guardado por el bot para la misma
+      // persona no calzarían nunca en el dedupe de más abajo. Si no tiene
+      // forma de rut válido se guarda tal cual (recortado) en vez de
+      // rechazar — acá es un humano escribiendo, no la IA extrayendo de
+      // texto libre, así que no se fuerza el formato.
+      const rutTrim = clienteNuevo.rut?.trim() || null;
+      const rut = rutTrim ? (esRutValido(normalizarRut(rutTrim)) ? normalizarRut(rutTrim) : rutTrim) : null;
       const telefono = clienteNuevo.telefono?.trim() || null;
 
       if (rut) cliente = await prisma.cliente.findFirst({ where: { empresaId, rut } });
@@ -982,22 +1107,6 @@ router.post('/citas', requireRole('ADMIN', 'RECEPCION'), async (req, res) => {
           data: { empresaId, nombre: clienteNuevo.nombre.trim(), rut, telefono },
         });
       }
-    }
-
-    const duracionMinutos = servicio?.duracionMinutos || recurso.duracionCitaMinutos || 30;
-    const fechaHoraInicio = horaChileAFechaUTC(fecha, hora);
-    const fechaHoraFin = new Date(fechaHoraInicio.getTime() + duracionMinutos * 60 * 1000);
-
-    const conflicto = await prisma.cita.findFirst({
-      where: {
-        recursoAgendableId: recurso.id,
-        estado: { not: 'CANCELADA' },
-        fechaHoraInicio: { lt: fechaHoraFin },
-        fechaHoraFin: { gt: fechaHoraInicio },
-      },
-    });
-    if (conflicto) {
-      return res.status(400).json({ error: 'Hay un conflicto con otra cita en ese horario' });
     }
 
     const cita = await prisma.cita.create({

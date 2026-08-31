@@ -540,7 +540,6 @@ app.post('/webhook/whatsapp', verificarFirmaWebhookWhatsApp, async (req, res) =>
             filas: interactivo.dias.map((d) => ({
               id: codificarFilaDia(d.fecha),
               titulo: fechaLegibleDesdeISO(d.fecha),
-              descripcion: `Desde las ${d.primeraHora}`,
             })),
           }],
         });
@@ -1016,7 +1015,6 @@ app.post('/webhook/whatsapp', verificarFirmaWebhookWhatsApp, async (req, res) =>
           filas: interactivo.dias.map((d) => ({
             id: codificarFilaDia(d.fecha),
             titulo: fechaLegibleDesdeISO(d.fecha),
-            descripcion: `Desde las ${d.primeraHora}`,
           })),
         }],
       });

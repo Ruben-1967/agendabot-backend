@@ -131,7 +131,7 @@ function sumarDiasISO(fechaISO, n) {
  *
  * @returns {Promise<{fecha: string, horas: string[]}[]>}
  */
-async function obtenerProximosDiasConDisponibilidad(recursoAgendableId, cantidadDias = 4, maxDiasAExplorar = 30) {
+async function obtenerProximosDiasConDisponibilidad(recursoAgendableId, cantidadDias = 7, maxDiasAExplorar = 30) {
   // 'en-CA' da formato YYYY-MM-DD directo, ya en zona horaria de Chile.
   const hoyChileISO = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Santiago' });
 
@@ -302,7 +302,7 @@ async function obtenerHorasDisponiblesParaServicio(servicioId, fechaISO, recurso
  *
  * @returns {Promise<{fecha: string, horas: string[]}[]>}
  */
-async function obtenerProximosDiasParaServicio(servicioId, cantidadDias = 4, maxDiasAExplorar = 30, recursoAgendableId = null) {
+async function obtenerProximosDiasParaServicio(servicioId, cantidadDias = 7, maxDiasAExplorar = 30, recursoAgendableId = null) {
   const hoyChileISO = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Santiago' });
 
   const diasConCupo = [];
