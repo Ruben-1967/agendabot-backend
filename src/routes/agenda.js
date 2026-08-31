@@ -906,7 +906,9 @@ router.get('/citas', requireRole('ADMIN', 'RECEPCION'), async (req, res) => {
       nombre: c.cliente?.nombre || 'Sin asignar',
       rut: c.cliente?.rut || null,
       telefono: c.cliente?.telefono || null,
+      servicioId: c.servicioId,
       servicio: c.servicio?.nombre || 'Sin especificar',
+      recursoAgendableId: c.recursoAgendableId,
       profesional: c.recurso?.nombre || 'Sin asignar',
       estado: c.estado,
     }));
