@@ -25,6 +25,7 @@ const { requireAuth, requireRole } = require('../middleware/auth');
 const { horaChileAFechaUTC } = require('../lib/horaChile');
 
 const REGEX_HORA = /^([01]\d|2[0-3]):([0-5]\d)$/;
+const REGEX_FECHA = /^\d{4}-\d{2}-\d{2}$/;
 
 function horaAMinutos(horaStr) {
   const h = parseInt(horaStr.split(':')[0], 10);
@@ -740,6 +741,16 @@ router.patch('/citas/:id/estado', requireRole('ADMIN', 'RECEPCION'), async (req,
       return res.status(400).json({ error: `Estado inválido. Debe ser uno de: ${estadosValidos.join(', ')}` });
     }
 
+    // Validar que la cita pertenezca a la empresa del usuario ANTES de
+    // actualizar — sin esto, cualquier ADMIN/RECEPCION autenticado podía
+    // cambiar el estado de una cita de OTRA empresa con solo conocer su id
+    // (no había ningún filtro de empresaId en el update). Bug real
+    // encontrado el 2026-08-31 al construir la tabla de doble entrada.
+    const citaExistente = await prisma.cita.findFirst({ where: { id: citaId, empresaId } });
+    if (!citaExistente) {
+      return res.status(404).json({ error: 'Cita no encontrada' });
+    }
+
     // Actualizar la cita
     const cita = await prisma.cita.update({
       where: { id: citaId },
@@ -781,8 +792,13 @@ router.post('/citas/:id/reagendar', requireRole('ADMIN', 'RECEPCION'), async (re
       return res.status(404).json({ error: 'Cita no encontrada' });
     }
 
-    // Validar que pertenezca a la empresa del usuario
-    if (cita.empresa.id !== req.usuario.empresaId) {
+    // Validar que pertenezca a la empresa del usuario. Antes comparaba
+    // cita.empresa.id, pero la consulta de arriba nunca incluye la relación
+    // "empresa" (solo recurso/cliente) — cita.empresa siempre era undefined
+    // y esto tiraba un TypeError antes de llegar a validar nada, dejando
+    // este endpoint roto para toda cita. Se usa el campo escalar empresaId
+    // directo, que sí viene siempre.
+    if (cita.empresaId !== req.usuario.empresaId) {
       return res.status(403).json({ error: 'No tienes permiso' });
     }
 
@@ -810,13 +826,17 @@ router.post('/citas/:id/reagendar', requireRole('ADMIN', 'RECEPCION'), async (re
       return res.status(400).json({ error: 'Hay un conflicto con otra cita en ese horario' });
     }
 
-    // Actualizar la cita
+    // Actualizar la cita. "profesionalId" en este contexto es un
+    // recursoAgendableId (ver modelo multi-profesional: un profesional ES
+    // un RecursoAgendable) — el campo "profesionalAsignadoId" que se
+    // intentaba escribir acá antes no existe en el modelo Cita, así que
+    // esta actualización siempre fallaba con un error de Prisma.
     const citaActualizada = await prisma.cita.update({
       where: { id },
       data: {
         fechaHoraInicio: nuevaFechaHoraInicio,
         fechaHoraFin: nuevaFechaHoraFin,
-        profesionalAsignadoId: profesionalId || null,
+        ...(profesionalId && { recursoAgendableId: profesionalId }),
       },
       include: {
         cliente: true,
@@ -831,6 +851,171 @@ router.post('/citas/:id/reagendar', requireRole('ADMIN', 'RECEPCION'), async (re
   } catch (error) {
     console.error('Error en POST /agenda/citas/:id/reagendar:', error);
     res.status(500).json({ error: error.message });
+  }
+});
+
+// ============================================================
+// GET /agenda/citas?fecha=YYYY-MM-DD — citas de un día puntual (no solo
+// "hoy" como /dashboard/:empresaId), para la tabla de doble entrada del
+// panel que reemplaza el seguimiento manual en Excel.
+// ============================================================
+router.get('/citas', requireRole('ADMIN', 'RECEPCION'), async (req, res) => {
+  try {
+    const { fecha, recursoId } = req.query;
+    const empresaId = req.usuario.empresaId;
+
+    if (!fecha || !REGEX_FECHA.test(fecha)) {
+      return res.status(400).json({ error: 'Falta o es inválido el parámetro "fecha" (formato YYYY-MM-DD)' });
+    }
+
+    if (recursoId) {
+      const recursoValido = await prisma.recursoAgendable.findFirst({ where: { id: recursoId, empresaId } });
+      if (!recursoValido) {
+        return res.status(400).json({ error: 'recursoId no pertenece a esta empresa' });
+      }
+    }
+
+    const inicioDia = horaChileAFechaUTC(fecha, '00:00');
+    const finDia = horaChileAFechaUTC(fecha, '23:59');
+
+    const citas = await prisma.cita.findMany({
+      where: {
+        empresaId,
+        ...(recursoId ? { recursoAgendableId: recursoId } : {}),
+        fechaHoraInicio: { gte: inicioDia, lte: finDia },
+      },
+      include: {
+        cliente: { select: { id: true, nombre: true, rut: true, telefono: true } },
+        servicio: true,
+        recurso: true,
+      },
+      orderBy: { fechaHoraInicio: 'asc' },
+    });
+
+    const formatterHora = new Intl.DateTimeFormat('es-CL', {
+      timeZone: 'America/Santiago',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    });
+
+    const resultado = citas.map((c) => ({
+      id: c.id,
+      hora: formatterHora.format(c.fechaHoraInicio),
+      clienteId: c.clienteId,
+      nombre: c.cliente?.nombre || 'Sin asignar',
+      rut: c.cliente?.rut || null,
+      telefono: c.cliente?.telefono || null,
+      servicio: c.servicio?.nombre || 'Sin especificar',
+      profesional: c.recurso?.nombre || 'Sin asignar',
+      estado: c.estado,
+    }));
+
+    res.json({ citas: resultado });
+  } catch (error) {
+    console.error('Error en GET /agenda/citas:', error);
+    res.status(500).json({ error: 'Error al obtener las citas del día' });
+  }
+});
+
+// ============================================================
+// POST /agenda/citas — crea una cita manual (walk-in) desde el panel.
+// Si no viene clienteId, busca un Cliente existente de esta empresa por
+// rut (si viene) y si no por teléfono, antes de crear uno nuevo — para no
+// duplicar pacientes que ya se agendaron antes por WhatsApp.
+// ============================================================
+router.post('/citas', requireRole('ADMIN', 'RECEPCION'), async (req, res) => {
+  try {
+    const empresaId = req.usuario.empresaId;
+    const { fecha, hora, servicioId, recursoAgendableId, clienteId, clienteNuevo } = req.body;
+
+    if (!fecha || !REGEX_FECHA.test(fecha)) {
+      return res.status(400).json({ error: 'Falta o es inválido "fecha" (formato YYYY-MM-DD)' });
+    }
+    if (!hora || !REGEX_HORA.test(hora)) {
+      return res.status(400).json({ error: 'Falta o es inválido "hora" (formato HH:MM)' });
+    }
+    if (!clienteId && (!clienteNuevo || !clienteNuevo.nombre || !clienteNuevo.nombre.trim())) {
+      return res.status(400).json({ error: 'Falta "clienteId" o "clienteNuevo.nombre"' });
+    }
+
+    // Resolver el recurso: el que se pida, o si la empresa solo tiene uno
+    // (caso normal, ver nota de cabecera del archivo), ese por defecto.
+    let recurso;
+    if (recursoAgendableId) {
+      recurso = await prisma.recursoAgendable.findFirst({ where: { id: recursoAgendableId, empresaId } });
+      if (!recurso) return res.status(400).json({ error: 'recursoAgendableId no pertenece a esta empresa' });
+    } else {
+      // Filtra por tipo:'profesional' para calzar exactamente con la lista
+      // que ve el panel en GET /agenda/profesionales — si no, una empresa
+      // con box/equipo además de su único profesional vería acá "más de un
+      // recurso" y le pediría elegir uno que ni siquiera le muestran.
+      const recursos = await prisma.recursoAgendable.findMany({ where: { empresaId, tipo: 'profesional' } });
+      if (recursos.length !== 1) {
+        return res.status(400).json({ error: 'Falta "recursoAgendableId" (la empresa tiene más de un profesional)' });
+      }
+      [recurso] = recursos;
+    }
+
+    let servicio = null;
+    if (servicioId) {
+      servicio = await prisma.servicio.findFirst({ where: { id: servicioId, empresaId } });
+      if (!servicio) return res.status(400).json({ error: 'servicioId no pertenece a esta empresa' });
+    }
+
+    // Resolver el cliente: existente por id, existente por rut/teléfono, o nuevo.
+    let cliente;
+    if (clienteId) {
+      cliente = await prisma.cliente.findFirst({ where: { id: clienteId, empresaId } });
+      if (!cliente) return res.status(400).json({ error: 'clienteId no pertenece a esta empresa' });
+    } else {
+      const rut = clienteNuevo.rut?.trim() || null;
+      const telefono = clienteNuevo.telefono?.trim() || null;
+
+      if (rut) cliente = await prisma.cliente.findFirst({ where: { empresaId, rut } });
+      if (!cliente && telefono) cliente = await prisma.cliente.findFirst({ where: { empresaId, telefono } });
+
+      if (!cliente) {
+        cliente = await prisma.cliente.create({
+          data: { empresaId, nombre: clienteNuevo.nombre.trim(), rut, telefono },
+        });
+      }
+    }
+
+    const duracionMinutos = servicio?.duracionMinutos || recurso.duracionCitaMinutos || 30;
+    const fechaHoraInicio = horaChileAFechaUTC(fecha, hora);
+    const fechaHoraFin = new Date(fechaHoraInicio.getTime() + duracionMinutos * 60 * 1000);
+
+    const conflicto = await prisma.cita.findFirst({
+      where: {
+        recursoAgendableId: recurso.id,
+        estado: { not: 'CANCELADA' },
+        fechaHoraInicio: { lt: fechaHoraFin },
+        fechaHoraFin: { gt: fechaHoraInicio },
+      },
+    });
+    if (conflicto) {
+      return res.status(400).json({ error: 'Hay un conflicto con otra cita en ese horario' });
+    }
+
+    const cita = await prisma.cita.create({
+      data: {
+        empresaId,
+        clienteId: cliente.id,
+        recursoAgendableId: recurso.id,
+        servicioId: servicio?.id || null,
+        fechaHoraInicio,
+        fechaHoraFin,
+        estado: 'CONFIRMADA',
+        origenCanal: 'panel',
+      },
+      include: { cliente: true, servicio: true, recurso: true },
+    });
+
+    res.status(201).json({ cita });
+  } catch (error) {
+    console.error('Error en POST /agenda/citas:', error);
+    res.status(500).json({ error: 'Error al crear la cita' });
   }
 });
 
