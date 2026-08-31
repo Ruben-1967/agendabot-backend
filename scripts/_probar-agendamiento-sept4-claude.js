@@ -61,11 +61,21 @@ async function main() {
   }
   console.log('\nCliente de prueba:', cliente.id, clienteCreadoAhora ? '(recién creado)' : '(reutilizado de una corrida anterior)');
 
+  // Las frases de "tap de lista" reproducen EXACTO lo que server.js arma
+  // cuando el cliente real toca un botón (no escribe texto libre) — ver
+  // server.js líneas ~910-929: tocar un servicio se convierte en
+  // 'Quiero agendar el servicio "X".', tocar una hora en 'Confirmo que
+  // quiero agendar para el YYYY-MM-DD a las HH:MM.'. La primera versión de
+  // este script usaba texto libre inventado acá ("me sirve a las...") que
+  // NUNCA ocurre en un chat real con lista interactiva, y por eso el bot se
+  // trababa pidiendo el servicio de nuevo — no era el bug real, era la
+  // simulación mal armada.
   const historial = [];
   await turno(historial, empresa, cliente, 'Hola');
   await turno(historial, empresa, cliente, 'Quiero agendar una hora para el 4 de septiembre');
+  await turno(historial, empresa, cliente, 'Quiero agendar el servicio "Evaluación examen visual".');
   if (horasDirecto.length > 0) {
-    await turno(historial, empresa, cliente, `Me sirve a las ${horasDirecto[0]}`);
+    await turno(historial, empresa, cliente, `Confirmo que quiero agendar para el 2026-09-04 a las ${horasDirecto[0]}.`);
   }
   if (empresa.requiereRut) {
     await turno(historial, empresa, cliente, 'Mi nombre es Prueba Claude, mi rut es 11111111-1 y mi teléfono de contacto es +56900000099');
