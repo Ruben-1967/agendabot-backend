@@ -211,6 +211,26 @@ router.post('/whatsapp/conectar', requireAuth, requireRole('ADMIN'), async (req,
       return res.status(502).json({ error: 'No se pudo confirmar el número de WhatsApp con Meta', detalle: datosNumero.error?.message });
     }
 
+    // Paso 2.5: suscribir la app a los webhooks de la WABA. Se asumía que
+    // Embedded Signup hacía esto automáticamente (ver comentario en
+    // scripts/conectar-whatsapp-manual.js, que sí lo hace explícito para el
+    // Plan B) — resultó falso: Ahorróptica se conectó por este flujo oficial
+    // y el bot nunca recibió sus mensajes reales, porque Meta nunca tenía a
+    // quién avisarle. Sin este paso, ninguna conexión por Embedded Signup
+    // recibe webhooks de mensajes entrantes, sin importar qué tan bien haya
+    // salido el resto del intercambio de tokens.
+    const urlSuscripcion = `https://graph.facebook.com/${GRAPH_API_VERSION}/${encodeURIComponent(wabaId)}/subscribed_apps`;
+    const respuestaSuscripcion = await fetch(urlSuscripcion, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+    const datosSuscripcion = await respuestaSuscripcion.json();
+
+    if (!respuestaSuscripcion.ok || !datosSuscripcion.success) {
+      console.error('[EMBEDDED SIGNUP] Error al suscribir la app a los webhooks de la WABA:', JSON.stringify(datosSuscripcion));
+      return res.status(502).json({ error: 'No se pudo completar la conexión de WhatsApp (falló la suscripción a webhooks) — no se guardó nada, hay que reintentar', detalle: datosSuscripcion.error?.message });
+    }
+
     // Paso 3: guardar. whatsappToken se cifra solo (ver src/lib/prisma.js).
     const empresaActualizada = await prisma.empresa.update({
       where: { id: req.usuario.empresaId },
