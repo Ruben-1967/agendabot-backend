@@ -263,6 +263,29 @@ const agendaHoy = await prisma.cita.findMany({
     });
     const citasPorDia = Array.from(citasPorDiaMap, ([fecha, cantidad]) => ({ fecha, cantidad }));
 
+    // 7.5 CITAS PRÓXIMOS 6 DÍAS (incluye hoy) — a diferencia de citasPorDia
+    // (volumen histórico), acá interesa la carga real que queda por venir,
+    // así que se excluyen las CANCELADA (un cupo cancelado ya no está tomado).
+    const finProximosDias = new Date(hoyChile.getTime() + 6 * 24 * 60 * 60 * 1000);
+    const citasProximos6DiasRaw = await prisma.cita.findMany({
+      where: {
+        empresaId,
+        ...filtroRecurso,
+        estado: { not: 'CANCELADA' },
+        fechaHoraInicio: { gte: hoyChile, lt: finProximosDias },
+      },
+      select: { fechaHoraInicio: true },
+    });
+    const citasProximosDiasMap = new Map();
+    for (let i = 0; i < 6; i++) {
+      citasProximosDiasMap.set(fechaChileISO(new Date(hoyChile.getTime() + i * 24 * 60 * 60 * 1000)), 0);
+    }
+    citasProximos6DiasRaw.forEach((c) => {
+      const key = fechaChileISO(c.fechaHoraInicio);
+      if (citasProximosDiasMap.has(key)) citasProximosDiasMap.set(key, citasProximosDiasMap.get(key) + 1);
+    });
+    const citasProximosDias = Array.from(citasProximosDiasMap, ([fecha, cantidad]) => ({ fecha, cantidad }));
+
     // 8. ATENCIONES POR TIPO DE SERVICIO — Venta.categoriaProducto, último año
     const hace1Anio = new Date(hoyChile.getTime() - 365 * 24 * 60 * 60 * 1000);
     const ventasParaTipo = await prisma.venta.findMany({
@@ -324,6 +347,7 @@ const agendaHoy = await prisma.cita.findMany({
       montoHoy,
       montoSemana,
       atencionesHoy,
+      citasProximosDias,
       citasPorDia,
       atencionesPorTipo,
       citasPorMes,
