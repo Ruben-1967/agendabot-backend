@@ -14,4 +14,16 @@ const limitadorLogin = rateLimit({
   message: { error: 'Demasiados intentos de inicio de sesión. Intenta de nuevo en 15 minutos.' },
 });
 
-module.exports = { limitadorLogin };
+// Límite de solicitudes de reset de contraseña — 3 cada hora por IP. Cada
+// solicitud dispara un WhatsApp real al número de contacto del negocio, así
+// que además de evitar fuerza bruta/enumeración de emails, evita que se
+// pueda spamear de WhatsApp a un negocio real repitiendo la solicitud.
+const limitadorResetPassword = rateLimit({
+  windowMs: 60 * 60 * 1000, // 1 hora
+  max: 3,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Demasiadas solicitudes. Intenta de nuevo más tarde.' },
+});
+
+module.exports = { limitadorLogin, limitadorResetPassword };

@@ -1,9 +1,10 @@
 const express = require('express');
+const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const prisma = require('../lib/prisma');
 const { requireAuth, JWT_SECRET } = require('../middleware/auth');
-const { limitadorLogin } = require('../middleware/rateLimiting');
+const { limitadorLogin, limitadorResetPassword } = require('../middleware/rateLimiting');
 const { sendWhatsAppTextMessage } = require('../services/whatsapp');
 const { obtenerUrlPanelPrincipal } = require('../lib/urlPanel');
 const router = express.Router();
@@ -154,6 +155,70 @@ router.post('/activar-cuenta', async (req, res) => {
   } catch (error) {
     console.error('Error en /auth/activar-cuenta:', error);
     res.status(500).json({ error: 'Error al activar la cuenta' });
+  }
+});
+
+// ------------------------------------------------------------
+// POST /auth/solicitar-reset-password
+// body: { email }
+// Reutiliza el mismo mecanismo de tokenActivacion/tokenActivacionExpira que
+// ya usa la activación inicial de cuenta (ver POST /auth/activar-cuenta) —
+// "restablecer la contraseña" es, en la práctica, volver a emitir ese mismo
+// link de un solo uso. No requiere autenticación (el usuario, por
+// definición, no puede iniciar sesión). Siempre responde el mismo mensaje
+// genérico exista o no el email, para no revelar qué emails están
+// registrados — el envío real solo ocurre si el email existe.
+// ------------------------------------------------------------
+router.post('/solicitar-reset-password', limitadorResetPassword, async (req, res) => {
+  const MENSAJE_GENERICO = { mensaje: 'Si el email está registrado, te enviamos un link para restablecer tu contraseña por WhatsApp al número de contacto del negocio.' };
+  try {
+    const { email } = req.body;
+    if (!email) {
+      return res.status(400).json({ error: 'Falta el email' });
+    }
+
+    const usuario = await prisma.usuario.findUnique({
+      where: { email: email.toLowerCase().trim() },
+      include: { empresa: true },
+    });
+
+    if (!usuario) {
+      return res.json(MENSAJE_GENERICO);
+    }
+
+    const tokenActivacion = crypto.randomBytes(24).toString('hex');
+    // Más corto que el de activación inicial (7 días) — un link de reset
+    // solicitado a demanda no debería quedar utilizable por tanto tiempo.
+    const tokenActivacionExpira = new Date(Date.now() + 2 * 60 * 60 * 1000); // 2 horas
+
+    await prisma.usuario.update({
+      where: { id: usuario.id },
+      data: { tokenActivacion, tokenActivacionExpira },
+    });
+
+    const linkReset = `${obtenerUrlPanelPrincipal()}/activar-cuenta?token=${tokenActivacion}&tipo=reset`;
+
+    try {
+      const phoneNumberId = process.env.DEMO_PHONE_NUMBER_ID;
+      const accessToken = process.env.DEMO_WHATSAPP_ACCESS_TOKEN;
+      if (phoneNumberId && accessToken && usuario.empresa.telefonoContacto) {
+        await sendWhatsAppTextMessage({
+          phoneNumberId,
+          to: usuario.empresa.telefonoContacto,
+          text: `Recibimos una solicitud para restablecer la contraseña de tu cuenta de TotemSystem. Si fuiste tú, usa este link (válido por 2 horas) para crear una nueva: ${linkReset}\n\nSi no fuiste tú, puedes ignorar este mensaje.`,
+          accessToken,
+        });
+      } else {
+        console.error(`[solicitar-reset-password] No se pudo enviar WhatsApp a ${usuario.empresa.nombre} — falta configuración o teléfono de contacto.`);
+      }
+    } catch (errWhatsapp) {
+      console.error('[solicitar-reset-password] Error enviando WhatsApp:', errWhatsapp.message);
+    }
+
+    res.json(MENSAJE_GENERICO);
+  } catch (error) {
+    console.error('Error en /auth/solicitar-reset-password:', error);
+    res.status(500).json({ error: 'Error al procesar la solicitud' });
   }
 });
 
