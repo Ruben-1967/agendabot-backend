@@ -27,7 +27,7 @@ const prisma = require('../lib/prisma');
 const { requireAuth, requireRole } = require('../middleware/auth');
 const { horaChileAFechaUTC } = require('../lib/horaChile');
 const { normalizarRut, esRutValido } = require('../lib/rut');
-const { obtenerHorariosDisponibles } = require('../services/disponibilidad');
+const { obtenerHorariosDisponibles, obtenerHorarioDelDia } = require('../services/disponibilidad');
 const { descifrar, esValorCifrado } = require('../lib/cifrado');
 
 // Cliente.rut está cifrado en reposo (Ley 21.719, ver src/lib/prisma.js:
@@ -1139,9 +1139,7 @@ router.get('/citas', requireRole('ADMIN', 'RECEPCION'), async (req, res) => {
       const [anio, mes, dia] = fecha.split('-').map(Number);
       const diaSemana = new Date(Date.UTC(anio, mes - 1, dia)).getUTCDay();
 
-      const horarios = await prisma.horarioSemanal.findMany({
-        where: { recursoAgendableId: recursoId, diaSemana, activo: true },
-      });
+      const horarios = await obtenerHorarioDelDia(recursoId, fecha, diaSemana);
       const bloqueos = await prisma.bloqueo.findMany({
         where: { recursoAgendableId: recursoId, fechaInicio: { lte: finDia }, fechaFin: { gte: inicioDia } },
       });
