@@ -18,7 +18,7 @@ const { obtenerUrlPanelPrincipal } = require('../src/lib/urlPanel');
 const EMAIL = 'alejandro@vargas.cl';
 
 async function main() {
-  const usuario = await prisma.usuario.findUnique({ where: { email: EMAIL.toLowerCase().trim() } });
+  const usuario = await prisma.usuario.findFirst({ where: { email: { equals: EMAIL.trim(), mode: 'insensitive' } } });
   if (!usuario) {
     console.log(`No se encontró ningún Usuario con email ${EMAIL}.`);
     await prisma.$disconnect();

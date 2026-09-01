@@ -22,8 +22,15 @@ router.post('/login', limitadorLogin, async (req, res) => {
       return res.status(400).json({ error: 'Faltan email o password' });
     }
 
-   const usuario = await prisma.usuario.findUnique({
-      where: { email: email.toLowerCase().trim() },
+    // findFirst (no findUnique) para poder comparar sin distinguir
+    // mayúsculas/minúsculas — el email es @unique en el schema, así que de
+    // todas formas nunca hay más de una fila que calce. Bug real
+    // encontrado: un email guardado como "Alejandro@vargas.cl" (con
+    // mayúscula) nunca calzaba si el cliente escribía "alejandro@vargas.cl"
+    // en minúsculas al iniciar sesión — la comparación exacta anterior era
+    // sensible a mayúsculas.
+    const usuario = await prisma.usuario.findFirst({
+      where: { email: { equals: email.trim(), mode: 'insensitive' } },
       include: { empresa: { include: { rubroTemplate: true, suscripcion: true } }, recursoAgendable: true },
     });
 
@@ -177,8 +184,9 @@ router.post('/solicitar-reset-password', limitadorResetPassword, async (req, res
       return res.status(400).json({ error: 'Falta el email' });
     }
 
-    const usuario = await prisma.usuario.findUnique({
-      where: { email: email.toLowerCase().trim() },
+    // findFirst insensitive por el mismo motivo que en /login — ver nota ahí.
+    const usuario = await prisma.usuario.findFirst({
+      where: { email: { equals: email.trim(), mode: 'insensitive' } },
       include: { empresa: true },
     });
 
