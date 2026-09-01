@@ -3,6 +3,37 @@ const prisma = require('../lib/prisma');
 const { obtenerHorariosDisponibles, crearCita, obtenerProximosDiasConDisponibilidad, obtenerHorasDisponiblesParaServicio, obtenerProximosDiasParaServicio } = require('./disponibilidad');
 const { normalizarRut, esRutValido } = require('../lib/rut');
 
+// El texto que acompaña la lista de "próximos días" es fijo (ver más abajo,
+// no lo redacta el modelo) — así que una instrucción del system prompt
+// pidiendo aclarar cuando el día puntual preguntado no está disponible
+// NUNCA podía tener efecto ahí, por diseño. Reproducido en vivo 2026-09-01
+// (reporte real de Ahorróptica): cliente pregunta "¿tienen domingo?", el
+// bot solo reenvía la lista de viernes reales sin aclarar que domingo no
+// está — un cliente que no la revise con atención puede pensar que sí se
+// ofreció. Este heurístico detecta el nombre de un día de semana en el
+// último mensaje del cliente y, si ese día no aparece en los resultados
+// reales, lo aclara antes de mostrar la lista.
+const DIAS_SEMANA_SINGULAR = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'];
+const DIAS_SEMANA_PLURAL = ['domingos', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábados'];
+
+function diaSemanaDesdeFechaISO(fechaISO) {
+  const [anio, mes, dia] = fechaISO.split('-').map(Number);
+  return new Date(Date.UTC(anio, mes - 1, dia)).getUTCDay();
+}
+
+function armarTextoProximosDias(mensajeEntrante, dias) {
+  const textoNormalizado = (mensajeEntrante || '').toLowerCase();
+  const diasEnResultado = new Set(dias.map((d) => diaSemanaDesdeFechaISO(d.fecha)));
+
+  for (let i = 0; i < DIAS_SEMANA_SINGULAR.length; i++) {
+    if (textoNormalizado.includes(DIAS_SEMANA_SINGULAR[i]) && !diasEnResultado.has(i)) {
+      return `No tenemos atención los ${DIAS_SEMANA_PLURAL[i]}, pero sí tenemos disponible 👇`;
+    }
+  }
+
+  return 'Estos son los próximos días con horas disponibles. Elige el que más te acomode 👇';
+}
+
 const { fechaLegibleDesdeISO } = require('../lib/formatoFechas');
 
 const anthropic = new Anthropic({
@@ -516,7 +547,7 @@ if (response.stop_reason !== 'tool_use') {
 
     if (diasParaMostrar) {
       return {
-        texto: 'Estos son los próximos días con horas disponibles. Elige el que más te acomode 👇',
+        texto: armarTextoProximosDias(mensajeEntrante, diasParaMostrar),
         interactivo: { tipo: 'lista_dias', dias: diasParaMostrar },
       };
     }
