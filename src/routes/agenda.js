@@ -24,6 +24,25 @@ const prisma = require('../lib/prisma');
 const { requireAuth, requireRole } = require('../middleware/auth');
 const { horaChileAFechaUTC } = require('../lib/horaChile');
 const { normalizarRut, esRutValido } = require('../lib/rut');
+const { descifrar, esValorCifrado } = require('../lib/cifrado');
+
+// Cliente.rut está cifrado en reposo (Ley 21.719, ver src/lib/prisma.js:
+// CAMPOS_CIFRADOS) — la extensión de Prisma solo descifra automáticamente
+// cuando se consulta el modelo Cliente DIRECTO (prisma.cliente.findMany/...),
+// no cuando llega anidado dentro de un include de OTRO modelo (ej. cita.cliente).
+// Sin este helper, esos casos devuelven el string "enc:v1:..." crudo tal
+// cual — visto en producción en la columna Rut de Tabla de citas.
+function descifrarSiCorresponde(valor) {
+  if (valor && esValorCifrado(valor)) {
+    try {
+      return descifrar(valor);
+    } catch (error) {
+      console.error('[CIFRADO] Error descifrando rut anidado:', error.message);
+      return valor;
+    }
+  }
+  return valor;
+}
 
 const REGEX_HORA = /^([01]\d|2[0-3]):([0-5]\d)$/;
 const REGEX_FECHA = /^\d{4}-\d{2}-\d{2}$/;
@@ -199,6 +218,7 @@ const agendaHoy = await prisma.cita.findMany({
         id: true,
         nombre: true,
         telefono: true,
+        rut: true,
         fichaJson: true,
       },
     },
@@ -228,7 +248,7 @@ const agendaHoy = await prisma.cita.findMany({
         profesional: cita.recurso?.nombre || 'Sin asignar',
         estado: cita.estado,
         telefono: cita.cliente?.telefono || null,
-        rut: cita.cliente?.rut || null,
+        rut: descifrarSiCorresponde(cita.cliente?.rut) || null,
         notas: null,
       };
     });
@@ -915,7 +935,7 @@ router.get('/citas', requireRole('ADMIN', 'RECEPCION'), async (req, res) => {
       hora: formatterHora.format(c.fechaHoraInicio),
       clienteId: c.clienteId,
       nombre: c.cliente?.nombre || 'Sin asignar',
-      rut: c.cliente?.rut || null,
+      rut: descifrarSiCorresponde(c.cliente?.rut) || null,
       telefono: c.cliente?.telefono || null,
       servicioId: c.servicioId,
       servicio: c.servicio?.nombre || 'Sin especificar',
@@ -1099,7 +1119,20 @@ router.post('/citas', requireRole('ADMIN', 'RECEPCION'), async (req, res) => {
       const rut = rutTrim ? (esRutValido(normalizarRut(rutTrim)) ? normalizarRut(rutTrim) : rutTrim) : null;
       const telefono = clienteNuevo.telefono?.trim() || null;
 
-      if (rut) cliente = await prisma.cliente.findFirst({ where: { empresaId, rut } });
+      // Cliente.rut está cifrado en reposo con AES-256-GCM e IV aleatorio
+      // (Ley 21.719, ver src/lib/prisma.js) — el mismo rut en texto plano
+      // produce un ciphertext DISTINTO cada vez que se cifra, así que un
+      // "where: { rut }" nunca puede calzar contra lo guardado (comparaba
+      // texto plano contra ciphertext, literalmente imposible que matcheen).
+      // El dedupe por rut se quedó silenciosamente roto en cuanto se activó
+      // el cifrado — nunca reusaba al paciente, creaba uno nuevo cada vez.
+      // Única forma correcta: traer los candidatos (ya descifrados por la
+      // extensión de Prisma, por ser consulta directa al modelo Cliente) y
+      // comparar en JS.
+      if (rut) {
+        const candidatosPorRut = await prisma.cliente.findMany({ where: { empresaId, rut: { not: null } } });
+        cliente = candidatosPorRut.find((c) => c.rut === rut) || null;
+      }
       if (!cliente && telefono) cliente = await prisma.cliente.findFirst({ where: { empresaId, telefono } });
 
       if (!cliente) {
@@ -1122,6 +1155,14 @@ router.post('/citas', requireRole('ADMIN', 'RECEPCION'), async (req, res) => {
       },
       include: { cliente: true, servicio: true, recurso: true },
     });
+
+    // Mismo caso de cliente anidado sin descifrar automáticamente (ver
+    // descifrarSiCorresponde arriba) — acá no se usa hoy desde el panel,
+    // pero se corrige igual para no dejar ciphertext crudo en ninguna
+    // respuesta de la API.
+    if (cita.cliente) {
+      cita.cliente.rut = descifrarSiCorresponde(cita.cliente.rut);
+    }
 
     res.status(201).json({ cita });
   } catch (error) {
