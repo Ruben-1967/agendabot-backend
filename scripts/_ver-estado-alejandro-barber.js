@@ -11,8 +11,28 @@ require('dotenv').config();
 const prisma = require('../src/lib/prisma');
 
 async function main() {
-  const empresa = await prisma.empresa.findFirst({
+  // Primero se listan TODAS las empresas que calzan con "Barber" — la
+  // corrida anterior de este script agarró una empresa DEMO vacía en vez
+  // de la real (hay más de una fila con "Barber" en el nombre: la demo
+  // original del prospecto y la empresa real creada al convertirlo).
+  const candidatas = await prisma.empresa.findMany({
     where: { nombre: { contains: 'Barber', mode: 'insensitive' } },
+    select: { id: true, nombre: true, esDemo: true, creadoEn: true },
+  });
+  console.log('Empresas que calzan con "Barber":');
+  candidatas.forEach((c) => console.log(`- id=${c.id} nombre="${c.nombre}" esDemo=${c.esDemo} creadoEn=${c.creadoEn.toISOString()}`));
+  console.log('');
+
+  // La real es la que NO es demo (o, si hay varias no-demo, la más nueva).
+  const real = candidatas.filter((c) => !c.esDemo).sort((a, b) => b.creadoEn - a.creadoEn)[0];
+  if (!real) {
+    console.log('Ninguna de las candidatas es una empresa real (todas esDemo=true).');
+    await prisma.$disconnect();
+    return;
+  }
+
+  const empresa = await prisma.empresa.findUnique({
+    where: { id: real.id },
     include: {
       rubroTemplate: true,
       suscripcion: true,
@@ -21,12 +41,6 @@ async function main() {
       usuarios: { select: { nombre: true, email: true, rol: true, tokenActivacion: true, fechaActivacionCuenta: true } },
     },
   });
-
-  if (!empresa) {
-    console.log('No se encontró ninguna empresa con "Barber" en el nombre.');
-    await prisma.$disconnect();
-    return;
-  }
 
   console.log(`=== ${empresa.nombre} (id=${empresa.id}) ===\n`);
 
