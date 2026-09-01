@@ -1145,7 +1145,11 @@ router.get('/citas', requireRole('ADMIN', 'RECEPCION'), async (req, res) => {
       });
 
       const duracion = recurso.duracionCitaMinutos;
-      const horasConCita = new Set(resultado.map((r) => r.hora));
+      // Una cita CANCELADA libera la hora — no debe seguir bloqueando que
+      // se genere la fila "Disponible" en su lugar. Reportado por
+      // Ahorróptica 2026-09-01: al liberar una hora, quedaba un remanente
+      // gris permanente en vez de verse disponible de nuevo.
+      const horasConCita = new Set(resultado.filter((r) => r.estado !== 'CANCELADA').map((r) => r.hora));
 
       for (const bloque of horarios) {
         let cursor = horaAMinutosLocal(bloque.horaInicio);
