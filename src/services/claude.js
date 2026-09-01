@@ -35,6 +35,7 @@ function armarTextoProximosDias(mensajeEntrante, dias) {
 }
 
 const { fechaLegibleDesdeISO } = require('../lib/formatoFechas');
+const { MAX_FILAS_LISTA_INTERACTIVA } = require('./whatsapp');
 
 const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY,
@@ -539,8 +540,20 @@ if (response.stop_reason !== 'tool_use') {
 
     if (horariosParaMostrar) {
       const fechaLegible = fechaLegibleDesdeISO(horariosParaMostrar.fecha);
+      const horas = horariosParaMostrar.horas;
+      // El texto debe enumerar como máximo las mismas horas que van a
+      // aparecer como opciones seleccionables en la lista interactiva de
+      // WhatsApp — Meta limita esa lista a MAX_FILAS_LISTA_INTERACTIVA filas
+      // (ver whatsapp.js), así que enumerar más horas en el texto que en la
+      // lista confundía al cliente (veía escrita una hora, ej. "12:15", que
+      // después no aparecía como opción al tocar la lista). Reportado por
+      // Ahorróptica 2026-09-01.
+      const horasEnLista = horas.slice(0, MAX_FILAS_LISTA_INTERACTIVA);
+      const hayMas = horas.length > horasEnLista.length;
       return {
-        texto: `Estos son los horarios disponibles para el ${fechaLegible}: ${horariosParaMostrar.horas.join(', ')}. Elige el que más te acomode 👇`,
+        texto: hayMas
+          ? `Estos son algunos de los horarios disponibles para el ${fechaLegible}: ${horasEnLista.join(', ')}. Elige el que más te acomode 👇 (si prefieres un horario más tarde ese día, cuéntame)`
+          : `Estos son los horarios disponibles para el ${fechaLegible}: ${horasEnLista.join(', ')}. Elige el que más te acomode 👇`,
         interactivo: { tipo: 'lista_horarios', fecha: horariosParaMostrar.fecha, horas: horariosParaMostrar.horas },
       };
     }

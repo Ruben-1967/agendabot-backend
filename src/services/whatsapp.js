@@ -3,6 +3,13 @@
 
 const GRAPH_API_VERSION = 'v21.0';
 
+// Meta limita las listas interactivas a 10 filas EN TOTAL sumando todas las
+// secciones (no 10 por sección) — cualquier texto que enumere opciones que
+// terminarán en una lista interactiva (ej. horarios disponibles en
+// claude.js) debe usar esta misma constante para no ofrecer en el texto
+// opciones que después no aparecen como seleccionables en la lista.
+const MAX_FILAS_LISTA_INTERACTIVA = 10;
+
 /**
  * Envía un mensaje de texto simple por WhatsApp.
  *
@@ -169,11 +176,10 @@ async function sendWhatsAppInteractiveList({
 }) {
   const url = `https://graph.facebook.com/${GRAPH_API_VERSION}/${phoneNumberId}/messages`;
 
-  // Meta limita a 10 filas EN TOTAL sumando todas las secciones (no 10 por
-  // sección) — repartimos el cupo entre secciones en el orden recibido y
-  // cortamos ahí, en vez de mandar una lista que la API rechazaría.
-  const MAX_FILAS_TOTAL = 10;
-  let filasRestantes = MAX_FILAS_TOTAL;
+  // Repartimos el cupo de MAX_FILAS_LISTA_INTERACTIVA entre secciones en el
+  // orden recibido y cortamos ahí, en vez de mandar una lista que la API
+  // rechazaría.
+  let filasRestantes = MAX_FILAS_LISTA_INTERACTIVA;
   const seccionesFinales = secciones && secciones.length > 0
     ? secciones
         .slice(0, 10)
@@ -192,7 +198,7 @@ async function sendWhatsAppInteractiveList({
         .filter((seccion) => seccion.rows.length > 0)
     : [{
         title: 'Disponible hoy',
-        rows: (filas || []).slice(0, MAX_FILAS_TOTAL).map((fila) => ({
+        rows: (filas || []).slice(0, MAX_FILAS_LISTA_INTERACTIVA).map((fila) => ({
           id: fila.id,
           title: fila.titulo.slice(0, 24),
           description: fila.descripcion ? fila.descripcion.slice(0, 72) : undefined,
@@ -462,6 +468,7 @@ function decodificarBotonCategoriaGenerica(id) {
 }
 
 module.exports = {
+  MAX_FILAS_LISTA_INTERACTIVA,
   sendWhatsAppTextMessage,
   sendWhatsAppTemplateMessage,
   sendWhatsAppImageMessage,
