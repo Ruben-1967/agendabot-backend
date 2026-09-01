@@ -45,10 +45,18 @@ async function obtenerHorariosDisponibles(recursoAgendableId, fechaISO) {
     return [];
   }
 
-  // 2. Traer los bloques de horario semanal activos para ese día
-  const horarios = await prisma.horarioSemanal.findMany({
-    where: { recursoAgendableId, diaSemana, activo: true },
+  // 2. Horario del día: si hay una excepción puntual para esta fecha exacta
+  // (negocios con horario variable, ver HorarioExcepcion en schema.prisma),
+  // manda ella; si no, la plantilla semanal de siempre.
+  const excepcion = await prisma.horarioExcepcion.findUnique({
+    where: { recursoAgendableId_fecha: { recursoAgendableId, fecha: fechaISO } },
   });
+
+  const horarios = excepcion
+    ? [{ horaInicio: excepcion.horaInicio, horaFin: excepcion.horaFin }]
+    : await prisma.horarioSemanal.findMany({
+        where: { recursoAgendableId, diaSemana, activo: true },
+      });
 
   if (horarios.length === 0) {
     return []; // el negocio no atiende ese día de la semana

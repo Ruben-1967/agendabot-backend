@@ -205,6 +205,7 @@ model RecursoAgendable {
   horizonteAgendaDias   Int @default(28)
 
   horarios     HorarioSemanal[]
+  excepciones  HorarioExcepcion[]
   bloqueos     Bloqueo[]
   citas        Cita[]
   usuarios     Usuario[]
@@ -225,6 +226,24 @@ model HorarioSemanal {
   horaFin    String   // "13:00"
   activo     Boolean  @default(true)
 
+  @@index([recursoAgendableId])
+}
+
+// Horario puntual para UNA fecha exacta, que reemplaza al HorarioSemanal
+// solo ese día — permite negocios con horario variable (rotan de semana en
+// semana) sin dejar de tener días "fijos" gobernados por la plantilla de
+// siempre: un día se vuelve "variable" el momento en que se le crea una
+// excepción, nada más. Para cerrar un día completo se sigue usando Bloqueo.
+model HorarioExcepcion {
+  id                 String   @id @default(uuid())
+  recurso            RecursoAgendable @relation(fields: [recursoAgendableId], references: [id])
+  recursoAgendableId String
+
+  fecha      String   // "YYYY-MM-DD", mismo formato que usa disponibilidad.js
+  horaInicio String   // "09:00"
+  horaFin    String   // "13:00"
+
+  @@unique([recursoAgendableId, fecha])
   @@index([recursoAgendableId])
 }
 

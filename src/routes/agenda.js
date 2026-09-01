@@ -17,6 +17,9 @@
 // PUT    /agenda/horarios          -> reemplaza el horario semanal completo
 // POST   /agenda/bloqueos          -> crea un bloqueo (vacaciones, feriado, etc.)
 // DELETE /agenda/bloqueos/:id      -> elimina un bloqueo
+// GET    /agenda/excepciones/:recursoId -> lista excepciones de horario (horario variable)
+// PUT    /agenda/excepciones       -> crea/reemplaza el horario de una fecha puntual
+// DELETE /agenda/excepciones/:id   -> elimina una excepción (el día vuelve a la plantilla)
 
 const express = require('express');
 const router = express.Router();
@@ -24,6 +27,7 @@ const prisma = require('../lib/prisma');
 const { requireAuth, requireRole } = require('../middleware/auth');
 const { horaChileAFechaUTC } = require('../lib/horaChile');
 const { normalizarRut, esRutValido } = require('../lib/rut');
+const { obtenerHorariosDisponibles } = require('../services/disponibilidad');
 const { descifrar, esValorCifrado } = require('../lib/cifrado');
 
 // Cliente.rut está cifrado en reposo (Ley 21.719, ver src/lib/prisma.js:
@@ -756,6 +760,137 @@ router.delete('/bloqueos/:id', requireRole('ADMIN'), async (req, res) => {
   }
 });
 
+// ------------------------------------------------------------
+// GET /agenda/excepciones/:recursoId?desde=YYYY-MM-DD&hasta=YYYY-MM-DD
+// Lista las excepciones de horario (fechas puntuales con horario distinto
+// a la plantilla semanal, ver HorarioExcepcion en schema.prisma) de un
+// recurso, para pintarlas en el calendario de Configuración de agenda.
+// ------------------------------------------------------------
+router.get('/excepciones/:recursoId', requireRole('ADMIN'), async (req, res) => {
+  try {
+    const empresaId = req.usuario.empresaId;
+    const { recursoId } = req.params;
+    const { desde, hasta } = req.query;
+
+    const recurso = await prisma.recursoAgendable.findFirst({ where: { id: recursoId, empresaId } });
+    if (!recurso) {
+      return res.status(404).json({ error: 'Recurso no encontrado' });
+    }
+
+    const where = { recursoAgendableId: recursoId };
+    if (desde || hasta) {
+      where.fecha = {};
+      if (desde) where.fecha.gte = desde;
+      if (hasta) where.fecha.lte = hasta;
+    }
+
+    const excepciones = await prisma.horarioExcepcion.findMany({ where, orderBy: { fecha: 'asc' } });
+    res.json({ excepciones });
+  } catch (error) {
+    console.error('Error en GET /agenda/excepciones/:recursoId:', error);
+    res.status(500).json({ error: 'Error al obtener las excepciones de horario' });
+  }
+});
+
+// ------------------------------------------------------------
+// PUT /agenda/excepciones — crea o reemplaza el horario de UNA fecha
+// puntual para un recurso (negocios con horario variable). Upsert por
+// [recursoAgendableId, fecha]: si la fecha ya tenía una excepción, se
+// reemplaza.
+// body: { recursoAgendableId, fecha, horaInicio, horaFin }
+//
+// Si el nuevo horario deja fuera de rango citas ya agendadas ese día, NO se
+// bloquea el guardado — se informan como citasEnConflicto para que el admin
+// las reagende manualmente desde Tabla de citas (nunca se cancelan solas ni
+// se avisa nada por WhatsApp de forma automática).
+// ------------------------------------------------------------
+router.put('/excepciones', requireRole('ADMIN'), async (req, res) => {
+  try {
+    const empresaId = req.usuario.empresaId;
+    const { recursoAgendableId, fecha, horaInicio, horaFin } = req.body;
+
+    if (!recursoAgendableId || !fecha || !horaInicio || !horaFin) {
+      return res.status(400).json({ error: 'Faltan recursoAgendableId, fecha, horaInicio y/o horaFin' });
+    }
+    if (!REGEX_FECHA.test(fecha)) {
+      return res.status(400).json({ error: 'fecha inválida, usa formato YYYY-MM-DD' });
+    }
+    if (!REGEX_HORA.test(horaInicio) || !REGEX_HORA.test(horaFin)) {
+      return res.status(400).json({ error: 'Horas inválidas, usa formato HH:MM' });
+    }
+    if (horaAMinutos(horaInicio) >= horaAMinutos(horaFin)) {
+      return res.status(400).json({ error: 'La hora de inicio debe ser antes que la de fin' });
+    }
+
+    const recurso = await prisma.recursoAgendable.findFirst({ where: { id: recursoAgendableId, empresaId } });
+    if (!recurso) {
+      return res.status(404).json({ error: 'Recurso no encontrado' });
+    }
+
+    const excepcion = await prisma.horarioExcepcion.upsert({
+      where: { recursoAgendableId_fecha: { recursoAgendableId, fecha } },
+      update: { horaInicio, horaFin },
+      create: { recursoAgendableId, fecha, horaInicio, horaFin },
+    });
+
+    // Citas ya agendadas ese día que el nuevo horario deja fuera de rango
+    // (empiezan antes del nuevo inicio, o terminan después del nuevo fin).
+    const inicioDia = horaChileAFechaUTC(fecha, '00:00');
+    const finDia = horaChileAFechaUTC(fecha, '23:59');
+    const citasDelDia = await prisma.cita.findMany({
+      where: {
+        recursoAgendableId,
+        fechaHoraInicio: { gte: inicioDia, lte: finDia },
+        estado: { in: ['PENDIENTE', 'CONFIRMADA'] },
+      },
+      include: { cliente: { select: { nombre: true } } },
+    });
+
+    const formatterHora = new Intl.DateTimeFormat('es-CL', {
+      timeZone: 'America/Santiago',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    });
+    const inicioMin = horaAMinutos(horaInicio);
+    const finMin = horaAMinutos(horaFin);
+    const citasEnConflicto = citasDelDia
+      .map((c) => ({
+        id: c.id,
+        nombre: c.cliente?.nombre || 'Sin nombre',
+        hora: formatterHora.format(c.fechaHoraInicio),
+        horaFin: formatterHora.format(c.fechaHoraFin),
+      }))
+      .filter((c) => horaAMinutos(c.hora) < inicioMin || horaAMinutos(c.horaFin) > finMin);
+
+    res.json({ excepcion, citasEnConflicto });
+  } catch (error) {
+    console.error('Error en PUT /agenda/excepciones:', error);
+    res.status(500).json({ error: 'Error al guardar la excepción de horario' });
+  }
+});
+
+// ------------------------------------------------------------
+// DELETE /agenda/excepciones/:id — quita la excepción puntual; el día
+// vuelve a regirse por la plantilla semanal de siempre.
+// ------------------------------------------------------------
+router.delete('/excepciones/:id', requireRole('ADMIN'), async (req, res) => {
+  try {
+    const empresaId = req.usuario.empresaId;
+    const excepcion = await prisma.horarioExcepcion.findFirst({
+      where: { id: req.params.id, recurso: { empresaId } },
+    });
+    if (!excepcion) {
+      return res.status(404).json({ error: 'Excepción no encontrada' });
+    }
+    await prisma.horarioExcepcion.delete({ where: { id: excepcion.id } });
+    res.json({ ok: true });
+  } catch (error) {
+    console.error('Error en DELETE /agenda/excepciones/:id:', error);
+    res.status(500).json({ error: 'Error al eliminar la excepción' });
+  }
+});
+
 // ============================================================
 // PATCH /agenda/citas/:id/estado — cambiar estado de una cita
 // body: { estado: 'CONFIRMADA' | 'COMPLETADA' | 'CANCELADA' | 'NO_ASISTIO' }
@@ -802,6 +937,40 @@ router.patch('/citas/:id/estado', requireRole('ADMIN', 'RECEPCION'), async (req,
   }
 });
 
+// ------------------------------------------------------------
+// GET /agenda/disponibilidad/:recursoId?fecha=YYYY-MM-DD — horas libres de
+// un recurso en una fecha puntual, usando el motor real de disponibilidad
+// (src/services/disponibilidad.js, el mismo que usa el bot — ya respeta
+// HorarioExcepcion). Alimenta el selector de "Reagendar" de Tabla de citas.
+//
+// NO usar /disponibilidad/:recursoId (src/routes/disponibilidad.js) para
+// esto — ese endpoint depende de disponibilidadService.js, que quedó de un
+// diseño "Opción C" nunca migrado al schema actual (usa modelos Profesional
+// / BloqueoProfesional que no existen) y falla en cuanto se lo llama.
+// ------------------------------------------------------------
+router.get('/disponibilidad/:recursoId', requireRole('ADMIN', 'RECEPCION'), async (req, res) => {
+  try {
+    const empresaId = req.usuario.empresaId;
+    const { recursoId } = req.params;
+    const { fecha } = req.query;
+
+    if (!fecha || !REGEX_FECHA.test(fecha)) {
+      return res.status(400).json({ error: 'Falta o es inválido el parámetro "fecha" (formato YYYY-MM-DD)' });
+    }
+
+    const recurso = await prisma.recursoAgendable.findFirst({ where: { id: recursoId, empresaId } });
+    if (!recurso) {
+      return res.status(404).json({ error: 'Recurso no encontrado' });
+    }
+
+    const horas = await obtenerHorariosDisponibles(recursoId, fecha);
+    res.json({ horas });
+  } catch (error) {
+    console.error('Error en GET /agenda/disponibilidad/:recursoId:', error);
+    res.status(500).json({ error: 'Error al obtener disponibilidad' });
+  }
+});
+
 // POST /agenda/citas/:id/reagendar
 // Reagenda una cita a una nueva fecha/hora
 router.post('/citas/:id/reagendar', requireRole('ADMIN', 'RECEPCION'), async (req, res) => {
@@ -833,11 +1002,18 @@ router.post('/citas/:id/reagendar', requireRole('ADMIN', 'RECEPCION'), async (re
       return res.status(403).json({ error: 'No tienes permiso' });
     }
 
-    // Parsear la nueva fecha/hora
-    const [año, mes, día] = nuevaFecha.split('-').map(Number);
-    const [hora, minutos] = nuevaHora.split(':').map(Number);
+    if (!REGEX_FECHA.test(nuevaFecha) || !REGEX_HORA.test(nuevaHora)) {
+      return res.status(400).json({ error: 'nuevaFecha/nuevaHora inválidas, usa YYYY-MM-DD y HH:MM' });
+    }
 
-    const nuevaFechaHoraInicio = new Date(año, mes - 1, día, hora, minutos, 0);
+    // Antes se armaba con `new Date(año, mes-1, día, hora, minutos, 0)`, que
+    // interpreta esos valores en la zona horaria LOCAL DEL SERVIDOR (UTC en
+    // Render) en vez de Chile — la misma clase de bug que horaChileAFechaUTC
+    // existe para evitar en todo el resto del código (ver src/lib/horaChile.js).
+    // Reagendar para "09:00" terminaba guardando la cita a las 09:00 UTC
+    // (06:00 en Chile), corrido varias horas. Nunca se notó porque el fix
+    // anterior de este endpoint solo se verificó por inspección de código.
+    const nuevaFechaHoraInicio = horaChileAFechaUTC(nuevaFecha, nuevaHora);
     const nuevaFechaHoraFin = new Date(
       nuevaFechaHoraInicio.getTime() + (cita.recurso.duracionCitaMinutos || 30) * 60 * 1000
     );
