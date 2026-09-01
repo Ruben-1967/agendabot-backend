@@ -478,8 +478,13 @@ ${empresa.requiereRut ? '- Este negocio EXIGE nombre completo, RUT y teléfono d
   // pregunta informativa posterior sobre una cita YA agendada de verdad
   // (ej. "¿quedó confirmada mi hora?"), que no debe volver a llamar la
   // herramienta.
+  // Regex deliberadamente amplio: el modelo redacta esta recapitulación
+  // con sus propias palabras cada vez (ej. "¿Todo correcto?", "¿Todo está
+  // correcto?", "¿Está todo bien así?") — un patrón rígido calzaba con la
+  // primera variante y no con la segunda, dejando pasar el bug real en una
+  // corrida de prueba real (7/8 detectado, 1/8 se le escapó por esto).
   const ultimoTurnoBot = [...historial].reverse().find((m) => m.rol === 'asistente');
-  const veniaDeRecapitulacion = /todo correcto|confirma y agendo|¿confirmas/i.test(ultimoTurnoBot?.contenido || '');
+  const veniaDeRecapitulacion = /correcto\s*[?¿✓]|¿confirmas|confirma.{0,20}agend/i.test(ultimoTurnoBot?.contenido || '');
   const pareceConfirmacionDeCita = (texto) =>
     veniaDeRecapitulacion && /tu cita (ha sido|está|quedó)|cita (ha sido |fue )?agendada|resumen de tu cita|¡listo!/i.test(texto || '');
 
