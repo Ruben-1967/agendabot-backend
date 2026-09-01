@@ -925,7 +925,12 @@ app.post('/webhook/whatsapp', verificarFirmaWebhookWhatsApp, async (req, res) =>
           if (!horarioElegido) {
             return;
           }
-          textoEntrante = `Confirmo que quiero agendar para el ${horarioElegido.fecha} a las ${horarioElegido.hora}.`;
+          // Se incluye la fecha ya en español (no solo el ISO crudo) para
+          // que el modelo, al redactar la confirmación final, no tenga que
+          // calcular él mismo qué día de la semana es esa fecha — eso puede
+          // salir mal (Ahorróptica reportó una confirmación real que decía
+          // "sábado 12 de septiembre" para una cita agendada un viernes).
+          textoEntrante = `Confirmo que quiero agendar para el ${fechaLegibleDesdeISO(horarioElegido.fecha)} (${horarioElegido.fecha}) a las ${horarioElegido.hora}.`;
         }
       }
     } else {

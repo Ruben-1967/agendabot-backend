@@ -301,7 +301,11 @@ async function ejecutarHerramienta(nombre, input, contexto) {
         fechaISO: input.fecha,
         horaInicio: input.hora,
       });
-      return { exito: true, citaId: cita.id, fecha: input.fecha, hora: input.hora };
+      // fechaLegible (en español, con día de la semana correcto) para que
+      // la confirmación final la reutilice tal cual en vez de calcular ella
+      // misma el día de semana a partir del ISO — ver nota en server.js
+      // sobre la confirmación real que llegó con el día equivocado.
+      return { exito: true, citaId: cita.id, fecha: input.fecha, fechaLegible: fechaLegibleDesdeISO(input.fecha), hora: input.hora };
     } catch (err) {
       if (err.message === 'HORARIO_YA_NO_DISPONIBLE') {
         return { exito: false, error: 'Ese horario ya no está disponible, ofrece otra alternativa.' };
@@ -452,6 +456,7 @@ ${instruccionesCatalogo}- En cuanto sepas el servicio (aunque sea en el mismo me
 ${empresa.requiereRut ? '- Este negocio EXIGE nombre completo, RUT y teléfono de contacto para agendar. Antes de llamar a agendar_cita, además de fecha/hora/servicio, pide estos 3 datos si aún no los tienes en la conversación — NUNCA asumas el nombre a partir del perfil de WhatsApp del contacto, NUNCA asumas el teléfono a partir del número desde el que te escribe (puede ser distinto, ej. alguien agendando por otra persona), siempre pregúntalos explícitamente.\n' : ''}- Una vez que el cliente confirme fecha, hora${empresa.requiereRut ? ', servicio, nombre, RUT y teléfono' : ' y servicio'} específicos, usa agendar_cita para crear la cita de verdad. El campo "servicio" debe ser exactamente uno de los nombres de la lista SERVICIOS AGENDABLES.
 - Si agendar_cita falla porque el horario ya no está disponible, discúlpate y ofrece consultar otra hora.
 - Cuando confirmes una cita agendada, NUNCA muestres el "citaId" (es un identificador interno de la base de datos, sin ningún valor para el cliente) — el resumen debe incluir solo servicio, fecha, hora, y dirección si corresponde.
+- Para la fecha del resumen, usa TAL CUAL el texto "fechaLegible" que te devuelve agendar_cita (o la fecha en español que ya te haya escrito el cliente al confirmar) — NUNCA calcules tú mismo a qué día de la semana corresponde una fecha ISO (ej. "2026-09-04"), es un cálculo que puedes hacer mal y ya generó una confirmación real con el día de la semana equivocado.
 - Si el cliente pregunta algo que no está cubierto en la información de este mensaje (precios, condiciones, detalles clínicos), no inventes: dile que lo puede confirmar directamente con el negocio.
 - No des información médica ni de salud como si fueras un profesional — solo agenda.`;
 
@@ -479,6 +484,9 @@ ${empresa.requiereRut ? '- Este negocio EXIGE nombre completo, RUT y teléfono d
 
 if (response.stop_reason !== 'tool_use') {
       const textBlock = response.content.find((b) => b.type === 'text');
+      // DEBUG TEMPORAL — investigando por qué agendar_cita a veces no se
+      // ejecuta en el turno de confirmación (ver script _reproducir-cita-fantasma.js).
+      console.log('[DEBUG agendar_cita] Turno terminó SIN llamar ninguna herramienta. stop_reason:', response.stop_reason, '| texto:', (textBlock?.text || '').slice(0, 120));
       return { texto: textBlock ? textBlock.text : 'Disculpa, ¿puedes repetir tu mensaje?', interactivo: null };
     }
 
@@ -491,6 +499,7 @@ if (response.stop_reason !== 'tool_use') {
     let diasParaMostrar = null;
     let serviciosParaMostrar = null;
     let catalogoParaMostrar = null;
+    let citaAgendadaConExito = null;
 
     for (const block of response.content) {
       if (block.type === 'tool_use') {
@@ -528,7 +537,31 @@ if (response.stop_reason !== 'tool_use') {
         if (block.name === 'mostrar_catalogo_visual' && resultado.items?.length > 0) {
           catalogoParaMostrar = resultado;
         }
+
+        // Si agendar_cita tuvo éxito, cortamos el ciclo igual que los demás
+        // atajos: el backend arma la confirmación con los datos reales que
+        // devolvió la herramienta, en vez de dejar que Claude la redacte.
+        // Encontrado un caso real (Ahorróptica, cliente "yaye", 2026-09-01):
+        // Claude le dijo al cliente "¡Listo! Tu cita ha sido agendada
+        // exitosamente" con un resumen completo, pero agendar_cita nunca se
+        // había ejecutado en ese turno (o su resultado se ignoró) — el
+        // Cliente quedó con 0 citas reales en la base. Reproducido en vivo
+        // con el mismo guion de mensajes. Si en cambio falla (horario ya
+        // no disponible), se deja seguir el ciclo normal para que Claude
+        // pueda ofrecer una alternativa de forma natural.
+        if (block.name === 'agendar_cita' && resultado.exito) {
+          citaAgendadaConExito = { input: block.input, resultado };
+        }
       }
+    }
+
+    if (citaAgendadaConExito) {
+      const { input, resultado } = citaAgendadaConExito;
+      const fechaLegible = resultado.fechaLegible;
+      return {
+        texto: `¡Listo! Tu cita ha sido agendada exitosamente 🎉\n\n*Resumen de tu cita:*\n📋 *Servicio:* ${input.servicio}\n📅 *Fecha:* ${fechaLegible}\n🕐 *Hora:* ${input.hora}${empresa.direccion ? `\n📍 *Ubicación:* ${empresa.direccion}` : ''}${empresa.notaAgendamiento ? `\n\n${empresa.notaAgendamiento}` : ''}`,
+        interactivo: null,
+      };
     }
 
     if (serviciosParaMostrar) {
