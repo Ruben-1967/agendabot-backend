@@ -470,24 +470,53 @@ ${empresa.requiereRut ? '- Este negocio EXIGE nombre completo, RUT y teléfono d
 
   const contexto = { empresa, cliente, recurso, serviciosReales };
 
+  // Detecta si un texto suena a que una cita quedó agendada — usado para no
+  // confiar en una confirmación que el modelo redactó SIN haber llamado a
+  // agendar_cita en ese turno (ver forzarAgendarCita más abajo). Solo se
+  // considera si el turno anterior del bot fue la recapitulación pidiendo
+  // confirmación final (ej. "¿Todo correcto?") — así no se dispara ante una
+  // pregunta informativa posterior sobre una cita YA agendada de verdad
+  // (ej. "¿quedó confirmada mi hora?"), que no debe volver a llamar la
+  // herramienta.
+  const ultimoTurnoBot = [...historial].reverse().find((m) => m.rol === 'asistente');
+  const veniaDeRecapitulacion = /todo correcto|confirma y agendo|¿confirmas/i.test(ultimoTurnoBot?.contenido || '');
+  const pareceConfirmacionDeCita = (texto) =>
+    veniaDeRecapitulacion && /tu cita (ha sido|está|quedó)|cita (ha sido |fue )?agendada|resumen de tu cita|¡listo!/i.test(texto || '');
+
   // Bucle de tool use: Claude puede pedir usar una herramienta varias veces
   // seguidas (ej. consultar disponibilidad y luego agendar) antes de dar
   // la respuesta final en texto.
+  let forzarAgendarCita = false;
   for (let intentos = 0; intentos < 5; intentos++) {
     const response = await anthropic.messages.create({
       model: MODEL,
       max_tokens: 500,
       system: systemPrompt,
       tools,
+      ...(forzarAgendarCita ? { tool_choice: { type: 'tool', name: 'agendar_cita' } } : {}),
       messages,
     });
+    forzarAgendarCita = false;
 
-if (response.stop_reason !== 'tool_use') {
+    if (response.stop_reason !== 'tool_use') {
       const textBlock = response.content.find((b) => b.type === 'text');
-      // DEBUG TEMPORAL — investigando por qué agendar_cita a veces no se
-      // ejecuta en el turno de confirmación (ver script _reproducir-cita-fantasma.js).
-      console.log('[DEBUG agendar_cita] Turno terminó SIN llamar ninguna herramienta. stop_reason:', response.stop_reason, '| texto:', (textBlock?.text || '').slice(0, 120));
-      return { texto: textBlock ? textBlock.text : 'Disculpa, ¿puedes repetir tu mensaje?', interactivo: null };
+      const texto = textBlock ? textBlock.text : '';
+
+      // Bug real encontrado (Ahorróptica, cliente "yaye", 2026-09-01): en
+      // el turno de confirmación final, el modelo a veces responde con
+      // texto plano narrando "¡Listo! Tu cita ha sido agendada..." SIN
+      // haber llamado a agendar_cita — el cliente queda creyendo que tiene
+      // hora, pero no existe ninguna Cita real en la base. Reproducido en
+      // vivo. Si el texto suena a esa confirmación, se descarta y se
+      // reintenta UNA vez forzando la llamada real a la herramienta (con
+      // los mismos datos ya reunidos en la conversación) en vez de confiar
+      // en lo que el modelo redactó.
+      if (pareceConfirmacionDeCita(texto)) {
+        forzarAgendarCita = true;
+        continue;
+      }
+
+      return { texto: texto || 'Disculpa, ¿puedes repetir tu mensaje?', interactivo: null };
     }
 
     // Guardamos el turno del asistente (incluye los tool_use blocks) y
