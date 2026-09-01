@@ -1061,8 +1061,15 @@ router.post('/citas', requireRole('ADMIN', 'RECEPCION'), async (req, res) => {
     if (recursoAgendableId) {
       recurso = await prisma.recursoAgendable.findFirst({ where: { id: recursoAgendableId, empresaId } });
       if (!recurso) return res.status(400).json({ error: 'recursoAgendableId no pertenece a esta empresa' });
-      const duracionMinutos = servicio?.duracionMinutos || recurso.duracionCitaMinutos || 30;
-      fechaHoraFin = new Date(fechaHoraInicio.getTime() + duracionMinutos * 60 * 1000);
+      // La duración de la cita sale SIEMPRE del profesional/calendario
+      // (RecursoAgendable.duracionCitaMinutos, configurable en "Datos de la
+      // agenda"), nunca del Servicio — así lo pidió el usuario 2026-08-31:
+      // un Servicio es solo una etiqueta que el bot lista, no debe competir
+      // con la duración real del calendario. Coherente con cómo ya
+      // funcionaba `crearCita` en disponibilidad.js (el motor real del bot
+      // nunca miró servicio.duracionMinutos, esto solo alineaba el código
+      // nuevo de "Agregar cita" manual con eso).
+      fechaHoraFin = new Date(fechaHoraInicio.getTime() + (recurso.duracionCitaMinutos || 30) * 60 * 1000);
       if (await tieneConflicto(recurso.id, fechaHoraFin)) {
         return res.status(400).json({ error: 'Hay un conflicto con otra cita en ese horario' });
       }
@@ -1089,8 +1096,7 @@ router.post('/citas', requireRole('ADMIN', 'RECEPCION'), async (req, res) => {
         .map((x) => x.r);
 
       for (const candidato of candidatos) {
-        const duracionMinutos = servicio?.duracionMinutos || candidato.duracionCitaMinutos || 30;
-        const finTentativo = new Date(fechaHoraInicio.getTime() + duracionMinutos * 60 * 1000);
+        const finTentativo = new Date(fechaHoraInicio.getTime() + (candidato.duracionCitaMinutos || 30) * 60 * 1000);
         if (!(await tieneConflicto(candidato.id, finTentativo))) {
           recurso = candidato;
           fechaHoraFin = finTentativo;
