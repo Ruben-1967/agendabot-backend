@@ -77,11 +77,16 @@ router.get('/', requireRole('ADMIN', 'RECEPCION'), async (req, res) => {
   try {
     const empresaId = req.usuario.empresaId;
 
+    // Solo excepciones desde hoy en adelante — las pasadas no tienen
+    // ningún valor operativo para mostrar en el calendario de configuración.
+    const hoyISO = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Santiago' });
+
     const recurso = await prisma.recursoAgendable.findFirst({
       where: { empresaId },
       include: {
         horarios: { orderBy: [{ diaSemana: 'asc' }, { horaInicio: 'asc' }] },
         bloqueos: { orderBy: { fechaInicio: 'asc' } },
+        excepciones: { where: { fecha: { gte: hoyISO } }, orderBy: { fecha: 'asc' } },
       },
     });
 
