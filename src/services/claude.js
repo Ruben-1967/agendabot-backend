@@ -384,7 +384,19 @@ async function generarRespuestaChatbot({ empresa, cliente, historial, mensajeEnt
     : [];
   const incluirCatalogo = categoriasCatalogo.length > 0;
 
-  const fechaHoyChile = new Date().toLocaleDateString('es-CL', { timeZone: 'America/Santiago' });
+  // Se incluye el día de la semana YA CALCULADO (no solo la fecha numérica)
+  // porque dejar que el modelo calcule qué día de semana corresponde a una
+  // fecha es exactamente el mismo tipo de error que ya causó una
+  // confirmación de cita con el día equivocado (ver fechaLegible más abajo
+  // en este archivo) — acá pasó de nuevo: el bot dijo "hoy es martes"
+  // estando en miércoles. Reportado por Ahorróptica, 2026-09-02.
+  const fechaHoyChile = new Intl.DateTimeFormat('es-CL', {
+    timeZone: 'America/Santiago',
+    weekday: 'long',
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+  }).format(new Date());
 
   const tools = construirTools(empresa, tieneServiciosReales, incluirCatalogo);
 
