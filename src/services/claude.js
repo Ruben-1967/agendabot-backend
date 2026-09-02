@@ -488,20 +488,34 @@ ${empresa.requiereRut ? '- Este negocio EXIGE nombre completo, RUT y teléfono d
   const pareceConfirmacionDeCita = (texto) =>
     veniaDeRecapitulacion && /tu cita (ha sido|está|quedó)|cita (ha sido |fue )?agendada|resumen de tu cita|¡listo!/i.test(texto || '');
 
+  // Bug real encontrado (Ahorróptica, 2026-09-02): al preguntar por un
+  // segundo día en la misma conversación ("Y para el domingo 06"), el
+  // modelo respondió con una lista de horarios COMPLETA E INVENTADA,
+  // copiando el formato exacto del atajo de horariosParaMostrar ("Estos
+  // son los horarios disponibles para el ... Elige el que más te acomode
+  // 👇") sin haber llamado a consultar_disponibilidad — confirmado con el
+  // motor real: ese día no tenía NINGUNA hora disponible. El patrón de
+  // texto es justo ese wording fijo (viene del código, nunca lo redacta el
+  // modelo de forma natural) — que aparezca en un turno sin tool_use es
+  // señal casi segura de que el modelo lo copió de un turno anterior en
+  // vez de consultar de nuevo.
+  const pareceListaDeHorariosInventada = (texto) =>
+    /horarios? disponibles para el/i.test(texto || '') && /elige el que más te acomode/i.test(texto || '');
+
   // Bucle de tool use: Claude puede pedir usar una herramienta varias veces
   // seguidas (ej. consultar disponibilidad y luego agendar) antes de dar
   // la respuesta final en texto.
-  let forzarAgendarCita = false;
+  let forzarHerramienta = null; // null | 'agendar_cita' | 'consultar_disponibilidad'
   for (let intentos = 0; intentos < 5; intentos++) {
     const response = await anthropic.messages.create({
       model: MODEL,
       max_tokens: 500,
       system: systemPrompt,
       tools,
-      ...(forzarAgendarCita ? { tool_choice: { type: 'tool', name: 'agendar_cita' } } : {}),
+      ...(forzarHerramienta ? { tool_choice: { type: 'tool', name: forzarHerramienta } } : {}),
       messages,
     });
-    forzarAgendarCita = false;
+    forzarHerramienta = null;
 
     if (response.stop_reason !== 'tool_use') {
       const textBlock = response.content.find((b) => b.type === 'text');
@@ -517,7 +531,14 @@ ${empresa.requiereRut ? '- Este negocio EXIGE nombre completo, RUT y teléfono d
       // los mismos datos ya reunidos en la conversación) en vez de confiar
       // en lo que el modelo redactó.
       if (pareceConfirmacionDeCita(texto)) {
-        forzarAgendarCita = true;
+        forzarHerramienta = 'agendar_cita';
+        continue;
+      }
+
+      // Mismo mecanismo para el bug de horarios inventados (ver comentario
+      // de pareceListaDeHorariosInventada más arriba).
+      if (pareceListaDeHorariosInventada(texto)) {
+        forzarHerramienta = 'consultar_disponibilidad';
         continue;
       }
 
