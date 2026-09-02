@@ -164,6 +164,11 @@ function construirTools(empresa, incluirMostrarServicios, incluirCatalogo) {
         required: agendarCitaRequired,
       },
     },
+    {
+      name: 'escalar_a_humano',
+      description: 'Úsala cuando el cliente pide explícitamente hablar con una persona real, un ejecutivo, un humano, o dice que no quiere seguir hablando con un bot/asistente automático. Pausa las respuestas automáticas para que alguien del negocio le responda directamente. NO la uses para preguntas normales que tú mismo puedes responder — solo cuando el cliente pide explícitamente ser atendido por una persona.',
+      input_schema: { type: 'object', properties: {} },
+    },
   ];
 }
 
@@ -312,6 +317,14 @@ async function ejecutarHerramienta(nombre, input, contexto) {
       }
       throw err;
     }
+  }
+
+  if (nombre === 'escalar_a_humano') {
+    // No escribe nada en la base acá — generarRespuestaChatbot() señala
+    // escaladoAHumano:true en su resultado, y quien la llama
+    // (chatbotEngine.js) es el único lugar que ya maneja el ciclo de vida
+    // de la Conversacion, así que ahí es donde se pausa de verdad.
+    return { exito: true };
   }
 
   return { error: `Herramienta desconocida: ${nombre}` };
@@ -502,10 +515,20 @@ ${empresa.requiereRut ? '- Este negocio EXIGE nombre completo, RUT y teléfono d
   const pareceListaDeHorariosInventada = (texto) =>
     /horarios? disponibles para el/i.test(texto || '') && /elige el que más te acomode/i.test(texto || '');
 
+  // Bug real encontrado (Ahorróptica, 2026-09-02): el cliente pide hablar
+  // con un ejecutivo, el modelo responde en texto plano "Dale, te paso con
+  // un ejecutivo..." SIN llamar a escalar_a_humano — la conversación nunca
+  // queda pausada de verdad, y menos de un minuto después el bot vuelve a
+  // saludar como si nada. Mismo mecanismo que los dos anteriores: si el
+  // texto suena a esa promesa sin la herramienta real, se descarta y se
+  // reintenta forzando la llamada.
+  const pareceOfertaDeHumanoInventada = (texto) =>
+    /te (paso|comunico|conecto|derivo)\s+(con|a)\s+(un|una|el|la)?\s*(ejecutivo|persona|agente|humano)/i.test(texto || '');
+
   // Bucle de tool use: Claude puede pedir usar una herramienta varias veces
   // seguidas (ej. consultar disponibilidad y luego agendar) antes de dar
   // la respuesta final en texto.
-  let forzarHerramienta = null; // null | 'agendar_cita' | 'consultar_disponibilidad'
+  let forzarHerramienta = null; // null | 'agendar_cita' | 'consultar_disponibilidad' | 'escalar_a_humano'
   for (let intentos = 0; intentos < 5; intentos++) {
     const response = await anthropic.messages.create({
       model: MODEL,
@@ -542,6 +565,13 @@ ${empresa.requiereRut ? '- Este negocio EXIGE nombre completo, RUT y teléfono d
         continue;
       }
 
+      // Mismo mecanismo para la promesa de "te paso con un ejecutivo" sin
+      // pausar de verdad (ver pareceOfertaDeHumanoInventada más arriba).
+      if (pareceOfertaDeHumanoInventada(texto)) {
+        forzarHerramienta = 'escalar_a_humano';
+        continue;
+      }
+
       return { texto: texto || 'Disculpa, ¿puedes repetir tu mensaje?', interactivo: null };
     }
 
@@ -555,6 +585,7 @@ ${empresa.requiereRut ? '- Este negocio EXIGE nombre completo, RUT y teléfono d
     let serviciosParaMostrar = null;
     let catalogoParaMostrar = null;
     let citaAgendadaConExito = null;
+    let seEscaloAHumano = false;
 
     for (const block of response.content) {
       if (block.type === 'tool_use') {
@@ -607,7 +638,24 @@ ${empresa.requiereRut ? '- Este negocio EXIGE nombre completo, RUT y teléfono d
         if (block.name === 'agendar_cita' && resultado.exito) {
           citaAgendadaConExito = { input: block.input, resultado };
         }
+
+        // El cliente pidió hablar con una persona real — se corta el ciclo
+        // con un texto fijo (nunca dejar que el modelo redacte "te paso
+        // con alguien" libremente, ver pareceOfertaDeHumanoInventada) y se
+        // señala escaladoAHumano:true en el resultado para que
+        // chatbotEngine.js pause la conversación de verdad.
+        if (block.name === 'escalar_a_humano') {
+          seEscaloAHumano = true;
+        }
       }
+    }
+
+    if (seEscaloAHumano) {
+      return {
+        texto: '¡Dale! En un momento te contactamos directamente 🙌',
+        interactivo: null,
+        escaladoAHumano: true,
+      };
     }
 
     if (citaAgendadaConExito) {

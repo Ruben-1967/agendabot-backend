@@ -1,9 +1,16 @@
 // src/jobs/enviarPreguntaOptIn.js
 //
 // Envía la pregunta de opt-in de campañas (botones Sí/No) a clientes que
-// llevan ~30 segundos de silencio desde su último mensaje y todavía no han
-// sido preguntados nunca. Aplica por igual a empresas de AGENDAMIENTO y
-// CATALOGO_ROTATIVO — no se filtra por rubro.
+// llevan silencio desde su último mensaje y todavía no han sido preguntados
+// nunca. Aplica por igual a empresas de AGENDAMIENTO y CATALOGO_ROTATIVO —
+// no se filtra por rubro.
+//
+// La idea es preguntar al FINAL de la conversación, no interrumpir una en
+// curso — 30s (el valor original) resultó demasiado agresivo: cualquier
+// pausa normal del cliente pensando su respuesta ya alcanzaba a disparar la
+// pregunta a mitad de una conversación real (reportado por Ahorróptica,
+// 2026-09-02, justo después de un simple "Hola"). SEGUNDOS_ESPERA ahora es
+// bastante más largo para dar tiempo real antes de asumir que terminó.
 //
 // A diferencia de confirmarCitasProximas.js (que corre como un Render Cron
 // Job separado), este job usa node-cron autoprogramado DENTRO del mismo
@@ -15,7 +22,7 @@ const prisma = require('../lib/prisma');
 const { sendWhatsAppReplyButtons } = require('../services/whatsapp');
 const { descifrarSiCorresponde } = require('../lib/cifrado');
 
-const SEGUNDOS_ESPERA = 30;
+const SEGUNDOS_ESPERA = 10 * 60; // 10 minutos
 const TEXTO_PREGUNTA = '¿Quieres que te avisemos por acá de promociones y novedades?';
 
 async function enviarPreguntasOptInPendientes() {
@@ -98,10 +105,11 @@ async function enviarPreguntasOptInPendientes() {
   }
 }
 
-// Corre cada 20 segundos — necesario para respetar un objetivo de silencio
-// de solo 30 segundos sin agregar demasiado retraso extra por el propio
-// ciclo del cron.
-cron.schedule('*/5 * * * *', () => {  // Cada 5 minutos
+// Cada 5 minutos — suficiente granularidad para un umbral de silencio de
+// 10 minutos sin agregar demasiado retraso extra por el propio ciclo del
+// cron (comentario desactualizado corregido: antes decía "cada 20
+// segundos", pero el cron ya corría cada 5 minutos desde antes de esto).
+cron.schedule('*/5 * * * *', () => {
   enviarPreguntasOptInPendientes().catch((error) => {
     console.error('[OPT-IN] Error en el ciclo del job de opt-in:', error);
   });

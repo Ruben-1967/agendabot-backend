@@ -114,6 +114,7 @@ async function procesarMensajeEntrante({ empresa, telefonoCliente, textoEntrante
 
   // 4. Si el interceptor no aplicó (no coincidió la frase, o la empresa no
   // tiene servicios reales todavía), seguimos el flujo normal con Claude.
+  let escaladoAHumano = false;
   if (respuestaTexto === undefined) {
     const resultadoClaude = await generarRespuestaChatbot({
       empresa,
@@ -123,6 +124,7 @@ async function procesarMensajeEntrante({ empresa, telefonoCliente, textoEntrante
     });
     respuestaTexto = resultadoClaude.texto;
     interactivo = resultadoClaude.interactivo;
+    escaladoAHumano = !!resultadoClaude.escaladoAHumano;
   }
 
   // 5. Guardar el intercambio en la Conversacion. Guardamos siempre la
@@ -134,14 +136,24 @@ async function procesarMensajeEntrante({ empresa, telefonoCliente, textoEntrante
     { rol: 'asistente', contenido: respuestaTexto, timestamp: new Date().toISOString() },
   ];
 
+  // El cliente pidió hablar con una persona (escalar_a_humano) — se pausa
+  // la conversación con el mismo mecanismo que ya usa Coexistence/Chats en
+  // vivo (pausadaPorHumanoEn, ver jobs/pausaCoexistence.js: manda un
+  // mensaje de contención a los 5 min si nadie respondió, y reactiva el
+  // bot solo tras 2h de silencio del cliente). Antes de esto, el bot solo
+  // "prometía" pasar con un ejecutivo en texto y seguía respondiendo
+  // normal en el siguiente mensaje — reportado por Ahorróptica.
+  const datosPausa = escaladoAHumano ? { escaladoAHumano: true, pausadaPorHumanoEn: new Date() } : {};
+
   await prisma.conversacion.upsert({
     where: { id: conversacion?.id || '00000000-0000-0000-0000-000000000000' },
-    update: { mensajes: mensajesActualizados, clienteId: cliente.id },
+    update: { mensajes: mensajesActualizados, clienteId: cliente.id, ...datosPausa },
     create: {
       empresaId: empresa.id,
       clienteId: cliente.id,
       telefono: telefonoCliente,
       mensajes: mensajesActualizados,
+      ...datosPausa,
     },
   });
 
