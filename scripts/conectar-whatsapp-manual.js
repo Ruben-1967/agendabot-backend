@@ -8,24 +8,34 @@
  * solo entrega FB.login().
  *
  * Este script NO toca ni reemplaza POST /empresa/whatsapp/conectar — hace
- * el mismo trabajo (resolver/confirmar el número, guardar en la BD) más
- * un paso que Embedded Signup automatiza y el flujo manual no: suscribir
- * la app a los webhooks de la WABA (sin esto, Meta nunca avisa al backend
- * que llegó un mensaje).
+ * el mismo trabajo (resolver/confirmar el número, guardar en la BD) más 2
+ * pasos que Embedded Signup automatiza (vía su propio wizard) y el flujo
+ * manual no:
+ *   - Registrar el número para Cloud API (POST /{phone_number_id}/register
+ *     con un PIN de 6 dígitos) — sin esto, verificarlo en Meta Business
+ *     Manager NO alcanza: el número queda reconocido por Meta pero
+ *     cualquiera que le escriba recibe "no está en WhatsApp". Encontrado
+ *     2026-09-04 con Alejandro Barber (+56949528788).
+ *   - Suscribir la app a los webhooks de la WABA (sin esto, Meta nunca
+ *     avisa al backend que llegó un mensaje).
  *
  * Requisitos previos (manuales, en business.facebook.com):
- *   1. La WABA/número del cliente ya debe existir y estar conectado.
+ *   1. La WABA/número del cliente ya debe existir y estar conectado, con
+ *      el número verificado (SMS/llamada).
  *   2. El System User de AgendaBot (Business Manager del Tech Provider)
  *      debe tener activos asignados sobre esa WABA ("Asignar activos").
  *   3. Generar ahí mismo un token del System User con permisos
  *      whatsapp_business_management y whatsapp_business_messaging.
  *
  * Uso:
- *   EMPRESA_ID=<id> WABA_ID=<waba_id> ACCESS_TOKEN=<token> \
+ *   EMPRESA_ID=<id> WABA_ID=<waba_id> ACCESS_TOKEN=<token> PIN=<6 dígitos> \
  *     node scripts/conectar-whatsapp-manual.js
  *
  *   PHONE_NUMBER_ID es opcional — si se omite, se resuelve automáticamente
- *   (falla si la WABA tiene más de un número).
+ *   (falla si la WABA tiene más de un número). PIN es cualquier PIN nuevo
+ *   de 6 dígitos que quieras dejarle a ese número (verificación en 2 pasos
+ *   de Cloud API) — si el número ya tenía uno de una conexión anterior, es
+ *   ese mismo.
  */
 
 require('dotenv').config();
@@ -36,10 +46,11 @@ const GRAPH_API_VERSION = 'v21.0';
 const empresaId = process.env.EMPRESA_ID;
 const wabaId = process.env.WABA_ID;
 const accessToken = process.env.ACCESS_TOKEN;
+const pin = process.env.PIN;
 let phoneNumberId = process.env.PHONE_NUMBER_ID;
 
 if (!empresaId || !wabaId || !accessToken) {
-  console.error('Uso: EMPRESA_ID=<id> WABA_ID=<waba_id> ACCESS_TOKEN=<token> [PHONE_NUMBER_ID=<id>] node scripts/conectar-whatsapp-manual.js');
+  console.error('Uso: EMPRESA_ID=<id> WABA_ID=<waba_id> ACCESS_TOKEN=<token> PIN=<6 dígitos> [PHONE_NUMBER_ID=<id>] node scripts/conectar-whatsapp-manual.js');
   process.exit(1);
 }
 
@@ -79,6 +90,32 @@ async function main() {
     process.exit(1);
   }
   console.log('Número confirmado:', datosNumero.display_phone_number, `(${datosNumero.verified_name || 'sin nombre verificado'})`);
+
+  // Verificar el número en Meta Business Manager (SMS/llamada) NO es lo
+  // mismo que registrarlo para Cloud API — sin este paso, el número queda
+  // reconocido por Meta pero no está realmente "encendido" en la red de
+  // WhatsApp: cualquiera que intente escribirle recibe "no está en
+  // WhatsApp". Reportado 2026-09-04 (Alejandro Barber, +56949528788) — el
+  // Embedded Signup oficial hace este paso solo (vía el wizard de Meta),
+  // el Plan B manual no, así que hay que hacerlo explícito acá.
+  if (!pin) {
+    console.error('Falta PIN (6 dígitos) — necesario para registrar el número en Cloud API.');
+    process.exit(1);
+  }
+  console.log('Registrando el número para Cloud API...');
+  const urlRegistro = `https://graph.facebook.com/${GRAPH_API_VERSION}/${encodeURIComponent(phoneNumberId)}/register`;
+  const respuestaRegistro = await fetch(urlRegistro, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ messaging_product: 'whatsapp', pin }),
+  });
+  const datosRegistro = await respuestaRegistro.json();
+
+  if (!respuestaRegistro.ok || !datosRegistro.success) {
+    console.error('No se pudo registrar el número para Cloud API:', JSON.stringify(datosRegistro));
+    process.exit(1);
+  }
+  console.log('Número registrado y activo en Cloud API.');
 
   console.log('Suscribiendo la app a los webhooks de la WABA...');
   const urlSuscripcion = `https://graph.facebook.com/${GRAPH_API_VERSION}/${encodeURIComponent(wabaId)}/subscribed_apps`;
