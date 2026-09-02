@@ -39,11 +39,22 @@ router.get('/config', async (req, res) => {
     });
     if (!empresa) return res.status(404).json({ error: 'Empresa no encontrada' });
 
-res.json({
+    // Servicios reales configurados por la empresa — para el checklist de
+    // "Nueva venta/atención" (antes solo existía la descripción libre, que
+    // no calzaba con los servicios que el negocio realmente ofrece).
+    const servicios = await prisma.servicio.findMany({
+      where: { empresaId: empresa.id, activo: true },
+      select: { id: true, nombre: true },
+      orderBy: { nombre: 'asc' },
+    });
+
+    res.json({
       camposFicha: empresa.rubroTemplate.camposFicha || { grupos: [] },
       categoriasProductoSugeridas: Array.isArray(empresa.rubroTemplate.categoriasProductoSugeridas)
         ? empresa.rubroTemplate.categoriasProductoSugeridas
         : [],
+      servicios,
+      mediosPago: MEDIOS_PAGO_VALIDOS,
     });
 
   } catch (error) {
@@ -333,6 +344,20 @@ router.patch('/:id', async (req, res) => {
   }
 });
 
+const MEDIOS_PAGO_VALIDOS = ['EFECTIVO', 'TARJETA_CREDITO', 'TARJETA_DEBITO', 'TRANSFERENCIA', 'OTRO'];
+
+async function validarRecursoAgendable(empresaId, recursoAgendableId) {
+  if (!recursoAgendableId) return true;
+  const recurso = await prisma.recursoAgendable.findFirst({ where: { id: recursoAgendableId, empresaId } });
+  return Boolean(recurso);
+}
+
+async function validarServicio(empresaId, servicioId) {
+  if (!servicioId) return true;
+  const servicio = await prisma.servicio.findFirst({ where: { id: servicioId, empresaId } });
+  return Boolean(servicio);
+}
+
 // ------------------------------------------------------------
 // POST /clientes/:id/ventas — registrar una compra/atención nueva
 // ------------------------------------------------------------
@@ -343,7 +368,7 @@ router.post('/:id/ventas', async (req, res) => {
     });
     if (!cliente) return res.status(404).json({ error: 'Cliente no encontrado' });
 
-    const { descripcion, monto, categoriaProducto, fecha, recursoAgendableId } = req.body;
+    const { descripcion, monto, categoriaProducto, fecha, recursoAgendableId, medioPago, atendidoPor, servicioId } = req.body;
 
     if (!descripcion || !descripcion.trim()) {
       return res.status(400).json({ error: 'Falta la descripción de la venta' });
@@ -352,15 +377,18 @@ router.post('/:id/ventas', async (req, res) => {
     if (!Number.isFinite(montoNum) || montoNum < 0) {
       return res.status(400).json({ error: 'monto debe ser un número válido' });
     }
+    if (medioPago && !MEDIOS_PAGO_VALIDOS.includes(medioPago)) {
+      return res.status(400).json({ error: 'medioPago inválido' });
+    }
 
     // Opcional: no toda venta corresponde a un profesional puntual (venta de
     // producto, cobro hecho por recepción). Si viene, debe ser un recurso
     // real de esta misma empresa.
-    if (recursoAgendableId) {
-      const recurso = await prisma.recursoAgendable.findFirst({
-        where: { id: recursoAgendableId, empresaId: req.usuario.empresaId },
-      });
-      if (!recurso) return res.status(400).json({ error: 'El profesional indicado no existe' });
+    if (!(await validarRecursoAgendable(req.usuario.empresaId, recursoAgendableId))) {
+      return res.status(400).json({ error: 'El profesional indicado no existe' });
+    }
+    if (!(await validarServicio(req.usuario.empresaId, servicioId))) {
+      return res.status(400).json({ error: 'El servicio indicado no existe' });
     }
 
     const venta = await prisma.venta.create({
@@ -371,6 +399,9 @@ router.post('/:id/ventas', async (req, res) => {
         monto: Math.round(montoNum),
         categoriaProducto: categoriaProducto || null,
         recursoAgendableId: recursoAgendableId || null,
+        servicioId: servicioId || null,
+        medioPago: medioPago || null,
+        atendidoPor: atendidoPor?.trim() || null,
         estadoPago: 'PAGADO',
         // fecha llega como "YYYY-MM-DD" (sin hora) desde el panel — hay que
         // anclarla al mediodía de Chile, no a medianoche UTC, para que caiga
@@ -383,6 +414,75 @@ router.post('/:id/ventas', async (req, res) => {
   } catch (error) {
     console.error('Error registrando venta:', error);
     res.status(500).json({ error: 'Error al registrar la venta' });
+  }
+});
+
+// ------------------------------------------------------------
+// POST /clientes/:id/ventas/lote — registra VARIAS ventas/atenciones de una
+// sola vez (ej. atención oftalmológica + lentes ópticos en la misma
+// sesión), compartiendo fecha/medioPago/atendidoPor/profesional pero cada
+// una con su propia descripción, servicio y monto. Reportado por
+// Ahorróptica 2026-09-02: el formulario solo dejaba registrar un cobro por
+// vez, no reflejaba una sesión con varios cobros distintos.
+// ------------------------------------------------------------
+router.post('/:id/ventas/lote', async (req, res) => {
+  try {
+    const cliente = await prisma.cliente.findFirst({
+      where: { id: req.params.id, empresaId: req.usuario.empresaId },
+    });
+    if (!cliente) return res.status(404).json({ error: 'Cliente no encontrado' });
+
+    const { fecha, recursoAgendableId, medioPago, atendidoPor, items } = req.body;
+    const empresaId = req.usuario.empresaId;
+
+    if (!Array.isArray(items) || items.length === 0) {
+      return res.status(400).json({ error: 'Falta al menos un ítem (servicio/producto + monto)' });
+    }
+    if (medioPago && !MEDIOS_PAGO_VALIDOS.includes(medioPago)) {
+      return res.status(400).json({ error: 'medioPago inválido' });
+    }
+    if (!(await validarRecursoAgendable(empresaId, recursoAgendableId))) {
+      return res.status(400).json({ error: 'El profesional indicado no existe' });
+    }
+
+    const itemsValidados = [];
+    for (const item of items) {
+      if (!item.descripcion || !item.descripcion.trim()) {
+        return res.status(400).json({ error: 'Cada ítem necesita una descripción' });
+      }
+      const montoNum = Number(item.monto);
+      if (!Number.isFinite(montoNum) || montoNum < 0) {
+        return res.status(400).json({ error: `Monto inválido para "${item.descripcion}"` });
+      }
+      if (!(await validarServicio(empresaId, item.servicioId))) {
+        return res.status(400).json({ error: `El servicio de "${item.descripcion}" no existe` });
+      }
+      itemsValidados.push({ descripcion: item.descripcion.trim(), monto: Math.round(montoNum), servicioId: item.servicioId || null });
+    }
+
+    const fechaVenta = fecha ? horaChileAFechaUTC(fecha, '12:00') : new Date();
+    const datosComunes = {
+      empresaId,
+      clienteId: cliente.id,
+      recursoAgendableId: recursoAgendableId || null,
+      medioPago: medioPago || null,
+      atendidoPor: atendidoPor?.trim() || null,
+      estadoPago: 'PAGADO',
+      fecha: fechaVenta,
+    };
+
+    const ventas = await prisma.$transaction(
+      itemsValidados.map((item) =>
+        prisma.venta.create({
+          data: { ...datosComunes, descripcion: item.descripcion, monto: item.monto, servicioId: item.servicioId },
+        })
+      )
+    );
+
+    res.status(201).json({ ventas });
+  } catch (error) {
+    console.error('Error registrando lote de ventas:', error);
+    res.status(500).json({ error: 'Error al registrar las ventas' });
   }
 });
 
@@ -403,7 +503,7 @@ router.patch('/:id/ventas/:ventaId', async (req, res) => {
     });
     if (!venta) return res.status(404).json({ error: 'Venta no encontrada' });
 
-    const { descripcion, monto, categoriaProducto, fecha, recursoAgendableId } = req.body;
+    const { descripcion, monto, categoriaProducto, fecha, recursoAgendableId, medioPago, atendidoPor, servicioId } = req.body;
 
     if (descripcion !== undefined && !descripcion.trim()) {
       return res.status(400).json({ error: 'La descripción no puede quedar vacía' });
@@ -415,11 +515,14 @@ router.patch('/:id/ventas/:ventaId', async (req, res) => {
         return res.status(400).json({ error: 'monto debe ser un número válido' });
       }
     }
-    if (recursoAgendableId) {
-      const recurso = await prisma.recursoAgendable.findFirst({
-        where: { id: recursoAgendableId, empresaId: req.usuario.empresaId },
-      });
-      if (!recurso) return res.status(400).json({ error: 'El profesional indicado no existe' });
+    if (medioPago && !MEDIOS_PAGO_VALIDOS.includes(medioPago)) {
+      return res.status(400).json({ error: 'medioPago inválido' });
+    }
+    if (recursoAgendableId && !(await validarRecursoAgendable(req.usuario.empresaId, recursoAgendableId))) {
+      return res.status(400).json({ error: 'El profesional indicado no existe' });
+    }
+    if (servicioId && !(await validarServicio(req.usuario.empresaId, servicioId))) {
+      return res.status(400).json({ error: 'El servicio indicado no existe' });
     }
 
     const ventaActualizada = await prisma.venta.update({
@@ -429,6 +532,9 @@ router.patch('/:id/ventas/:ventaId', async (req, res) => {
         ...(montoNum !== undefined && { monto: Math.round(montoNum) }),
         ...(categoriaProducto !== undefined && { categoriaProducto: categoriaProducto || null }),
         ...(recursoAgendableId !== undefined && { recursoAgendableId: recursoAgendableId || null }),
+        ...(servicioId !== undefined && { servicioId: servicioId || null }),
+        ...(medioPago !== undefined && { medioPago: medioPago || null }),
+        ...(atendidoPor !== undefined && { atendidoPor: atendidoPor?.trim() || null }),
         ...(fecha !== undefined && { fecha: horaChileAFechaUTC(fecha, '12:00') }),
       },
     });

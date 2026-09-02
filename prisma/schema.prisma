@@ -292,6 +292,7 @@ model Servicio {
 
   citas     Cita[]
   recursos  ServicioRecurso[]
+  ventas    Venta[]
 
   @@index([empresaId])
   @@index([plantillaFichaId])
@@ -552,6 +553,14 @@ enum EstadoPagoVenta {
   PENDIENTE
 }
 
+enum MedioPago {
+  EFECTIVO
+  TARJETA_CREDITO
+  TARJETA_DEBITO
+  TRANSFERENCIA
+  OTRO
+}
+
 model Venta {
   id        String   @id @default(uuid())
   empresa   Empresa  @relation(fields: [empresaId], references: [id])
@@ -563,9 +572,24 @@ model Venta {
   descripcion String  // "Armazón Ray-Ban + cristales progresivos"
   monto       Int     // en CLP
   estadoPago  EstadoPagoVenta @default(PENDIENTE)
+  medioPago   MedioPago? // efectivo/tarjeta/transferencia — opcional, ventas viejas no lo tienen
 
   fichaAsociadaId String? // referencia opcional a la receta/ficha vigente al momento de la venta
   categoriaProducto String? // ej. "Lente monofocal", "Lente progresivo", "Lente de contacto", "Solo atención" — permite segmentar campañas por tipo de producto/servicio comprado, igual que productoId lo hace en el catálogo rotativo
+
+  // Referencia opcional al Servicio real configurado (distinto de
+  // categoriaProducto, que es una sugerencia genérica del rubro) — cuando la
+  // atención marca un servicio real del catálogo de la empresa, en vez de
+  // "otro" a texto libre. Reportado por Ahorróptica 2026-09-02: la
+  // descripción libre no calzaba con los servicios que el negocio realmente
+  // ofrece.
+  servicio   Servicio? @relation(fields: [servicioId], references: [id])
+  servicioId String?
+
+  // Quién atendió, en texto libre — independiente de recursoAgendableId (que
+  // liga a un profesional CON agenda propia). Permite anotar que atendió
+  // alguien sin recurso configurado (ej. un asistente, recepción).
+  atendidoPor String?
 
   // Opcional a propósito: muchas ventas (venta de un producto suelto, cobro
   // hecho por recepción) no corresponden a la atención de un profesional
@@ -580,6 +604,7 @@ model Venta {
 
   @@index([empresaId])
   @@index([clienteId])
+  @@index([servicioId])
 }
 
 // ------------------------------------------------------------
