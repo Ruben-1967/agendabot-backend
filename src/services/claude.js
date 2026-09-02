@@ -527,6 +527,25 @@ ${empresa.requiereRut ? '- Este negocio EXIGE nombre completo, RUT y teléfono d
   const pareceListaDeHorariosInventada = (texto) =>
     /horarios? disponibles para el/i.test(texto || '') && /elige el que más te acomode/i.test(texto || '');
 
+  // Misma clase de bug, pero para la lista de PRÓXIMOS DÍAS (cuando el
+  // cliente no especifica fecha) — confirmado en vivo (Ahorróptica,
+  // 2026-09-02): el bot mostró "Los próximos días con disponibilidad para
+  // 'Evaluación examen visual' son: 4 (viernes), 5 (sábado), 6 (domingo)"
+  // con formato propio (no el wording fijo de armarTextoProximosDias) —
+  // ninguno de esos 3 días tenía disponibilidad real, y los días
+  // realmente disponibles (11, 12, 25, 26) no se mencionaron. El modelo
+  // fabricó la lista completa sin llamar a
+  // consultar_proximos_dias_disponibles. Detecta la mención genérica a
+  // "próximos días" o un patrón de 2+ fechas con día de semana entre
+  // paréntesis (ej. "4 de septiembre (viernes)") — el wording exacto varía
+  // cada vez que el modelo lo redacta libremente.
+  const pareceListaDeDiasInventada = (texto) => {
+    const t = texto || '';
+    if (/pr[oó]ximos d[ií]as/i.test(t)) return true;
+    const fechasConDia = t.match(/\d{1,2}\s+de\s+\p{L}+.{0,3}\((domingo|lunes|martes|mi[eé]rcoles|jueves|viernes|s[aá]bado)\)/giu) || [];
+    return fechasConDia.length >= 2;
+  };
+
   // Bug real encontrado (Ahorróptica, 2026-09-02): el cliente pide hablar
   // con un ejecutivo, el modelo responde en texto plano "Dale, te paso con
   // un ejecutivo..." SIN llamar a escalar_a_humano — la conversación nunca
@@ -540,7 +559,7 @@ ${empresa.requiereRut ? '- Este negocio EXIGE nombre completo, RUT y teléfono d
   // Bucle de tool use: Claude puede pedir usar una herramienta varias veces
   // seguidas (ej. consultar disponibilidad y luego agendar) antes de dar
   // la respuesta final en texto.
-  let forzarHerramienta = null; // null | 'agendar_cita' | 'consultar_disponibilidad' | 'escalar_a_humano'
+  let forzarHerramienta = null; // null | 'agendar_cita' | 'consultar_disponibilidad' | 'consultar_proximos_dias_disponibles' | 'escalar_a_humano'
   for (let intentos = 0; intentos < 5; intentos++) {
     const response = await anthropic.messages.create({
       model: MODEL,
@@ -574,6 +593,13 @@ ${empresa.requiereRut ? '- Este negocio EXIGE nombre completo, RUT y teléfono d
       // de pareceListaDeHorariosInventada más arriba).
       if (pareceListaDeHorariosInventada(texto)) {
         forzarHerramienta = 'consultar_disponibilidad';
+        continue;
+      }
+
+      // Mismo mecanismo para la lista de PRÓXIMOS DÍAS inventada (ver
+      // comentario de pareceListaDeDiasInventada más arriba).
+      if (pareceListaDeDiasInventada(texto)) {
+        forzarHerramienta = 'consultar_proximos_dias_disponibles';
         continue;
       }
 
