@@ -11,19 +11,55 @@
 require('dotenv').config();
 const prisma = require('../src/lib/prisma');
 
-const TELEFONO = '56921738221';
-
 async function main() {
-  const conversacion = await prisma.conversacion.findFirst({
-    where: { telefono: { contains: '921738221' } },
-    include: { empresa: { select: { nombre: true, whatsappNumeroId: true, whatsappPhoneNumber: true } } },
+  // Primero se confirma a qué Empresa pertenece realmente el número de
+  // prueba +56 9 2173 8221 — no se asume que sigue siendo
+  // "ahoroptica-lautaro-seed-id" (ese id es el de la empresa REAL de
+  // Ahorróptica, que en algún momento pudo haber quedado con otro número
+  // tras conectar por Coexistence).
+  const empresasCandidatas = await prisma.empresa.findMany({
+    where: {
+      OR: [
+        { whatsappPhoneNumber: { contains: '21738221' } },
+        { nombre: { contains: 'Ahorróptica', mode: 'insensitive' } },
+      ],
+    },
+    select: { id: true, nombre: true, esDemo: true, whatsappNumeroId: true, whatsappPhoneNumber: true },
   });
+  console.log('Empresas candidatas (por nombre "Ahorróptica" o número de prueba):');
+  empresasCandidatas.forEach((e) => console.log(`- id=${e.id} nombre="${e.nombre}" esDemo=${e.esDemo} whatsappPhoneNumber=${e.whatsappPhoneNumber} whatsappNumeroId=${e.whatsappNumeroId}`));
+  console.log('');
 
-  if (!conversacion) {
-    console.log('No se encontró ninguna Conversacion con ese teléfono.');
+  const empresaDelNumeroDePrueba = empresasCandidatas.find((e) => e.whatsappPhoneNumber?.includes('21738221'));
+  const empresaObjetivo = empresaDelNumeroDePrueba || empresasCandidatas[0];
+  if (!empresaObjetivo) {
+    console.log('No se encontró ninguna empresa candidata.');
     await prisma.$disconnect();
     return;
   }
+  console.log(`Usando empresa: ${empresaObjetivo.nombre} (${empresaObjetivo.id})\n`);
+
+  // Conversacion.telefono guarda el número del CLIENTE, no el de la
+  // empresa (+56 9 2173 8221 es el número de Ahorróptica, no de quien le
+  // escribió) — se busca por empresa en vez de adivinar el teléfono.
+  const conversaciones = await prisma.conversacion.findMany({
+    where: { empresaId: empresaObjetivo.id },
+    include: { empresa: { select: { nombre: true, whatsappNumeroId: true, whatsappPhoneNumber: true } } },
+    orderBy: { actualizadoEn: 'desc' },
+  });
+
+  console.log(`Encontradas ${conversaciones.length} conversación(es) para Ahorróptica.\n`);
+  conversaciones.forEach((c) => {
+    console.log(`- id=${c.id} | telefono=${c.telefono} | pausadaPorHumanoEn=${c.pausadaPorHumanoEn ? c.pausadaPorHumanoEn.toISOString() : 'null'} | actualizadoEn=${c.actualizadoEn.toISOString()}`);
+  });
+
+  const conversacion = conversaciones.find((c) => c.pausadaPorHumanoEn) || conversaciones[0];
+  if (!conversacion) {
+    console.log('\nNo se encontró ninguna Conversacion para esta empresa.');
+    await prisma.$disconnect();
+    return;
+  }
+  console.log(`\n--- Detalle de la conversación pausada (o la más reciente si ninguna está pausada): ${conversacion.id} ---`);
 
   console.log(`Conversacion ${conversacion.id} | empresa=${conversacion.empresa.nombre} | telefono=${conversacion.telefono}`);
   console.log(`whatsappNumeroId de la empresa: ${conversacion.empresa.whatsappNumeroId}`);
