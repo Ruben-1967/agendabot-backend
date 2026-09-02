@@ -699,7 +699,7 @@ router.post('/convertir-a-cliente-real', requireAuth, requireRole('VENDEDOR'), a
 
     const demo = await prisma.demoAsignada.findUnique({
       where: { id: demoId },
-      include: { empresaDemo: true },
+      include: { empresaDemo: { include: { rubroTemplate: true } } },
     });
 
     if (!demo || demo.vendedorId !== req.usuario.vendedorId || demo.eliminadoEn) {
@@ -743,6 +743,31 @@ router.post('/convertir-a-cliente-real', requireAuth, requireRole('VENDEDOR'), a
             origenCaso: demo.origenCaso || 'organico',
           },
         });
+
+        // Precarga servicios genéricos sugeridos para el rubro elegido (ej.
+        // "Corte de pelo" para Belleza/Estética) — sin esto el negocio
+        // arrancaba sin ningún servicio cargado (o, en casos de prueba
+        // manual, con lo que fuera que alguien haya escrito a mano, que
+        // podía no tener nada que ver con su rubro real — encontrado en
+        // Alejandro Barber, rubro Belleza con "Examen visual" cargado). El
+        // negocio los edita/reemplaza después con sus servicios reales
+        // desde el panel — esto es solo un punto de partida razonable.
+        // Servicio.nombre es @unique por empresa? No — pero createMany con
+        // nombres repetidos del propio rubro no debería pasar en la
+        // práctica (serviciosBase no trae duplicados).
+        const rubroTemplate = demo.empresaDemo.rubroTemplate;
+        if (
+          rubroTemplate.modoOperacion === 'AGENDAMIENTO' &&
+          Array.isArray(rubroTemplate.serviciosBase) &&
+          rubroTemplate.serviciosBase.length > 0
+        ) {
+          await tx.servicio.createMany({
+            data: rubroTemplate.serviciosBase.map((nombre) => ({
+              empresaId: empresaReal.id,
+              nombre: String(nombre),
+            })),
+          });
+        }
 
         await tx.usuario.create({
           data: {
