@@ -31,21 +31,31 @@ async function correrUnaVez(empresa, recurso, diasRealesValidos, telefono) {
     const resultado = await generarRespuestaChatbot({ empresa, cliente, historial, mensajeEntrante: mensaje });
     historial.push({ rol: 'usuario', contenido: mensaje, timestamp: new Date().toISOString() });
     historial.push({ rol: 'asistente', contenido: resultado.texto, timestamp: new Date().toISOString() });
-    return resultado.texto;
+    return resultado;
   }
 
   await turno('Hola');
   await turno('Tiene horas para examen');
-  const textoFinal = await turno('?');
+  const resultadoFinal = await turno('?');
+  const textoFinal = resultadoFinal.texto;
 
-  // Extrae cualquier "N de septiembre" mencionado en la respuesta final.
+  // El atajo real (armarTextoProximosDias) no escribe fechas en el texto —
+  // las manda en resultado.interactivo.dias (lista interactiva). Por eso la
+  // prueba real de "no fabricó nada" es que SÍ llamó al atajo (interactivo
+  // presente, con exactamente los días reales) — el texto solo sirve para
+  // pescar una fabricación libre tipo "4 de septiembre (viernes)".
+  const diasInteractivo = resultadoFinal.interactivo?.tipo === 'lista_dias'
+    ? resultadoFinal.interactivo.dias.map((d) => Number(d.fecha.split('-')[2]))
+    : null;
   const diasMencionados = [...textoFinal.matchAll(/(\d{1,2})\s+de\s+septiembre/gi)].map((m) => Number(m[1]));
-  const diaInventado = diasMencionados.find((d) => !diasRealesValidos.includes(d));
+  const diaInventadoEnTexto = diasMencionados.find((d) => !diasRealesValidos.includes(d));
+  const diaInventadoEnInteractivo = diasInteractivo?.find((d) => !diasRealesValidos.includes(d));
+  const disparoAtajoReal = diasInteractivo !== null && diasInteractivo.length > 0 && !diaInventadoEnInteractivo;
 
   await prisma.conversacion.deleteMany({ where: { empresaId: empresa.id, telefono } });
   await prisma.cliente.delete({ where: { id: cliente.id } });
 
-  return { textoFinal, diasMencionados, diaInventado };
+  return { textoFinal, diasMencionados, diaInventadoEnTexto, diasInteractivo, diaInventadoEnInteractivo, disparoAtajoReal };
 }
 
 async function main() {
@@ -58,13 +68,17 @@ async function main() {
   let fallos = 0;
   for (let i = 0; i < REPETICIONES; i++) {
     console.log(`Corrida ${i + 1}/${REPETICIONES}:`);
-    const { textoFinal, diasMencionados, diaInventado } = await correrUnaVez(empresa, recurso, diasRealesValidos, TELEFONOS_PRUEBA[i]);
-    console.log(`  Días mencionados en la respuesta: ${JSON.stringify(diasMencionados)}`);
-    if (diaInventado) {
+    const { textoFinal, diasMencionados, diaInventadoEnTexto, diasInteractivo, diaInventadoEnInteractivo, disparoAtajoReal } =
+      await correrUnaVez(empresa, recurso, diasRealesValidos, TELEFONOS_PRUEBA[i]);
+    console.log(`  Días en el texto: ${JSON.stringify(diasMencionados)} | Días en la lista interactiva: ${JSON.stringify(diasInteractivo)}`);
+    if (diaInventadoEnTexto || diaInventadoEnInteractivo) {
       fallos++;
-      console.log(`  ❌ Mencionó el día ${diaInventado} de septiembre, que NO tiene disponibilidad real. Texto completo:\n${textoFinal}\n`);
+      console.log(`  ❌ Mencionó un día (${diaInventadoEnTexto ?? diaInventadoEnInteractivo}) que NO tiene disponibilidad real. Texto completo:\n${textoFinal}\n`);
+    } else if (!disparoAtajoReal) {
+      fallos++;
+      console.log(`  ❌ NO llamó al atajo real (consultar_proximos_dias_disponibles) — no hay lista interactiva de días. Texto completo:\n${textoFinal}\n`);
     } else {
-      console.log('  ✅ Todos los días mencionados son reales (o no mencionó ninguno).');
+      console.log('  ✅ Llamó a la herramienta real y los días coinciden con el calendario real.');
     }
   }
 
