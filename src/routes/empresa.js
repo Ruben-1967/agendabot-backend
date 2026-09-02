@@ -1,5 +1,9 @@
 // src/routes/empresa.js
 //
+// GET /empresa/ejemplos-formulario
+// Ejemplos (placeholder) para los campos de texto libre del panel, según
+// el rubro de la empresa — ver RubroTemplate.ejemplosFormulario.
+//
 // GET /empresa/info
 // Devuelve los campos de "Información del negocio" de la empresa del
 // usuario autenticado (dirección, nota de agendamiento, info adicional
@@ -24,6 +28,37 @@ const { requireAuth, requireRole } = require('../middleware/auth');
 const CAMPOS_INFO = ['direccion', 'notaAgendamiento', 'informacionAdicional', 'requiereRut', 'tonoComunicacion'];
 
 const GRAPH_API_VERSION = 'v21.0';
+
+// ------------------------------------------------------------
+// GET /empresa/ejemplos-formulario
+// Ejemplos (placeholder) para los campos de texto libre del panel —
+// { nombreRecurso, direccion, informacionAdicional } según el rubro de la
+// empresa, más el primer servicio sugerido del rubro (para el placeholder
+// de "agregar servicio"). Antes esos campos mostraban siempre los mismos
+// ejemplos con datos reales de Ahorróptica (dirección real, precios reales
+// de óptica) sin importar el rubro del negocio.
+// ------------------------------------------------------------
+router.get('/ejemplos-formulario', requireAuth, requireRole('ADMIN'), async (req, res) => {
+  try {
+    const empresa = await prisma.empresa.findUnique({
+      where: { id: req.usuario.empresaId },
+      select: { rubroTemplate: { select: { ejemplosFormulario: true, serviciosBase: true } } },
+    });
+
+    if (!empresa) {
+      return res.status(404).json({ error: 'Empresa no encontrada' });
+    }
+
+    const ejemplosFormulario = empresa.rubroTemplate?.ejemplosFormulario || {};
+    const serviciosBase = Array.isArray(empresa.rubroTemplate?.serviciosBase) ? empresa.rubroTemplate.serviciosBase : [];
+    const ejemploServicio = typeof serviciosBase[0] === 'string' ? serviciosBase[0] : null;
+
+    res.json({ ...ejemplosFormulario, ejemploServicio });
+  } catch (error) {
+    console.error('Error en GET /empresa/ejemplos-formulario:', error);
+    res.status(500).json({ error: 'Error al obtener los ejemplos del formulario' });
+  }
+});
 
 router.get('/info', requireAuth, requireRole('ADMIN'), async (req, res) => {
   try {

@@ -37,6 +37,14 @@ model RubroTemplate {
   creadoEn      DateTime @default(now())
   categoriasProductoSugeridas Json? // arreglo de strings sugeridos al registrar una venta, ej. ["Lente monofocal", "Lente progresivo", ...] — arma el selector en el panel y el filtro de segmentación de campañas
 
+  // Ejemplos (placeholder) para los campos de texto libre del panel —
+  // { nombreRecurso, direccion, informacionAdicional }, todos opcionales.
+  // Antes esos campos mostraban ejemplos fijos con datos reales de
+  // Ahorróptica (dirección real, precios reales de óptica) sin importar el
+  // rubro del negocio — encontrado por un negocio de belleza viendo
+  // ejemplos de óptica. nombreRecurso solo aplica a rubros AGENDAMIENTO.
+  ejemplosFormulario Json?
+
   empresas Empresa[]
   catalogoDemoItems CatalogoDemoItem[]
   // Switch maestro del Catálogo Visual de la demo, por rubro (no por
