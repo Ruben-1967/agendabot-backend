@@ -13,6 +13,7 @@
 const cron = require('node-cron');
 const prisma = require('../lib/prisma');
 const { sendWhatsAppReplyButtons } = require('../services/whatsapp');
+const { descifrarSiCorresponde } = require('../lib/cifrado');
 
 const SEGUNDOS_ESPERA = 30;
 const TEXTO_PREGUNTA = '¿Quieres que te avisemos por acá de promociones y novedades?';
@@ -53,7 +54,9 @@ async function enviarPreguntasOptInPendientes() {
       const timestampUltimo = new Date(ultimoMensajeCliente.timestamp);
       if (timestampUltimo > limiteEspera) continue; // todavía no pasaron los 30 segundos de silencio
 
-      const accessToken = cliente.empresa.whatsappToken || process.env.WHATSAPP_ACCESS_TOKEN;
+      // whatsappToken llega anidado (Cliente -> Empresa), la extensión de
+      // Prisma no lo descifra automáticamente ahí — ver descifrarSiCorresponde.
+      const accessToken = descifrarSiCorresponde(cliente.empresa.whatsappToken) || process.env.WHATSAPP_ACCESS_TOKEN;
       if (!accessToken) continue;
 
       await sendWhatsAppReplyButtons({

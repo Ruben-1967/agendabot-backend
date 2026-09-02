@@ -32,6 +32,7 @@
 require('dotenv').config();
 const prisma = require('../lib/prisma');
 const { sendWhatsAppTextMessage, sendWhatsAppTemplateMessage } = require('../services/whatsapp');
+const { descifrarSiCorresponde } = require('../lib/cifrado');
 
 // Nombres de las plantillas de WhatsApp — deben existir y estar aprobadas en
 // Meta antes de que este job envíe algo de verdad (ver tarea de aprobación
@@ -97,7 +98,9 @@ async function procesarRecordatoriosFicha() {
       omitidos++;
       continue;
     }
-    const accessToken = empresa.whatsappToken || process.env.WHATSAPP_ACCESS_TOKEN;
+    // whatsappToken llega doblemente anidado (AtencionClinica -> Cliente ->
+    // Empresa), la extensión de Prisma no lo descifra automáticamente ahí.
+    const accessToken = descifrarSiCorresponde(empresa.whatsappToken) || process.env.WHATSAPP_ACCESS_TOKEN;
     if (!accessToken) {
       omitidos++;
       continue;

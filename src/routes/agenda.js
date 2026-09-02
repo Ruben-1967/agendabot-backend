@@ -28,25 +28,12 @@ const { requireAuth, requireRole } = require('../middleware/auth');
 const { horaChileAFechaUTC } = require('../lib/horaChile');
 const { normalizarRut, esRutValido } = require('../lib/rut');
 const { obtenerHorariosDisponibles, obtenerHorarioDelDia } = require('../services/disponibilidad');
-const { descifrar, esValorCifrado } = require('../lib/cifrado');
-
-// Cliente.rut está cifrado en reposo (Ley 21.719, ver src/lib/prisma.js:
-// CAMPOS_CIFRADOS) — la extensión de Prisma solo descifra automáticamente
-// cuando se consulta el modelo Cliente DIRECTO (prisma.cliente.findMany/...),
-// no cuando llega anidado dentro de un include de OTRO modelo (ej. cita.cliente).
-// Sin este helper, esos casos devuelven el string "enc:v1:..." crudo tal
-// cual — visto en producción en la columna Rut de Tabla de citas.
-function descifrarSiCorresponde(valor) {
-  if (valor && esValorCifrado(valor)) {
-    try {
-      return descifrar(valor);
-    } catch (error) {
-      console.error('[CIFRADO] Error descifrando rut anidado:', error.message);
-      return valor;
-    }
-  }
-  return valor;
-}
+// descifrarSiCorresponde: Cliente.rut (y Empresa.whatsappToken en otros
+// archivos) están cifrados en reposo (Ley 21.719) — la extensión de Prisma
+// solo descifra automáticamente cuando se consulta el modelo dueño del
+// campo DIRECTO, no cuando llega anidado dentro de un include de OTRO
+// modelo (ej. cita.cliente.rut). Ver lib/cifrado.js para el detalle.
+const { descifrarSiCorresponde } = require('../lib/cifrado');
 
 const REGEX_HORA = /^([01]\d|2[0-3]):([0-5]\d)$/;
 const REGEX_FECHA = /^\d{4}-\d{2}-\d{2}$/;

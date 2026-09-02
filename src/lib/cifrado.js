@@ -50,4 +50,26 @@ function esValorCifrado(valor) {
   return typeof valor === 'string' && valor.startsWith(PREFIJO);
 }
 
-module.exports = { cifrar, descifrar, esValorCifrado };
+// La extensión de Prisma en lib/prisma.js solo descifra automáticamente
+// cuando se consulta el modelo dueño del campo DIRECTO (ej.
+// prisma.empresa.findFirst) — no cuando llega anidado dentro de un
+// include de OTRO modelo (ej. prisma.cita.findMany({include:{empresa:true}})).
+// Sin este helper, esos casos devuelven el string "enc:v1:..." crudo tal
+// cual. Encontrado primero con Cliente.rut en Tabla de citas (ver
+// agenda.js), y de nuevo con Empresa.whatsappToken en varios jobs
+// (enviarPreguntaOptIn, recordatoriosFicha, confirmarCitasProximas,
+// pausaCoexistence) — ahí el token cifrado se mandaba tal cual a Meta como
+// si fuera el token real, y la API lo rechazaba con "Authentication Error".
+function descifrarSiCorresponde(valor) {
+  if (valor && esValorCifrado(valor)) {
+    try {
+      return descifrar(valor);
+    } catch (error) {
+      console.error('[CIFRADO] Error descifrando valor anidado:', error.message);
+      return valor;
+    }
+  }
+  return valor;
+}
+
+module.exports = { cifrar, descifrar, esValorCifrado, descifrarSiCorresponde };

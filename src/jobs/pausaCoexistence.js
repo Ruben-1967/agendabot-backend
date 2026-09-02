@@ -21,6 +21,7 @@
 const cron = require('node-cron');
 const prisma = require('../lib/prisma');
 const { sendWhatsAppTextMessage } = require('../services/whatsapp');
+const { descifrarSiCorresponde } = require('../lib/cifrado');
 
 const MINUTOS_CONTENCION = 5;
 const MINUTOS_ALERTA = 10;
@@ -84,7 +85,9 @@ async function procesarPausasCoexistence() {
 
       // 2. Mensaje de contención a los 5 min.
       if (minutosDesdePausa >= MINUTOS_CONTENCION && !conversacion.contencionEnviadaEn) {
-        const accessToken = empresa.whatsappToken || process.env.WHATSAPP_ACCESS_TOKEN;
+        // whatsappToken llega anidado (Conversacion -> Empresa), la
+        // extensión de Prisma no lo descifra automáticamente ahí.
+        const accessToken = descifrarSiCorresponde(empresa.whatsappToken) || process.env.WHATSAPP_ACCESS_TOKEN;
         if (accessToken && empresa.whatsappNumeroId) {
           await sendWhatsAppTextMessage({
             phoneNumberId: empresa.whatsappNumeroId,
