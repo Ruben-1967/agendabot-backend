@@ -7,8 +7,10 @@
 //   1. A los 5 min desde pausadaPorHumanoEn, si no se mandó antes: un único
 //      mensaje de contención al cliente.
 //   2. A los 10 min desde pausadaPorHumanoEn, si no se mandó antes: una
-//      única alerta interna al negocio (hoy solo un log — ver
-//      enviarAlertaUrgenteInterna más abajo).
+//      única alerta interna al negocio por WhatsApp (a empresa.telefonoContacto,
+//      plantilla aprobada — ver enviarAlertaUrgenteInterna más abajo). El
+//      panel además muestra un aviso mientras pausadaPorHumanoEn siga sin
+//      null — ver GET /conversaciones/:empresaId/pendientes/count.
 //   3. A las 2h desde el ÚLTIMO mensaje del CLIENTE (no desde
 //      pausadaPorHumanoEn — ver diseño aprobado, no hay tope de reactivación
 //      por tiempo desde la intervención humana): se reactiva el bot,
@@ -20,8 +22,9 @@
 
 const cron = require('node-cron');
 const prisma = require('../lib/prisma');
-const { sendWhatsAppTextMessage } = require('../services/whatsapp');
+const { sendWhatsAppTextMessage, sendWhatsAppTemplateMessage } = require('../services/whatsapp');
 const { descifrarSiCorresponde } = require('../lib/cifrado');
+const { obtenerUrlPanelPrincipal } = require('../lib/urlPanel');
 
 const MINUTOS_CONTENCION = 5;
 const MINUTOS_ALERTA = 10;
@@ -29,17 +32,38 @@ const HORAS_REACTIVACION = 2;
 
 const TEXTO_CONTENCION = 'Estamos revisando tu consulta, en breve te respondemos 🙌';
 
-// TODO: no existe todavía un mecanismo de alerta interna al negocio en el
-// código (el pendiente "alerta cuando el cliente pide hablar con un
-// humano" — ver memoria del proyecto — sigue sin implementarse). Cuando se
-// construya, compartir esa misma infraestructura acá en vez de duplicarla.
-// Por ahora, solo queda logueado — nadie recibe un aviso real todavía.
+// Igual que los avisos de prueba vencida / activación de cuenta
+// (bloquearEmpresasVencidas.js, auth.js): mensajes del PLATAFORMA hacia el
+// negocio usan el número propio de AgendaBot (DEMO_PHONE_NUMBER_ID), no el
+// número conectado del negocio — y van a empresa.telefonoContacto. Como esa
+// conversación casi seguro lleva más de 24h sin actividad, tiene que ser
+// una plantilla aprobada por Meta, no texto libre.
+const TEMPLATE_ALERTA_URGENTE = 'alerta_cliente_pide_humano'; // debe existir y estar aprobada en Meta
+
 async function enviarAlertaUrgenteInterna(conversacion, empresa) {
-  console.warn(
-    `[PAUSA-COEXISTENCE] ALERTA URGENTE (sin canal real todavía): conversación ${conversacion.id} ` +
-    `de "${empresa.nombre}" (cliente ${conversacion.telefono}) lleva ${MINUTOS_ALERTA}+ min sin ` +
-    `resolución tras intervención humana.`
-  );
+  const phoneNumberId = process.env.DEMO_PHONE_NUMBER_ID;
+  const accessToken = process.env.DEMO_WHATSAPP_ACCESS_TOKEN;
+
+  if (!phoneNumberId || !accessToken || !empresa.telefonoContacto) {
+    console.warn(
+      `[PAUSA-COEXISTENCE] ALERTA URGENTE (sin poder enviar — falta telefonoContacto o config de plataforma): ` +
+      `conversación ${conversacion.id} de "${empresa.nombre}" (cliente ${conversacion.telefono}) lleva ` +
+      `${MINUTOS_ALERTA}+ min sin resolución tras intervención humana.`
+    );
+    return;
+  }
+
+  try {
+    await sendWhatsAppTemplateMessage({
+      phoneNumberId,
+      accessToken,
+      to: empresa.telefonoContacto,
+      templateName: TEMPLATE_ALERTA_URGENTE,
+      variables: [empresa.nombre, conversacion.telefono, `${obtenerUrlPanelPrincipal()}/admin/chats`],
+    });
+  } catch (error) {
+    console.error(`[PAUSA-COEXISTENCE] Error enviando alerta urgente por WhatsApp a "${empresa.nombre}":`, error.message);
+  }
 }
 
 function obtenerTimestampUltimoMensajeCliente(mensajes) {

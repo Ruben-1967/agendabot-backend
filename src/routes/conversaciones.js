@@ -70,6 +70,28 @@ router.get('/:empresaId', requireAuth, async (req, res) => {
   }
 });
 
+// GET /conversaciones/:empresaId/pendientes/count - Cuántas conversaciones
+// siguen pausadas esperando intervención humana (para el badge del panel).
+// Liviano a propósito: se consulta por polling desde AdminLayout, en cada
+// pantalla, no solo en "Chats en vivo".
+router.get('/:empresaId/pendientes/count', requireAuth, async (req, res) => {
+  try {
+    const { empresaId } = req.params;
+
+    if (!req.usuario || req.usuario.empresaId !== empresaId) {
+      return res.status(403).json({ error: 'No autorizado' });
+    }
+
+    const pendientes = await prisma.conversacion.count({
+      where: { empresaId, pausadaPorHumanoEn: { not: null } },
+    });
+
+    res.json({ pendientes });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // GET /conversaciones/:empresaId/:conversacionId - Traer una conversación completa
 router.get('/:empresaId/:conversacionId', requireAuth, async (req, res) => {
   try {
