@@ -1188,7 +1188,7 @@ router.get('/citas', requireRole('ADMIN', 'RECEPCION'), async (req, res) => {
 router.post('/citas', requireRole('ADMIN', 'RECEPCION'), async (req, res) => {
   try {
     const empresaId = req.usuario.empresaId;
-    const { fecha, hora, servicioId, recursoAgendableId, clienteId, clienteNuevo } = req.body;
+    const { fecha, hora, servicioId, recursoAgendableId, clienteId, clienteNuevo, forzarSobrecupo } = req.body;
 
     if (!fecha || !REGEX_FECHA.test(fecha)) {
       return res.status(400).json({ error: 'Falta o es inválido "fecha" (formato YYYY-MM-DD)' });
@@ -1240,10 +1240,19 @@ router.post('/citas', requireRole('ADMIN', 'RECEPCION'), async (req, res) => {
       // nunca miró servicio.duracionMinutos, esto solo alineaba el código
       // nuevo de "Agregar cita" manual con eso).
       fechaHoraFin = new Date(fechaHoraInicio.getTime() + (recurso.duracionCitaMinutos || 30) * 60 * 1000);
-      if (await tieneConflicto(recurso.id, fechaHoraFin)) {
-        return res.status(400).json({ error: 'Hay un conflicto con otra cita en ese horario' });
+      // forzarSobrecupo solo tiene sentido cuando el admin eligió un
+      // profesional puntual a propósito — ver más abajo por qué no aplica
+      // al modo "no especificar". Reportado por Ahorróptica 2026-09-04: con
+      // la agenda llena de citas de 15 min sin ningún hueco libre, no había
+      // forma de meter a un paciente extra aunque el negocio lo permitiera.
+      if (!forzarSobrecupo && (await tieneConflicto(recurso.id, fechaHoraFin))) {
+        return res.status(400).json({ error: 'Hay un conflicto con otra cita en ese horario', codigo: 'CONFLICTO_HORARIO' });
       }
     } else {
+      if (forzarSobrecupo) {
+        return res.status(400).json({ error: 'Para forzar un sobrecupo primero elige un profesional específico' });
+      }
+
       // Filtra por tipo:'profesional' para calzar exactamente con la lista
       // que ve el panel en GET /agenda/profesionales.
       const recursos = await prisma.recursoAgendable.findMany({ where: { empresaId, tipo: 'profesional' } });
@@ -1275,7 +1284,7 @@ router.post('/citas', requireRole('ADMIN', 'RECEPCION'), async (req, res) => {
       }
 
       if (!recurso) {
-        return res.status(400).json({ error: 'Todos los profesionales tienen un conflicto de horario a esa hora' });
+        return res.status(400).json({ error: 'Todos los profesionales tienen un conflicto de horario a esa hora', codigo: 'CONFLICTO_HORARIO' });
       }
     }
 
