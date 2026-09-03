@@ -524,8 +524,23 @@ ${empresa.requiereRut ? '- Este negocio EXIGE nombre completo, RUT y teléfono d
   // modelo de forma natural) — que aparezca en un turno sin tool_use es
   // señal casi segura de que el modelo lo copió de un turno anterior en
   // vez de consultar de nuevo.
-  const pareceListaDeHorariosInventada = (texto) =>
-    /horarios? disponibles para el/i.test(texto || '') && /elige el que más te acomode/i.test(texto || '');
+  // Ampliado 2026-09-03: el wording fijo de arriba dejó pasar una variante
+  // real — el modelo narró "Los horarios disponibles para HOY son: 14:00,
+  // 14:15, ...  ¿Cuál te viene bien?" (sin "para el [día]" ni "elige el que
+  // más te acomode") para un jueves sin NINGÚN horario configurado
+  // (confirmado con el motor real: obtenerHorariosDisponibles devuelve []).
+  // El wording exacto varía cada vez que el modelo lo redacta libremente,
+  // así que además del patrón fijo, se detecta cualquier turno sin
+  // tool_use que liste 3+ horas en formato HH:MM sueltas en el texto — el
+  // atajo real SÍ pone las horas en el cuerpo del mensaje, pero eso solo
+  // pasa cuando la herramienta se llamó de verdad (este chequeo corre solo
+  // en el turno SIN tool_use, así que nunca choca con el atajo real).
+  const pareceListaDeHorariosInventada = (texto) => {
+    const t = texto || '';
+    if (/horarios? disponibles para el/i.test(t) && /elige el que más te acomode/i.test(t)) return true;
+    const horasEnTexto = t.match(/\b([01]?\d|2[0-3]):[0-5]\d\b/g) || [];
+    return horasEnTexto.length >= 3;
+  };
 
   // Misma clase de bug, pero para la lista de PRÓXIMOS DÍAS (cuando el
   // cliente no especifica fecha) — confirmado en vivo (Ahorróptica,
