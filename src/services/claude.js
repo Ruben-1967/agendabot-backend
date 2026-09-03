@@ -1,6 +1,6 @@
 const Anthropic = require('@anthropic-ai/sdk');
 const prisma = require('../lib/prisma');
-const { obtenerHorariosDisponibles, crearCita, obtenerProximosDiasConDisponibilidad, obtenerHorasDisponiblesParaServicio, obtenerProximosDiasParaServicio } = require('./disponibilidad');
+const { obtenerHorariosDisponiblesPorBloque, crearCita, obtenerProximosDiasConDisponibilidad, obtenerHorasDisponiblesPorBloqueParaServicio, obtenerProximosDiasParaServicio } = require('./disponibilidad');
 const { normalizarRut, esRutValido } = require('../lib/rut');
 
 // El texto que acompaña la lista de "próximos días" es fijo (ver más abajo,
@@ -211,11 +211,11 @@ async function ejecutarHerramienta(nombre, input, contexto) {
       if (!resuelto.recursoId) {
         return { error: 'Esta empresa no tiene un recurso agendable configurado todavía.' };
       }
-      const horas = await obtenerHorariosDisponibles(resuelto.recursoId, input.fecha);
-      return { fecha: input.fecha, horasDisponibles: horas };
+      const bloques = await obtenerHorariosDisponiblesPorBloque(resuelto.recursoId, input.fecha);
+      return { fecha: input.fecha, horasDisponibles: bloques.flatMap((b) => b.horas), bloques };
     }
-    const horas = await obtenerHorasDisponiblesParaServicio(resuelto.servicioDb.id, input.fecha);
-    return { fecha: input.fecha, horasDisponibles: horas };
+    const bloques = await obtenerHorasDisponiblesPorBloqueParaServicio(resuelto.servicioDb.id, input.fecha);
+    return { fecha: input.fecha, horasDisponibles: bloques.flatMap((b) => b.horas), bloques };
   }
 
   if (nombre === 'consultar_proximos_dias_disponibles') {
@@ -655,7 +655,7 @@ ${empresa.requiereRut ? '- Este negocio EXIGE nombre completo, RUT y teléfono d
         // horas reales. Si no hay horas (arreglo vacío), dejamos que el
         // ciclo siga normal para que Claude ofrezca otro día en texto.
         if (block.name === 'consultar_disponibilidad' && resultado.horasDisponibles?.length > 0) {
-          horariosParaMostrar = { fecha: resultado.fecha, horas: resultado.horasDisponibles };
+          horariosParaMostrar = { fecha: resultado.fecha, horas: resultado.horasDisponibles, bloques: resultado.bloques || [] };
         }
 
         // Mismo mecanismo, pero para la lista de PRÓXIMOS DÍAS (cuando el
@@ -730,20 +730,40 @@ ${empresa.requiereRut ? '- Este negocio EXIGE nombre completo, RUT y teléfono d
     if (horariosParaMostrar) {
       const fechaLegible = fechaLegibleDesdeISO(horariosParaMostrar.fecha);
       const horas = horariosParaMostrar.horas;
-      // El texto debe enumerar como máximo las mismas horas que van a
-      // aparecer como opciones seleccionables en la lista interactiva de
-      // WhatsApp — Meta limita esa lista a MAX_FILAS_LISTA_INTERACTIVA filas
-      // (ver whatsapp.js), así que enumerar más horas en el texto que en la
-      // lista confundía al cliente (veía escrita una hora, ej. "12:15", que
-      // después no aparecía como opción al tocar la lista). Reportado por
-      // Ahorróptica 2026-09-01.
-      const horasEnLista = horas.slice(0, MAX_FILAS_LISTA_INTERACTIVA);
-      const hayMas = horas.length > horasEnLista.length;
+      const bloques = horariosParaMostrar.bloques;
+
+      // Caso de siempre: un solo bloque real (sin break ese día) que cabe
+      // completo en la lista interactiva de WhatsApp — Meta limita esa
+      // lista a MAX_FILAS_LISTA_INTERACTIVA filas (ver whatsapp.js).
+      if (bloques.length <= 1 && horas.length <= MAX_FILAS_LISTA_INTERACTIVA) {
+        return {
+          texto: `Estos son los horarios disponibles para el ${fechaLegible}: ${horas.join(', ')}. Elige el que más te acomode 👇`,
+          interactivo: { tipo: 'lista_horarios', fecha: horariosParaMostrar.fecha, horas },
+        };
+      }
+
+      // Demasiadas horas para la lista interactiva, o hay más de un bloque
+      // real (ej. mañana y tarde separados por un break en el horario
+      // configurado) — en vez de truncar a 10 y esconder horas reales, se
+      // manda el listado completo en texto plano, un mensaje por bloque,
+      // sin lista interactiva (no puede representar más de 10 opciones de
+      // todas formas). El corte de bloques sale directo del horario real
+      // configurado (HorarioSemanal puede tener varias filas el mismo día),
+      // no de un corte fijo a las 12:00. Pedido por Ahorróptica 2026-09-03
+      // — agenda de citas cada 15 min generaba demasiadas horas para un
+      // solo mensaje. El bot ya reconoce que el cliente responda con la
+      // hora en texto libre, sin necesidad de tocar una lista.
+      const bloquesEtiquetados = bloques.map((b) => ({
+        ...b,
+        etiqueta: Number(b.horaInicio.split(':')[0]) < 12 ? 'la mañana' : 'la tarde',
+      }));
+      const texto = bloquesEtiquetados
+        .map((b) => `Estos son los horarios disponibles en ${b.etiqueta} para el ${fechaLegible}: ${b.horas.join(', ')}.`)
+        .join('\n\n') + '\n\n¿Cuál te acomoda? Escríbeme la hora que prefieras.';
+
       return {
-        texto: hayMas
-          ? `Estos son algunos de los horarios disponibles para el ${fechaLegible}: ${horasEnLista.join(', ')}. Elige el que más te acomode 👇 (si prefieres un horario más tarde ese día, cuéntame)`
-          : `Estos son los horarios disponibles para el ${fechaLegible}: ${horasEnLista.join(', ')}. Elige el que más te acomode 👇`,
-        interactivo: { tipo: 'lista_horarios', fecha: horariosParaMostrar.fecha, horas: horariosParaMostrar.horas },
+        texto,
+        interactivo: { tipo: 'horarios_por_bloque', fecha: horariosParaMostrar.fecha, bloques: bloquesEtiquetados },
       };
     }
 

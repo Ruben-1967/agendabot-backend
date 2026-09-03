@@ -1036,6 +1036,26 @@ app.post('/webhook/whatsapp', verificarFirmaWebhookWhatsApp, async (req, res) =>
           titulo: hora,
         })),
       });
+    } else if (interactivo?.tipo === 'horarios_por_bloque') {
+      // Demasiadas horas para una lista interactiva (o hay más de un bloque
+      // real, ej. mañana/tarde separados por un break) — un mensaje de
+      // texto plano por bloque en vez de un solo texto largo o una lista
+      // truncada a 10. Pedido por Ahorróptica 2026-09-03.
+      for (const bloque of interactivo.bloques) {
+        const textoBloque = `Estos son los horarios disponibles en ${bloque.etiqueta} para el ${fechaLegibleDesdeISO(interactivo.fecha)}: ${bloque.horas.join(', ')}.`;
+        await sendWhatsAppTextMessage({
+          phoneNumberId,
+          to: telefonoCliente,
+          text: textoBloque,
+          accessToken,
+        });
+      }
+      await sendWhatsAppTextMessage({
+        phoneNumberId,
+        to: telefonoCliente,
+        text: '¿Cuál te acomoda? Escríbeme la hora que prefieras.',
+        accessToken,
+      });
     } else if (interactivo?.tipo === 'catalogo_imagenes') {
       // Máximo 4 imágenes por respuesta (ya viene acotado desde claude.js).
       // Se manda primero el texto y luego cada imagen por separado — la API

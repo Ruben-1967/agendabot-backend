@@ -54,6 +54,23 @@ async function obtenerHorarioDelDia(recursoAgendableId, fechaISO, diaSemana) {
  * @returns {Promise<string[]>} Lista de horas de inicio disponibles, ej. ['10:00', '10:30', ...].
  */
 async function obtenerHorariosDisponibles(recursoAgendableId, fechaISO) {
+  const bloques = await obtenerHorariosDisponiblesPorBloque(recursoAgendableId, fechaISO);
+  return bloques.flatMap((b) => b.horas);
+}
+
+/**
+ * Igual que obtenerHorariosDisponibles, pero sin aplanar el resultado —
+ * agrupa las horas reales por cada bloque de horario configurado
+ * (HorarioSemanal puede tener varias filas para el mismo día, ej. un
+ * bloque de mañana y otro de tarde separados por un break). Bloques sin
+ * ninguna hora disponible se omiten del resultado. Usado para poder
+ * mandar un mensaje de WhatsApp por bloque (ej. "Mañana"/"Tarde") en vez
+ * de un solo texto largo — pedido por Ahorróptica 2026-09-03, agenda de
+ * citas cada 15 min genera demasiadas horas para un solo mensaje/lista.
+ *
+ * @returns {Promise<{horaInicio: string, horaFin: string, horas: string[]}[]>}
+ */
+async function obtenerHorariosDisponiblesPorBloque(recursoAgendableId, fechaISO) {
   const recurso = await prisma.recursoAgendable.findUnique({
     where: { id: recursoAgendableId },
   });
@@ -105,9 +122,10 @@ async function obtenerHorariosDisponibles(recursoAgendableId, fechaISO) {
   });
 
   const duracion = recurso.duracionCitaMinutos;
-  const slotsDisponibles = [];
+  const bloquesConHoras = [];
 
   for (const bloque of horarios) {
+    const horasDelBloque = [];
     let cursor = horaAMinutos(bloque.horaInicio);
     const finBloque = horaAMinutos(bloque.horaFin);
 
@@ -131,14 +149,18 @@ async function obtenerHorariosDisponibles(recursoAgendableId, fechaISO) {
       );
 
       if (cumpleAnticipacion && !chocaConBloqueo && !chocaConCita) {
-        slotsDisponibles.push(horaSlot);
+        horasDelBloque.push(horaSlot);
       }
 
       cursor += duracion;
     }
+
+    if (horasDelBloque.length > 0) {
+      bloquesConHoras.push({ horaInicio: bloque.horaInicio, horaFin: bloque.horaFin, horas: horasDelBloque });
+    }
   }
 
-  return slotsDisponibles;
+  return bloquesConHoras;
 }
 
 /**
@@ -326,6 +348,41 @@ async function obtenerHorasDisponiblesParaServicio(servicioId, fechaISO, recurso
 }
 
 /**
+ * Igual que obtenerHorasDisponiblesParaServicio, pero agrupada por bloque
+ * (ver obtenerHorariosDisponiblesPorBloque). Cuando el servicio SÍ exige un
+ * profesional puntual, refleja los bloques reales de su horario (con
+ * break, si lo tiene). Cuando NO (varios recursos posibles), no hay un
+ * único horario real que mostrar por bloque — se combinan todas las horas
+ * en un solo bloque ordenado, igual que ya hacía la versión plana.
+ *
+ * @returns {Promise<{horaInicio: string, horaFin: string, horas: string[]}[]>}
+ */
+async function obtenerHorasDisponiblesPorBloqueParaServicio(servicioId, fechaISO, recursoAgendableId = null) {
+  const servicio = await prisma.servicio.findUnique({
+    where: { id: servicioId },
+    include: { recursos: true },
+  });
+  if (!servicio) throw new Error('Servicio no encontrado');
+
+  if (servicio.requiereProfesionalEspecifico) {
+    if (!recursoAgendableId) throw new Error('FALTA_RECURSO_AGENDABLE');
+    return obtenerHorariosDisponiblesPorBloque(recursoAgendableId, fechaISO);
+  }
+
+  const recursosVinculados = servicio.recursos.map((sr) => sr.recursoAgendableId);
+  if (recursosVinculados.length === 0) return [];
+
+  const horasSet = new Set();
+  for (const rid of recursosVinculados) {
+    const horas = await obtenerHorariosDisponibles(rid, fechaISO);
+    horas.forEach((h) => horasSet.add(h));
+  }
+  const horasOrdenadas = Array.from(horasSet).sort();
+  if (horasOrdenadas.length === 0) return [];
+  return [{ horaInicio: horasOrdenadas[0], horaFin: horasOrdenadas[horasOrdenadas.length - 1], horas: horasOrdenadas }];
+}
+
+/**
  * Equivalente a obtenerProximosDiasConDisponibilidad, pero por SERVICIO en
  * vez de por recurso directo (mismo criterio que obtenerHorasDisponiblesParaServicio).
  *
@@ -421,11 +478,13 @@ async function crearCita({ empresaId, clienteId, recursoAgendableId = null, serv
 module.exports = {
   obtenerHorarioDelDia,
   obtenerHorariosDisponibles,
+  obtenerHorariosDisponiblesPorBloque,
   crearCita,
   obtenerProximosDiasConDisponibilidad,
   obtenerDisponibilidad,
   validarSlot,
   obtenerDisponibilidadPorServicio,
   obtenerHorasDisponiblesParaServicio,
+  obtenerHorasDisponiblesPorBloqueParaServicio,
   obtenerProximosDiasParaServicio,
 };
