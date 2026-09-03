@@ -68,6 +68,7 @@ router.post('/login', limitadorLogin, async (req, res) => {
         recursoAgendableId: usuario.recursoAgendableId,
         recursoAgendableNombre: usuario.recursoAgendable?.nombre || null,
         plan: usuario.empresa.suscripcion?.plan || null,
+        whatsappConectado: Boolean(usuario.empresa.whatsappNumeroId),
       },
     });
 
@@ -157,6 +158,7 @@ router.post('/activar-cuenta', async (req, res) => {
         recursoAgendableId: usuarioActivado.recursoAgendableId,
         recursoAgendableNombre: usuarioActivado.recursoAgendable?.nombre || null,
         plan: usuarioActivado.empresa.suscripcion?.plan || null,
+        whatsappConectado: Boolean(usuarioActivado.empresa.whatsappNumeroId),
       },
     });
   } catch (error) {
