@@ -19,27 +19,36 @@ const { obtenerHorariosDisponiblesPorBloque } = require('../src/services/disponi
 const EMPRESA_ID = 'ahoroptica-lautaro-seed-id';
 const TELEFONO_PRUEBA = '+56900000355';
 
-// Busca el próximo viernes (único día configurado hoy para Marlene Gomez).
-function proximoViernesISO() {
+// Viernes N (0 = el más próximo, 1 = el siguiente...), único día
+// configurado hoy para Marlene Gomez.
+function viernesISO(n) {
   const hoy = new Date();
   const dia = hoy.getUTCDay();
   const diasHastaViernes = (5 - dia + 7) % 7 || 7;
-  hoy.setUTCDate(hoy.getUTCDate() + diasHastaViernes);
+  hoy.setUTCDate(hoy.getUTCDate() + diasHastaViernes + n * 7);
   return hoy.toISOString().slice(0, 10);
 }
 
 async function main() {
   const empresa = await prisma.empresa.findUnique({ where: { id: EMPRESA_ID } });
   const recurso = await prisma.recursoAgendable.findFirst({ where: { empresaId: EMPRESA_ID } });
-  const fecha = proximoViernesISO();
 
-  const bloques = await obtenerHorariosDisponiblesPorBloque(recurso.id, fecha);
-  const totalHoras = bloques.flatMap((b) => b.horas).length;
+  // Los viernes más próximos ya tienen citas reales tomando cupos — busca
+  // el primero, hasta 8 semanas hacia adelante, con más de 10 horas libres
+  // reales, para probar de verdad el caso ">10" en vez de solo el normal.
+  let fecha, bloques, totalHoras;
+  for (let n = 0; n < 8; n++) {
+    fecha = viernesISO(n);
+    bloques = await obtenerHorariosDisponiblesPorBloque(recurso.id, fecha);
+    totalHoras = bloques.flatMap((b) => b.horas).length;
+    if (totalHoras > 10) break;
+  }
+
   console.log(`Bloques reales para ${fecha}:`, JSON.stringify(bloques.map((b) => ({ horaInicio: b.horaInicio, horaFin: b.horaFin, cantidad: b.horas.length }))));
   console.log(`Total de horas reales: ${totalHoras}\n`);
 
   if (totalHoras <= 10) {
-    console.log('Ese viernes tiene 10 horas o menos — no sirve para probar el caso ">10", pero igual reviso que la conversación no rompa nada.');
+    console.log('No se encontró ningún viernes con más de 10 horas libres en las próximas 8 semanas — no se pudo probar el caso ">10", pero igual reviso que la conversación no rompa nada.');
   }
 
   let cliente = await prisma.cliente.findFirst({ where: { empresaId: empresa.id, telefono: TELEFONO_PRUEBA } });
