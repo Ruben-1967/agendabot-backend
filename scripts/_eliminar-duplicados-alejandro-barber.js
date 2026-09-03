@@ -22,11 +22,20 @@ const IDS_A_ELIMINAR = [
   '8f583c44-6ff9-4e52-aa92-820a0c199a45',
 ];
 
+// Todo modelo con un FK directo a Empresa (empresaId o, en el caso de
+// DemoAsignada, empresaDemoId) — la primera pasada de este script se
+// quedó corta (le faltaban CatalogoItem, BilleteraCreditos,
+// OrdenCompraCreditos, DemoAsignada, WebsiteLeads) y reventó con un error
+// de foreign key de Postgres al toparse con una fila en DemoAsignada que
+// no había contado. Ahora recorre exactamente la lista de modelos que
+// tienen ese FK en schema.prisma, para no volver a llevarse una sorpresa.
 async function contarRelacionadas(empresaId) {
   const [
     usuarios, clientes, recursos, servicios, citas, listaEspera,
     conversaciones, ventas, productos, campanasEnvio, pedidos,
-    catalogoCategorias, suscripcion, historialSuscripcion, contratosAceptados,
+    catalogoCategorias, catalogoItems, suscripcion, historialSuscripcion,
+    contratosAceptados, billeteraCreditos, ordenesCompraCreditos,
+    demoAsignada, websiteLeads,
   ] = await Promise.all([
     prisma.usuario.count({ where: { empresaId } }),
     prisma.cliente.count({ where: { empresaId } }),
@@ -40,14 +49,21 @@ async function contarRelacionadas(empresaId) {
     prisma.campanaEnvio.count({ where: { empresaId } }),
     prisma.pedido.count({ where: { empresaId } }),
     prisma.catalogoCategoria.count({ where: { empresaId } }),
+    prisma.catalogoItem.count({ where: { empresaId } }),
     prisma.suscripcion.count({ where: { empresaId } }),
     prisma.historialSuscripcion.count({ where: { empresaId } }),
     prisma.contratoAceptado.count({ where: { empresaId } }),
+    prisma.billeteraCreditos.count({ where: { empresaId } }),
+    prisma.ordenCompraCreditos.count({ where: { empresaId } }),
+    prisma.demoAsignada.count({ where: { empresaDemoId: empresaId } }),
+    prisma.websiteLeads.count({ where: { empresaId } }),
   ]);
   return {
     usuarios, clientes, recursos, servicios, citas, listaEspera,
     conversaciones, ventas, productos, campanasEnvio, pedidos,
-    catalogoCategorias, suscripcion, historialSuscripcion, contratosAceptados,
+    catalogoCategorias, catalogoItems, suscripcion, historialSuscripcion,
+    contratosAceptados, billeteraCreditos, ordenesCompraCreditos,
+    demoAsignada, websiteLeads,
   };
 }
 
@@ -69,8 +85,12 @@ async function main() {
       continue;
     }
 
-    await prisma.empresa.delete({ where: { id } });
-    console.log(`${empresa.nombre} (${id}): eliminada (sin ningún dato relacionado).`);
+    try {
+      await prisma.empresa.delete({ where: { id } });
+      console.log(`${empresa.nombre} (${id}): eliminada (sin ningún dato relacionado).`);
+    } catch (error) {
+      console.error(`${empresa.nombre} (${id}): error al eliminar, se sigue con las demás:`, error.message);
+    }
   }
 }
 main().catch((e) => console.error('ERROR:', e)).finally(() => prisma.$disconnect());
