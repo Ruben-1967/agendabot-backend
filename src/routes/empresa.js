@@ -25,7 +25,7 @@ const router = express.Router();
 const prisma = require('../lib/prisma');
 const { requireAuth, requireRole } = require('../middleware/auth');
 
-const CAMPOS_INFO = ['direccion', 'notaAgendamiento', 'informacionAdicional', 'requiereRut', 'tonoComunicacion', 'telefonoContacto'];
+const CAMPOS_INFO = ['direccion', 'notaAgendamiento', 'informacionAdicional', 'requiereRut', 'tonoComunicacion', 'telefonoContacto', 'minutosAlertaUrgente'];
 
 const GRAPH_API_VERSION = 'v21.0';
 
