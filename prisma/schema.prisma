@@ -96,6 +96,11 @@ model Empresa {
   requiereRut       Boolean @default(false)
   tonoComunicacion  String? @default("Neutral")
   sitioWeb        String?
+  // Minutos desde que un cliente pide hablar con una persona hasta que se
+  // manda la alerta urgente por WhatsApp al telefonoContacto (ver
+  // jobs/pausaCoexistence.js) — antes era un valor fijo global (10), ahora
+  // cada negocio decide qué es apropiado para él.
+  minutosAlertaUrgente Int @default(10)
 
   // ====== CAMPOS PARA WHATSAPP BUSINESS ======
   whatsappNumeroId    String?   @unique  // phone_number_id de Meta (ej: "135018715483508")

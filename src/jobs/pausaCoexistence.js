@@ -6,11 +6,13 @@
 //
 //   1. A los 5 min desde pausadaPorHumanoEn, si no se mandó antes: un único
 //      mensaje de contención al cliente.
-//   2. A los 10 min desde pausadaPorHumanoEn, si no se mandó antes: una
-//      única alerta interna al negocio por WhatsApp (a empresa.telefonoContacto,
-//      plantilla aprobada — ver enviarAlertaUrgenteInterna más abajo). El
-//      panel además muestra un aviso mientras pausadaPorHumanoEn siga sin
-//      null — ver GET /conversaciones/:empresaId/pendientes/count.
+//   2. A los empresa.minutosAlertaUrgente minutos desde pausadaPorHumanoEn
+//      (configurable por negocio en Información del negocio, 10 por
+//      defecto), si no se mandó antes: una única alerta interna al negocio
+//      por WhatsApp (a empresa.telefonoContacto, plantilla aprobada — ver
+//      enviarAlertaUrgenteInterna más abajo). El panel además muestra un
+//      aviso mientras pausadaPorHumanoEn siga sin null — ver GET
+//      /conversaciones/:empresaId/pendientes/count.
 //   3. A las 2h desde el ÚLTIMO mensaje del CLIENTE (no desde
 //      pausadaPorHumanoEn — ver diseño aprobado, no hay tope de reactivación
 //      por tiempo desde la intervención humana): se reactiva el bot,
@@ -27,7 +29,7 @@ const { descifrarSiCorresponde } = require('../lib/cifrado');
 const { obtenerUrlPanelPrincipal } = require('../lib/urlPanel');
 
 const MINUTOS_CONTENCION = 5;
-const MINUTOS_ALERTA = 10;
+const MINUTOS_ALERTA_DEFECTO = 10; // fallback si la empresa no tiene minutosAlertaUrgente seteado
 const HORAS_REACTIVACION = 2;
 
 const TEXTO_CONTENCION = 'Estamos revisando tu consulta, en breve te respondemos 🙌';
@@ -134,8 +136,10 @@ async function procesarPausasCoexistence() {
         }
       }
 
-      // 3. Alerta interna a los 10 min.
-      if (minutosDesdePausa >= MINUTOS_ALERTA && !conversacion.alertaUrgenteEnviadaEn) {
+      // 3. Alerta interna — el umbral lo decide cada negocio (decisión
+      // 2026-09-04, antes era un fijo global de 10 min para todos).
+      const minutosAlerta = empresa.minutosAlertaUrgente ?? MINUTOS_ALERTA_DEFECTO;
+      if (minutosDesdePausa >= minutosAlerta && !conversacion.alertaUrgenteEnviadaEn) {
         await enviarAlertaUrgenteInterna(conversacion, empresa);
         await prisma.conversacion.update({
           where: { id: conversacion.id },

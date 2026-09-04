@@ -74,6 +74,7 @@ router.get('/info', requireAuth, requireRole('ADMIN'), async (req, res) => {
         requiereRut: true,
         tonoComunicacion: true,
         telefonoContacto: true,
+        minutosAlertaUrgente: true,
       },
     });
 
@@ -100,6 +101,12 @@ router.put('/info', requireAuth, requireRole('ADMIN'), async (req, res) => {
           return res.status(400).json({ error: 'requiereRut debe ser true o false' });
         }
         data.requiereRut = req.body.requiereRut;
+      } else if (campo === 'minutosAlertaUrgente') {
+        const minutos = Number(req.body.minutosAlertaUrgente);
+        if (!Number.isInteger(minutos) || minutos < 0) {
+          return res.status(400).json({ error: 'minutosAlertaUrgente debe ser un número entero mayor o igual a 0' });
+        }
+        data.minutosAlertaUrgente = minutos;
       } else {
         // Los campos de texto son opcionales: string vacío o null los limpia.
         if (req.body[campo] !== null && typeof req.body[campo] !== 'string') {
@@ -124,6 +131,9 @@ router.put('/info', requireAuth, requireRole('ADMIN'), async (req, res) => {
         notaAgendamiento: true,
         informacionAdicional: true,
         requiereRut: true,
+        tonoComunicacion: true,
+        telefonoContacto: true,
+        minutosAlertaUrgente: true,
       },
     });
 
