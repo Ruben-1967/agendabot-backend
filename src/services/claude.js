@@ -68,15 +68,18 @@ function construirTools(empresa, incluirMostrarServicios, incluirCatalogo) {
     fecha: { type: 'string', description: 'Fecha de la cita, formato YYYY-MM-DD.' },
     hora: { type: 'string', description: "Hora de inicio, formato HH:MM (ej. '10:30')." },
     servicio: { type: 'string', description: 'Nombre del servicio solicitado, ej. "Examen de la vista".' },
+    // Siempre se pide, sin importar requiereRut (decisión 2026-09-04): quien
+    // escribe por WhatsApp no siempre es quien se atiende (ej. agenda para
+    // un familiar), y el nombre de perfil de WhatsApp no es confiable —
+    // reportado como falla real por el usuario.
+    nombre: {
+      type: 'string',
+      description: "Nombre completo de la persona que se va a atender, tal como el cliente lo dice explícitamente en la conversación — NUNCA asumas el nombre de perfil de WhatsApp del contacto, siempre pregúntalo directamente (puede ser distinto de quien escribe, ej. agendando para un familiar).",
+    },
   };
-  const agendarCitaRequired = ['fecha', 'hora', 'servicio'];
+  const agendarCitaRequired = ['fecha', 'hora', 'servicio', 'nombre'];
 
   if (empresa.requiereRut) {
-    agendarCitaProperties.nombre = {
-      type: 'string',
-      description: "Nombre completo del cliente, tal como él lo dice explícitamente en la conversación — NUNCA asumas el nombre de perfil de WhatsApp del contacto, este negocio exige preguntarlo directamente.",
-    };
-    agendarCitaRequired.push('nombre');
     agendarCitaProperties.rut = {
       type: 'string',
       description: "RUT del cliente (con guión, ej. '12345678-9'). Este negocio exige RUT para agendar.",
@@ -156,8 +159,8 @@ function construirTools(empresa, incluirMostrarServicios, incluirCatalogo) {
     {
       name: 'agendar_cita',
       description: empresa.requiereRut
-        ? 'Crea una cita real en el sistema para el cliente actual, en una fecha y hora específicas que ya se confirmó que están disponibles. Solo usar después de que el cliente haya confirmado explícitamente fecha, hora, servicio, nombre completo Y RUT — este negocio exige nombre y RUT para agendar (nunca asumas el nombre del perfil de WhatsApp).'
-        : 'Crea una cita real en el sistema para el cliente actual, en una fecha y hora específicas que ya se confirmó que están disponibles. Solo usar después de que el cliente haya confirmado explícitamente fecha, hora y servicio.',
+        ? 'Crea una cita real en el sistema para el cliente actual, en una fecha y hora específicas que ya se confirmó que están disponibles. Solo usar después de que el cliente haya confirmado explícitamente fecha, hora, servicio, nombre completo de quien se atiende Y RUT — este negocio exige nombre y RUT para agendar (nunca asumas el nombre del perfil de WhatsApp).'
+        : 'Crea una cita real en el sistema para el cliente actual, en una fecha y hora específicas que ya se confirmó que están disponibles. Solo usar después de que el cliente haya confirmado explícitamente fecha, hora, servicio y el nombre completo de quien se va a atender (nunca asumas el nombre del perfil de WhatsApp).',
       input_schema: {
         type: 'object',
         properties: agendarCitaProperties,
@@ -269,18 +272,23 @@ async function ejecutarHerramienta(nombre, input, contexto) {
       return { error: 'Esta empresa no tiene un recurso agendable configurado todavía.' };
     }
 
-    // Si la empresa exige RUT (y, junto con eso, nombre explícito), el
-    // schema de la herramienta ya los marca como required — esto es un
-    // resguardo extra por si Claude igual la llama sin alguno de los dos
-    // campos. Si vienen, los guardamos en el Cliente (se sobreescriben si
-    // venían vacíos o distintos, así queda actualizado a futuro) — nunca
-    // confiamos en el nombre de perfil de WhatsApp para este caso.
+    // El schema ya marca "nombre" como required (sin importar requiereRut) —
+    // esto es un resguardo extra por si Claude igual la llama sin él. Nunca
+    // confiamos en el nombre de perfil de WhatsApp: quien escribe no
+    // siempre es quien se atiende (ej. agenda para un familiar).
+    if (!input.nombre) {
+      return { error: 'Falta el nombre completo de quien se va a atender. Pídeselo explícitamente antes de reintentar — no asumas el nombre de perfil de WhatsApp.' };
+    }
+    if (cliente.nombre !== input.nombre) {
+      await prisma.cliente.update({ where: { id: cliente.id }, data: { nombre: input.nombre } });
+    }
+
+    // Si la empresa exige RUT, el schema ya lo marca (junto con teléfono)
+    // como required — resguardo extra por si Claude igual la llama sin
+    // alguno de los dos campos.
     if (empresa.requiereRut) {
       if (!input.rut) {
         return { error: 'Este negocio exige RUT para agendar. Pide el RUT del cliente antes de reintentar.' };
-      }
-      if (!input.nombre) {
-        return { error: 'Este negocio exige el nombre completo del cliente para agendar. Pídeselo explícitamente antes de reintentar — no asumas el nombre de perfil de WhatsApp.' };
       }
       if (!input.telefono) {
         return { error: 'Este negocio exige un teléfono de contacto para agendar. Pídeselo explícitamente antes de reintentar.' };
@@ -289,10 +297,10 @@ async function ejecutarHerramienta(nombre, input, contexto) {
       if (!rutValidado) {
         return { error: `"${input.rut}" no tiene formato de RUT chileno válido (ej. 12345678-9). Pídeselo de nuevo al cliente antes de reintentar.` };
       }
-      if (cliente.rut !== rutValidado || cliente.nombre !== input.nombre || cliente.telefono !== input.telefono) {
+      if (cliente.rut !== rutValidado || cliente.telefono !== input.telefono) {
         await prisma.cliente.update({
           where: { id: cliente.id },
-          data: { rut: rutValidado, nombre: input.nombre, telefono: input.telefono },
+          data: { rut: rutValidado, telefono: input.telefono },
         });
       }
     }
@@ -478,9 +486,10 @@ ${instruccionesCatalogo}- En cuanto sepas el servicio (aunque sea en el mismo me
 - Tienes PROHIBIDO escribir frases como "¿qué día te gustaría?", "¿prefieres que te muestre los días disponibles?" o similares — esa decisión la tomas tú llamando a la herramienta correspondiente, nunca preguntándola en texto.
 - NUNCA inventes horas ni días disponibles.
 - Si acabas de mostrarle al cliente una lista de servicios u horarios y su siguiente mensaje es texto libre (no tocó ningún botón) pero de todas formas confirma claramente una de esas opciones ya mostradas (ej. mostraste horas "09:15, 09:45..." y responde "me sirve a las 09:15", "esa hora está bien", "el examen visual" o similar), trátalo exactamente igual que si hubiera tocado esa opción de la lista — nunca vuelvas a mostrar la misma lista ni a preguntar de nuevo lo que ya te confirmó. Solo vuelve a preguntar si su respuesta es realmente ambigua o no calza con ninguna opción mostrada.
-${empresa.requiereRut ? '- Este negocio EXIGE nombre completo, RUT y teléfono de contacto para agendar. Antes de llamar a agendar_cita, además de fecha/hora/servicio, pide estos 3 datos si aún no los tienes en la conversación — NUNCA asumas el nombre a partir del perfil de WhatsApp del contacto, NUNCA asumas el teléfono a partir del número desde el que te escribe (puede ser distinto, ej. alguien agendando por otra persona), siempre pregúntalos explícitamente.\n' : ''}- Una vez que el cliente confirme fecha, hora${empresa.requiereRut ? ', servicio, nombre, RUT y teléfono' : ' y servicio'} específicos, usa agendar_cita para crear la cita de verdad. El campo "servicio" debe ser exactamente uno de los nombres de la lista SERVICIOS AGENDABLES.
+- SIEMPRE pide el nombre completo de la persona que se va a atender antes de llamar a agendar_cita, sin importar el negocio — NUNCA asumas el nombre a partir del perfil de WhatsApp del contacto (quien escribe puede no ser quien se atiende, ej. agendando por un familiar), siempre pregúntalo explícitamente.
+${empresa.requiereRut ? '- Este negocio además EXIGE RUT y teléfono de contacto para agendar. Antes de llamar a agendar_cita, pide estos 2 datos si aún no los tienes en la conversación — NUNCA asumas el teléfono a partir del número desde el que te escribe (puede ser distinto), siempre pregúntalo explícitamente.\n' : ''}- Una vez que el cliente confirme fecha, hora, servicio y nombre${empresa.requiereRut ? ', RUT y teléfono' : ''} específicos, usa agendar_cita para crear la cita de verdad. El campo "servicio" debe ser exactamente uno de los nombres de la lista SERVICIOS AGENDABLES.
 - Si agendar_cita falla porque el horario ya no está disponible, discúlpate y ofrece consultar otra hora.
-- Cuando confirmes una cita agendada, NUNCA muestres el "citaId" (es un identificador interno de la base de datos, sin ningún valor para el cliente) — el resumen debe incluir solo servicio, fecha, hora, y dirección si corresponde.
+- Cuando confirmes una cita agendada, NUNCA muestres el "citaId" (es un identificador interno de la base de datos, sin ningún valor para el cliente) — el resumen debe incluir el nombre de quien se atiende, servicio, fecha, hora, y dirección si corresponde.
 - Para la fecha del resumen, usa TAL CUAL el texto "fechaLegible" que te devuelve agendar_cita (o la fecha en español que ya te haya escrito el cliente al confirmar) — NUNCA calcules tú mismo a qué día de la semana corresponde una fecha ISO (ej. "2026-09-04"), es un cálculo que puedes hacer mal y ya generó una confirmación real con el día de la semana equivocado.
 - Si el cliente pregunta algo que no está cubierto en la información de este mensaje (precios, condiciones, detalles clínicos), no inventes: dile que lo puede confirmar directamente con el negocio.
 - No des información médica ni de salud como si fueras un profesional — solo agenda.`;
@@ -715,7 +724,7 @@ ${empresa.requiereRut ? '- Este negocio EXIGE nombre completo, RUT y teléfono d
       const { input, resultado } = citaAgendadaConExito;
       const fechaLegible = resultado.fechaLegible;
       return {
-        texto: `¡Listo! Tu cita ha sido agendada exitosamente 🎉\n\n*Resumen de tu cita:*\n📋 *Servicio:* ${input.servicio}\n📅 *Fecha:* ${fechaLegible}\n🕐 *Hora:* ${input.hora}${empresa.direccion ? `\n📍 *Ubicación:* ${empresa.direccion}` : ''}${empresa.notaAgendamiento ? `\n\n${empresa.notaAgendamiento}` : ''}`,
+        texto: `¡Listo! Tu cita ha sido agendada exitosamente 🎉\n\n*Resumen de tu cita:*\n👤 *Nombre:* ${input.nombre}\n📋 *Servicio:* ${input.servicio}\n📅 *Fecha:* ${fechaLegible}\n🕐 *Hora:* ${input.hora}${empresa.direccion ? `\n📍 *Ubicación:* ${empresa.direccion}` : ''}${empresa.notaAgendamiento ? `\n\n${empresa.notaAgendamiento}` : ''}`,
         interactivo: null,
       };
     }
