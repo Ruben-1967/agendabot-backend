@@ -144,6 +144,57 @@ router.put('/info', requireAuth, requireRole('ADMIN'), async (req, res) => {
   }
 });
 
+// ------------------------------------------------------------
+// Plantillas rápidas — respuestas predefinidas para insertar con un clic
+// al responder manualmente en "Chats en vivo" (botón "plantilla rápida",
+// antes sin funcionalidad). Mismo nivel de auth que responder un chat
+// (requireAuth, sin restringir a ADMIN) — ver POST /conversaciones/.../mensaje.
+// ------------------------------------------------------------
+router.get('/plantillas-rapidas', requireAuth, async (req, res) => {
+  try {
+    const plantillas = await prisma.plantillaRapida.findMany({
+      where: { empresaId: req.usuario.empresaId },
+      orderBy: { creadoEn: 'asc' },
+    });
+    res.json(plantillas);
+  } catch (error) {
+    console.error('Error en GET /empresa/plantillas-rapidas:', error);
+    res.status(500).json({ error: 'Error al obtener las plantillas rápidas' });
+  }
+});
+
+router.post('/plantillas-rapidas', requireAuth, async (req, res) => {
+  try {
+    const { texto } = req.body;
+    if (!texto || typeof texto !== 'string' || !texto.trim()) {
+      return res.status(400).json({ error: 'texto es obligatorio' });
+    }
+
+    const plantilla = await prisma.plantillaRapida.create({
+      data: { empresaId: req.usuario.empresaId, texto: texto.trim() },
+    });
+    res.status(201).json(plantilla);
+  } catch (error) {
+    console.error('Error en POST /empresa/plantillas-rapidas:', error);
+    res.status(500).json({ error: 'Error al crear la plantilla rápida' });
+  }
+});
+
+router.delete('/plantillas-rapidas/:id', requireAuth, async (req, res) => {
+  try {
+    const plantilla = await prisma.plantillaRapida.findUnique({ where: { id: req.params.id } });
+    if (!plantilla || plantilla.empresaId !== req.usuario.empresaId) {
+      return res.status(404).json({ error: 'Plantilla rápida no encontrada' });
+    }
+
+    await prisma.plantillaRapida.delete({ where: { id: req.params.id } });
+    res.json({ ok: true });
+  } catch (error) {
+    console.error('Error en DELETE /empresa/plantillas-rapidas/:id:', error);
+    res.status(500).json({ error: 'Error al eliminar la plantilla rápida' });
+  }
+});
+
 /**
  * Switch maestro del Catálogo Visual — controla si el bot puede ofrecer
  * imágenes durante la conversación. Apagado por defecto para toda empresa.

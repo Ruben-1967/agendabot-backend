@@ -129,6 +129,7 @@ model Empresa {
   citas           Cita[]
   listaEspera     ListaEspera[]
   conversaciones  Conversacion[]
+  plantillasRapidas PlantillaRapida[]
   ventas          Venta[]
   suscripcion     Suscripcion? @relation("SuscripcionActual") // relación a la suscripción vigente
   suscripciones   HistorialSuscripcion[] // historial de cambios
@@ -307,6 +308,18 @@ model Servicio {
 // PLANTILLAS DE FICHA (catálogo fijo mantenido por MultiDigital — el
 // negocio elige entre estas, no diseña campos libres)
 // ------------------------------------------------------------
+// Respuestas rápidas que el admin/vendedor puede insertar con un clic al
+// responder manualmente en "Chats en vivo" (ej. "Dale, en un momento te
+// ayudo") — por empresa, ella misma las crea y borra desde ahí.
+model PlantillaRapida {
+  id        String   @id @default(uuid())
+  empresa   Empresa  @relation(fields: [empresaId], references: [id])
+  empresaId String
+
+  texto     String
+  creadoEn  DateTime @default(now())
+}
+
 model PlantillaFicha {
   id            String   @id @default(uuid())
   nombre        String   // ej. "Kinesiología", "Óptica - Receta"
