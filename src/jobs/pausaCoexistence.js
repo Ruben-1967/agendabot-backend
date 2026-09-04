@@ -23,10 +23,14 @@
 // del proceso web, sin necesidad de un servicio de Render Cron aparte.
 
 const cron = require('node-cron');
+const Anthropic = require('@anthropic-ai/sdk');
 const prisma = require('../lib/prisma');
 const { sendWhatsAppTextMessage, sendWhatsAppTemplateMessage } = require('../services/whatsapp');
 const { descifrarSiCorresponde } = require('../lib/cifrado');
 const { obtenerUrlPanelPrincipal } = require('../lib/urlPanel');
+
+const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+const MODEL_RESUMEN = 'claude-haiku-4-5-20251001';
 
 const MINUTOS_CONTENCION = 5;
 const MINUTOS_ALERTA_DEFECTO = 10; // fallback si la empresa no tiene minutosAlertaUrgente seteado
@@ -42,15 +46,57 @@ const TEXTO_CONTENCION = 'Estamos revisando tu consulta, en breve te respondemos
 // una plantilla aprobada por Meta, no texto libre.
 const TEMPLATE_ALERTA_URGENTE = 'alerta_cliente_pide_humano'; // debe existir y estar aprobada en Meta
 
+// Plantilla nueva (decisión 2026-09-04) con el resumen agregado como 4ta
+// variable — enviada a revisión de Meta, ver scripts/crear-plantilla-alerta-humano-v2.js.
+// NO activar (no cambiar TEMPLATE_ALERTA_URGENTE a esta) hasta que el
+// usuario confirme que Meta la aprobó — mandar con una plantilla todavía
+// "en revisión" falla, y dejaría la alerta actual (que sí funciona) rota
+// mientras tanto.
+const TEMPLATE_ALERTA_URGENTE_V2 = 'alerta_cliente_pide_humano_v2';
+
+// Resumen de 1 línea de la conversación para la alerta urgente (plantilla
+// v2, pendiente de activar — ver arriba). Nunca lanza: si falla o no hay
+// mensajes, cae a un texto genérico, porque las plantillas de WhatsApp
+// exigen todas las variables completas.
+async function resumirConversacionParaAlerta(mensajes) {
+  const lista = Array.isArray(mensajes) ? mensajes : [];
+  if (lista.length === 0) return 'El cliente escribió pero aún no hay más detalle en la conversación.';
+
+  const transcripcion = lista
+    .slice(-10)
+    .map((m) => `${m.rol === 'usuario' ? 'Cliente' : 'Bot'}: ${m.contenido}`)
+    .join('\n');
+
+  try {
+    const respuesta = await anthropic.messages.create({
+      model: MODEL_RESUMEN,
+      max_tokens: 100,
+      messages: [{
+        role: 'user',
+        content: `Resume en UNA sola frase corta (máximo 25 palabras), en español de Chile, qué necesita este cliente — para que el dueño del negocio entienda de un vistazo por qué pidió hablar con una persona. Sin saludos ni introducción, solo la frase. Nunca inventes datos que no estén en la conversación.\n\n${transcripcion}`,
+      }],
+    });
+    const texto = respuesta.content?.[0]?.text?.trim();
+    if (!texto) return 'El cliente pidió hablar con una persona.';
+    // Los parámetros de plantilla de WhatsApp no aceptan saltos de línea ni
+    // varios espacios seguidos.
+    return texto.replace(/\s+/g, ' ').slice(0, 200);
+  } catch (error) {
+    console.error('[PAUSA-COEXISTENCE] Error generando resumen para la alerta:', error.message);
+    return 'El cliente pidió hablar con una persona.';
+  }
+}
+
 async function enviarAlertaUrgenteInterna(conversacion, empresa) {
   const phoneNumberId = process.env.DEMO_PHONE_NUMBER_ID;
   const accessToken = process.env.DEMO_WHATSAPP_ACCESS_TOKEN;
 
   if (!phoneNumberId || !accessToken || !empresa.telefonoContacto) {
+    const minutosAlerta = empresa.minutosAlertaUrgente ?? MINUTOS_ALERTA_DEFECTO;
     console.warn(
       `[PAUSA-COEXISTENCE] ALERTA URGENTE (sin poder enviar — falta telefonoContacto o config de plataforma): ` +
       `conversación ${conversacion.id} de "${empresa.nombre}" (cliente ${conversacion.telefono}) lleva ` +
-      `${MINUTOS_ALERTA}+ min sin resolución tras intervención humana.`
+      `${minutosAlerta}+ min sin resolución tras intervención humana.`
     );
     return;
   }
