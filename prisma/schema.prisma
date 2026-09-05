@@ -145,6 +145,18 @@ model Empresa {
   catalogoCategorias   CatalogoCategoria[]
   catalogoItems        CatalogoItem[]
 
+  // Marketing/opt-in (decisión 2026-09-05, ver Ley 21.719 de protección de
+  // datos): el negocio elige si va a usar TotemSystem para enviar
+  // promociones (activa la pregunta de opt-in a sus clientes, ver
+  // jobs/enviarPreguntaOptIn.js) o si se compromete a usarlo solo para
+  // agendamiento/asesoría, sin marketing. Si elige lo segundo, queda
+  // registrada la fecha de aceptación del compromiso como respaldo.
+  usaOptInMarketing                    Boolean   @default(false)
+  compromisoSoloAgendamientoAceptadoEn DateTime?
+  // Minutos de silencio del cliente antes de mandarle la pregunta de opt-in
+  // (ver jobs/enviarPreguntaOptIn.js) — antes era un fijo global de 10 min.
+  minutosEsperaOptIn                   Int       @default(10)
+
   // Créditos
   billeteraCreditos      BilleteraCreditos?
   ordenesCompraCreditos  OrdenCompraCreditos[]

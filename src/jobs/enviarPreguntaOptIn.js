@@ -22,19 +22,21 @@ const prisma = require('../lib/prisma');
 const { sendWhatsAppReplyButtons } = require('../services/whatsapp');
 const { descifrarSiCorresponde } = require('../lib/cifrado');
 
-const SEGUNDOS_ESPERA = 10 * 60; // 10 minutos
+const MINUTOS_ESPERA_DEFECTO = 10; // fallback si la empresa no tiene minutosEsperaOptIn seteado
 const TEXTO_PREGUNTA = '¿Quieres que te avisemos por acá de promociones y novedades?';
 
 async function enviarPreguntasOptInPendientes() {
-  const limiteEspera = new Date(Date.now() - SEGUNDOS_ESPERA * 1000);
-
   // Candidatos: cualquier Cliente de una empresa real (no demo), con
-  // WhatsApp conectado, que nunca haya sido preguntado.
+  // WhatsApp conectado, que nunca haya sido preguntado — y solo de negocios
+  // que eligieron usar marketing (ver Empresa.usaOptInMarketing, decisión
+  // 2026-09-05 sobre Ley 21.719). El que se comprometió a "solo
+  // agendamiento" nunca debería mandar esta pregunta — no tiene sentido
+  // pedir opt-in para algo que el negocio prometió no hacer.
   const clientesCandidatos = await prisma.cliente.findMany({
     where: {
       optInCampanasPreguntado: false,
       telefono: { not: null },
-      empresa: { esDemo: false, whatsappNumeroId: { not: null } },
+      empresa: { esDemo: false, whatsappNumeroId: { not: null }, usaOptInMarketing: true },
     },
     include: { empresa: true },
   });
@@ -59,7 +61,9 @@ async function enviarPreguntasOptInPendientes() {
 
       const ultimoMensajeCliente = mensajesDelCliente[mensajesDelCliente.length - 1];
       const timestampUltimo = new Date(ultimoMensajeCliente.timestamp);
-      if (timestampUltimo > limiteEspera) continue; // todavía no pasaron los 30 segundos de silencio
+      const minutosEspera = cliente.empresa.minutosEsperaOptIn ?? MINUTOS_ESPERA_DEFECTO;
+      const limiteEspera = new Date(Date.now() - minutosEspera * 60 * 1000);
+      if (timestampUltimo > limiteEspera) continue; // todavía no pasó el silencio configurado
 
       // whatsappToken llega anidado (Cliente -> Empresa), la extensión de
       // Prisma no lo descifra automáticamente ahí — ver descifrarSiCorresponde.

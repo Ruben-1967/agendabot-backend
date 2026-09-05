@@ -25,7 +25,8 @@ const router = express.Router();
 const prisma = require('../lib/prisma');
 const { requireAuth, requireRole } = require('../middleware/auth');
 
-const CAMPOS_INFO = ['direccion', 'notaAgendamiento', 'informacionAdicional', 'requiereRut', 'tonoComunicacion', 'telefonoContacto', 'minutosAlertaUrgente'];
+const CAMPOS_INFO = ['direccion', 'notaAgendamiento', 'informacionAdicional', 'requiereRut', 'tonoComunicacion', 'telefonoContacto', 'minutosAlertaUrgente', 'minutosEsperaOptIn'];
+const CAMPOS_INFO_NUMERICOS = ['minutosAlertaUrgente', 'minutosEsperaOptIn'];
 
 const GRAPH_API_VERSION = 'v21.0';
 
@@ -75,6 +76,9 @@ router.get('/info', requireAuth, requireRole('ADMIN'), async (req, res) => {
         tonoComunicacion: true,
         telefonoContacto: true,
         minutosAlertaUrgente: true,
+        minutosEsperaOptIn: true,
+        usaOptInMarketing: true,
+        compromisoSoloAgendamientoAceptadoEn: true,
       },
     });
 
@@ -101,12 +105,12 @@ router.put('/info', requireAuth, requireRole('ADMIN'), async (req, res) => {
           return res.status(400).json({ error: 'requiereRut debe ser true o false' });
         }
         data.requiereRut = req.body.requiereRut;
-      } else if (campo === 'minutosAlertaUrgente') {
-        const minutos = Number(req.body.minutosAlertaUrgente);
-        if (!Number.isInteger(minutos) || minutos < 0) {
-          return res.status(400).json({ error: 'minutosAlertaUrgente debe ser un número entero mayor o igual a 0' });
+      } else if (CAMPOS_INFO_NUMERICOS.includes(campo)) {
+        const numero = Number(req.body[campo]);
+        if (!Number.isInteger(numero) || numero < 0) {
+          return res.status(400).json({ error: `${campo} debe ser un número entero mayor o igual a 0` });
         }
-        data.minutosAlertaUrgente = minutos;
+        data[campo] = numero;
       } else {
         // Los campos de texto son opcionales: string vacío o null los limpia.
         if (req.body[campo] !== null && typeof req.body[campo] !== 'string') {
@@ -134,6 +138,7 @@ router.put('/info', requireAuth, requireRole('ADMIN'), async (req, res) => {
         tonoComunicacion: true,
         telefonoContacto: true,
         minutosAlertaUrgente: true,
+        minutosEsperaOptIn: true,
       },
     });
 
@@ -215,6 +220,47 @@ router.patch('/catalogo-visual-activo', requireAuth, requireRole('ADMIN'), async
   } catch (error) {
     console.error('Error en PATCH /empresa/catalogo-visual-activo:', error);
     res.status(500).json({ error: 'Error al actualizar el catálogo visual' });
+  }
+});
+
+/**
+ * Elección del negocio sobre marketing/opt-in (Ley 21.719 — ver memoria del
+ * proyecto). Dos caminos:
+ *   - usaOptInMarketing: true → activa la pregunta automática de opt-in a
+ *     sus clientes (jobs/enviarPreguntaOptIn.js), habilitando el uso de
+ *     campañas de marketing con consentimiento real.
+ *   - usaOptInMarketing: false → exige aceptaCompromiso: true en el mismo
+ *     request (checkbox del acuerdo) y registra la fecha de aceptación como
+ *     respaldo del compromiso de usar el bot solo para agendamiento/asesoría.
+ * Cambiar de "no" a "sí" más adelante es válido (el negocio decide usar
+ * marketing después) — la fecha de aceptación anterior NO se borra, queda
+ * como registro histórico de que en algún momento aceptó ese compromiso.
+ */
+router.put('/opt-in-marketing', requireAuth, requireRole('ADMIN'), async (req, res) => {
+  try {
+    const { usaOptInMarketing } = req.body;
+    if (typeof usaOptInMarketing !== 'boolean') {
+      return res.status(400).json({ error: 'usaOptInMarketing debe ser true o false' });
+    }
+
+    const data = { usaOptInMarketing };
+    if (!usaOptInMarketing) {
+      if (req.body.aceptaCompromiso !== true) {
+        return res.status(400).json({ error: 'Debes aceptar el compromiso de uso exclusivo para agendamiento/asesoría' });
+      }
+      data.compromisoSoloAgendamientoAceptadoEn = new Date();
+    }
+
+    const empresa = await prisma.empresa.update({
+      where: { id: req.usuario.empresaId },
+      data,
+      select: { usaOptInMarketing: true, compromisoSoloAgendamientoAceptadoEn: true },
+    });
+
+    res.json(empresa);
+  } catch (error) {
+    console.error('Error en PUT /empresa/opt-in-marketing:', error);
+    res.status(500).json({ error: 'Error al actualizar la elección de marketing/opt-in' });
   }
 });
 

@@ -245,6 +245,8 @@ router.get('/', async (req, res) => {
         totalGastado,
         ultimaCompraFecha: c.ventas[0]?.fecha || null,
         fechaProximaCita: c.fechaProximaCita,
+        optInCampanas: c.optInCampanas,
+        optInCampanasPreguntado: c.optInCampanasPreguntado,
       };
     });
 
@@ -315,8 +317,12 @@ router.patch('/:id', async (req, res) => {
 
     const {
       nombre, rut, telefono, email, fechaNacimiento, fichaJson,
-      fechaProximaCita, profesionalAtendio, diagnostico,
+      fechaProximaCita, profesionalAtendio, diagnostico, optInCampanas,
     } = req.body;
+
+    if (optInCampanas !== undefined && typeof optInCampanas !== 'boolean') {
+      return res.status(400).json({ error: 'optInCampanas debe ser true o false' });
+    }
 
     const actualizado = await prisma.cliente.update({
       where: { id: cliente.id },
@@ -334,6 +340,11 @@ router.patch('/:id', async (req, res) => {
         }),
         ...(profesionalAtendio !== undefined && { profesionalAtendio: profesionalAtendio || null }),
         ...(diagnostico !== undefined && { diagnostico: diagnostico || null }),
+        // Manual: el negocio puede corregir el opt-in a mano (ej. el cliente
+        // pidió que lo saquen, o dio consentimiento verbal fuera del bot) —
+        // no pasa por optInCampanasPreguntado, ese sigue marcando solo si el
+        // bot ya le preguntó alguna vez.
+        ...(optInCampanas !== undefined && { optInCampanas }),
       },
     });
 
