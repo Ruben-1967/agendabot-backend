@@ -7,9 +7,7 @@
 require('dotenv').config();
 const prisma = require('../lib/prisma');
 const { sendWhatsAppTemplateMessage } = require('../services/whatsapp');
-
-const MESES_MINIMOS_SIN_CONTROL = 11;
-const DIAS_MINIMOS_ENTRE_RECORDATORIOS = 300; // ~10 meses, evita reenviar en el mismo ciclo
+const { mesesDesde, esElegible } = require('../lib/recordatorioControlAnual');
 
 // Tope de envíos por corrida del cron. Se queda cómodamente bajo el límite
 // diario de conversaciones nuevas de Meta (250 sin verificación de negocio),
@@ -17,22 +15,14 @@ const DIAS_MINIMOS_ENTRE_RECORDATORIOS = 300; // ~10 meses, evita reenviar en el
 // Ajustable según el volumen real y el estado de verificación de la cuenta.
 const LIMITE_ENVIOS_POR_CORRIDA = 80;
 
-function mesesDesde(fechaISO) {
-  const fecha = new Date(fechaISO);
-  const ahora = new Date();
-  return (ahora - fecha) / (1000 * 60 * 60 * 24 * 30);
-}
-
-function diasDesde(fecha) {
-  return (new Date() - new Date(fecha)) / (1000 * 60 * 60 * 24);
-}
-
 async function procesarRecordatoriosControlAnual() {
-  // Solo empresas de rubro óptica, que ya tengan WhatsApp conectado de verdad
+  // Solo empresas de rubro óptica, con WhatsApp conectado de verdad, y que no
+  // hayan pausado el envío desde el panel (recordatorioControlAnualPausado).
   const empresas = await prisma.empresa.findMany({
     where: {
       rubroTemplate: { clave: 'optica' },
       whatsappNumeroId: { not: null },
+      recordatorioControlAnualPausado: false,
     },
     include: { clientes: true },
   });
@@ -49,21 +39,9 @@ async function procesarRecordatoriosControlAnual() {
     }
 
     for (const cliente of empresa.clientes) {
-      const fechaReceta = cliente.fichaJson?.receta?.fecha;
-
-      if (!fechaReceta || !cliente.telefono) {
-        continue; // sin fecha de receta o sin teléfono, no hay nada que hacer
-      }
-
-      const mesesSinControl = mesesDesde(fechaReceta);
-      const yaPasaronMeses = mesesSinControl >= MESES_MINIMOS_SIN_CONTROL;
-      const noSeHaRecordadoRecien =
-        !cliente.recordatorioControlAnualEnviadoEn ||
-        diasDesde(cliente.recordatorioControlAnualEnviadoEn) >= DIAS_MINIMOS_ENTRE_RECORDATORIOS;
-
-      if (yaPasaronMeses && noSeHaRecordadoRecien) {
-        candidatos.push({ empresa, cliente, mesesSinControl, accessToken });
-      }
+      if (!esElegible(cliente)) continue;
+      const mesesSinControl = mesesDesde(cliente.fichaJson.receta.fecha);
+      candidatos.push({ empresa, cliente, mesesSinControl, accessToken });
     }
   }
 

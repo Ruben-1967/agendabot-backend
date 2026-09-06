@@ -29,7 +29,8 @@
     "jsonwebtoken": "^9.0.3",
     "libphonenumber-js": "^1.13.9",
     "node-cron": "^4.6.0",
-    "resend": "^6.18.1"
+    "resend": "^6.18.1",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "prisma": "^5.20.0"

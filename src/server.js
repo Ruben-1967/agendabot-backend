@@ -36,6 +36,7 @@ const clientesRouter = require('./routes/clientes');
 const billeteraRouter = require('./routes/billetera');
 const empresaRouter = require('./routes/empresa');
 const catalogoRouter = require('./routes/catalogo');
+const recordatorioControlAnualRouter = require('./routes/recordatorioControlAnual');
 const agendaRouter = require('./routes/agenda');
 const serviciosRouter = require('./routes/servicios');
 const { procesarMensajeCatalogoRotativo } = require('./services/pedidosEngine');
@@ -147,6 +148,7 @@ app.use('/clientes', clientesRouter);
 app.use('/billetera', billeteraRouter);
 app.use('/empresa', empresaRouter);
 app.use('/empresa/catalogo', catalogoRouter);
+app.use('/empresa/recordatorio-control-anual', recordatorioControlAnualRouter);
 
 app.use('/agenda', agendaRouter);
 app.use('/servicios', serviciosRouter);

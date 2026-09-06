@@ -1,147 +1,102 @@
 #!/usr/bin/env node
-// Importa clientes históricos desde un archivo CSV con columnas:
-// fecha;nombre;telefono  (o separadas por coma, se detecta solo)
-//
-// El "fecha" se guarda como fichaJson.receta.fecha, que es lo que usa
-// el cron de recordatorios (src/jobs/enviarRecordatorios.js) para saber
-// a quién le corresponde el recordatorio de control anual.
-//
-// USO:
-//   node scripts/importar-clientes-luxvision.js ruta/al/archivo.csv
-
+/**
+ * Importa la base de pacientes de LuxVision (ya limpia/transformada, ver
+ * scratchpad/luxvision_clientes.json) como Cliente reales. Usa el mismo
+ * `prisma` compartido de src/lib/prisma.js -- cifra Cliente.rut
+ * automáticamente, igual que cualquier otra ruta del backend.
+ *
+ * Idempotente: si un RUT o teléfono ya existe como Cliente de esta Empresa,
+ * se salta esa fila en vez de duplicarla -- permite reintentar sin miedo si
+ * algo falla a mitad de camino.
+ *
+ * Decisión 2026-09-06: el negocio pidió explícitamente que el recordatorio
+ * de control anual no empiece a dispararse hasta el 21 de septiembre. Como
+ * enviarRecordatorios.js solo mira `fichaJson.receta.fecha`, acá se importa
+ * la fecha real bajo OTRA clave (`fechaVisitaImportada`) para que el job no
+ * la vea todavía -- ver scripts/activar-recordatorios-luxvision.js, que hay
+ * que correr el 21 (o después) para "activarla" de verdad.
+ *
+ * Uso:
+ *   EMPRESA_ID=<id> ARCHIVO=<ruta al json> node scripts/importar-clientes-luxvision.js
+ */
 require('dotenv').config();
 const fs = require('fs');
 const prisma = require('../src/lib/prisma');
 
-const EMPRESA_ID = 'luxvision-seed-id';
+const empresaId = process.env.EMPRESA_ID;
+const archivo = process.env.ARCHIVO;
 
-/**
- * Normaliza un teléfono chileno al formato internacional que usa el
- * resto del sistema (ej. "956035664" -> "56956035664").
- */
-function normalizarTelefono(raw) {
-  const digitos = String(raw).replace(/\D/g, '');
-
-  if (digitos.length === 9 && digitos.startsWith('9')) {
-    return '56' + digitos;
-  }
-  if (digitos.length === 11 && digitos.startsWith('56')) {
-    return digitos;
-  }
-
-  console.warn(`Teléfono con formato inesperado, se deja tal cual: "${raw}" -> "${digitos}"`);
-  return digitos;
-}
-
-/**
- * Convierte "DD-MM-YYYY" a "YYYY-MM-DD" (formato seguro para new Date()).
- */
-function convertirFecha(ddmmyyyy) {
-  const partes = ddmmyyyy.trim().split(/[-/]/);
-  if (partes.length !== 3) {
-    throw new Error(`Fecha con formato inesperado: "${ddmmyyyy}" (se esperaba DD-MM-YYYY)`);
-  }
-  const [d, m, y] = partes;
-  return `${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`;
-}
-
-/**
- * Parser simple de CSV: soporta campos entre comillas (por si algún
- * nombre trae coma adentro), y detecta automáticamente si el separador
- * es coma (,) o punto y coma (;) — Excel en español suele exportar con ";".
- */
-function parsearCSV(contenido) {
-  const lineas = contenido.trim().split('\n').filter((l) => l.trim().length > 0);
-  const encabezado = lineas[0];
-  const separador =
-    (encabezado.match(/;/g) || []).length >= (encabezado.match(/,/g) || []).length ? ';' : ',';
-
-  const filas = lineas.slice(1); // saltar encabezado
-
-  return filas
-    .map((linea, i) => {
-      const columnas = linea.split(separador).map((v) => v.trim().replace(/^"|"$/g, ''));
-      const [fecha, nombre, telefono] = columnas;
-
-      if (!fecha || !nombre || !telefono) {
-        console.warn(`Fila ${i + 2} incompleta, se omite: "${linea}"`);
-        return null;
-      }
-
-      return { fecha, nombre, telefono };
-    })
-    .filter(Boolean);
-}
-
-async function importar(rutaArchivo) {
-  if (!fs.existsSync(rutaArchivo)) {
-    throw new Error(`No se encontró el archivo: ${rutaArchivo}`);
-  }
-
-  const empresa = await prisma.empresa.findUnique({ where: { id: EMPRESA_ID } });
-  if (!empresa) {
-    throw new Error(`No existe la empresa con id ${EMPRESA_ID}. Corre el seed primero.`);
-  }
-
-  const contenido = fs.readFileSync(rutaArchivo, 'utf-8');
-  const filas = parsearCSV(contenido);
-
-  console.log(`Se encontraron ${filas.length} filas válidas para importar.\n`);
-
-  let creados = 0;
-  let actualizados = 0;
-  let errores = 0;
-
-  for (const fila of filas) {
-    try {
-      const telefono = normalizarTelefono(fila.telefono);
-      const fechaISO = convertirFecha(fila.fecha);
-
-      const existente = await prisma.cliente.findFirst({
-        where: { empresaId: EMPRESA_ID, telefono },
-      });
-
-      if (existente) {
-        await prisma.cliente.update({
-          where: { id: existente.id },
-          data: {
-            nombre: fila.nombre,
-            fichaJson: { receta: { fecha: fechaISO } },
-          },
-        });
-        actualizados++;
-      } else {
-        await prisma.cliente.create({
-          data: {
-            empresaId: EMPRESA_ID,
-            nombre: fila.nombre,
-            telefono,
-            fichaJson: { receta: { fecha: fechaISO } },
-          },
-        });
-        creados++;
-      }
-    } catch (err) {
-      errores++;
-      console.error(`Error con la fila de "${fila.nombre}":`, err.message);
-    }
-  }
-
-  console.log(
-    `\nImportación completa: ${creados} clientes nuevos, ${actualizados} actualizados, ${errores} con error.`
-  );
-}
-
-const rutaArchivo = process.argv[2];
-
-if (!rutaArchivo) {
-  console.log('Uso: node scripts/importar-clientes-luxvision.js ruta/al/archivo.csv');
+if (!empresaId || !archivo) {
+  console.error('Uso: EMPRESA_ID=<id> ARCHIVO=<ruta al json> node scripts/importar-clientes-luxvision.js');
   process.exit(1);
 }
 
-importar(rutaArchivo)
-  .catch((err) => {
-    console.error('Error general:', err.message);
+async function main() {
+  const empresa = await prisma.empresa.findUnique({ where: { id: empresaId }, select: { id: true, nombre: true } });
+  if (!empresa) {
+    console.error('No se encontró ninguna Empresa con id:', empresaId);
+    process.exit(1);
+  }
+  console.log('Empresa encontrada:', empresa.nombre);
+
+  const clientesAImportar = JSON.parse(fs.readFileSync(archivo, 'utf-8'));
+  console.log(`Registros en el archivo: ${clientesAImportar.length}`);
+
+  // Trae los clientes ya existentes de esta empresa (findMany descifra el
+  // rut automáticamente) para no duplicar en un reintento.
+  const existentes = await prisma.cliente.findMany({
+    where: { empresaId },
+    select: { rut: true, telefono: true },
+  });
+  const rutsExistentes = new Set(existentes.filter((c) => c.rut).map((c) => c.rut));
+  const telefonosExistentes = new Set(existentes.filter((c) => c.telefono).map((c) => c.telefono));
+
+  let creados = 0, saltados = 0, errores = 0;
+
+  for (const c of clientesAImportar) {
+    const yaExiste = (c.rut && rutsExistentes.has(c.rut)) || (c.telefono && telefonosExistentes.has(c.telefono));
+    if (yaExiste) {
+      saltados++;
+      continue;
+    }
+    // Oculta la fecha de receta bajo otra clave -- enviarRecordatorios.js
+    // solo lee fichaJson.receta.fecha, así que mientras no exista esa
+    // clave exacta, este cliente nunca dispara el recordatorio.
+    let fichaJson = c.fichaJson || undefined;
+    if (fichaJson?.receta?.fecha) {
+      const { receta, ...resto } = fichaJson;
+      fichaJson = { ...resto, fechaVisitaImportada: receta.fecha };
+    }
+
+    try {
+      await prisma.cliente.create({
+        data: {
+          empresaId,
+          nombre: c.nombre,
+          rut: c.rut || undefined,
+          telefono: c.telefono || undefined,
+          fichaJson,
+          // Base histórica importada -- todavía sin consentimiento explícito
+          // de marketing (ver conversación 2026-09-05/06), así que no
+          // participan de campañas hasta que se resuelva el opt-in.
+          optInCampanas: false,
+        },
+      });
+      if (c.rut) rutsExistentes.add(c.rut);
+      if (c.telefono) telefonosExistentes.add(c.telefono);
+      creados++;
+    } catch (err) {
+      errores++;
+      console.error(`Error creando "${c.nombre}":`, err.message);
+    }
+  }
+
+  console.log(`\nResultado: creados=${creados} saltados_ya_existian=${saltados} errores=${errores}`);
+}
+
+main()
+  .catch((error) => {
+    console.error('Error inesperado:', error);
     process.exit(1);
   })
   .finally(() => prisma.$disconnect());

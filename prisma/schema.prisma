@@ -157,6 +157,11 @@ model Empresa {
   // (ver jobs/enviarPreguntaOptIn.js) — antes era un fijo global de 10 min.
   minutosEsperaOptIn                   Int       @default(10)
 
+  // Recordatorio de control anual (rubro óptica, ver jobs/enviarRecordatorios.js
+  // y lib/recordatorioControlAnual.js) — switch de autoservicio en el panel
+  // para pausar el envío sin tocar los datos importados.
+  recordatorioControlAnualPausado Boolean @default(false)
+
   // Créditos
   billeteraCreditos      BilleteraCreditos?
   ordenesCompraCreditos  OrdenCompraCreditos[]
