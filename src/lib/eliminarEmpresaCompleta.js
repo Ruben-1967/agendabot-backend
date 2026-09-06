@@ -49,6 +49,7 @@ async function eliminarEmpresaCompleta(tx, empresaId) {
   await tx.venta.deleteMany({ where: { empresaId } });
   await tx.servicioRecurso.deleteMany({ where: { servicio: { empresaId } } });
   await tx.horarioSemanal.deleteMany({ where: { recurso: { empresaId } } });
+  await tx.horarioExcepcion.deleteMany({ where: { recurso: { empresaId } } });
   await tx.bloqueo.deleteMany({ where: { recurso: { empresaId } } });
   await tx.envioRealizado.deleteMany({ where: { campana: { empresaId } } });
   await tx.movimientoCredito.deleteMany({ where: { billetera: { empresaId } } });
