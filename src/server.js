@@ -852,6 +852,38 @@ app.post('/webhook/whatsapp', verificarFirmaWebhookWhatsApp, async (req, res) =>
     }
     // ---- fin bloque de confirmación de ficha clínica ----
 
+    // ------------------------------------------------------------
+    // "No por ahora" del recordatorio de control anual (ver
+    // jobs/enviarRecordatorios.js). El botón "Agendar" de la misma
+    // plantilla NO se intercepta acá a propósito: cualquier botón de
+    // plantilla no atrapado antes cae solo como texto libre al flujo
+    // normal de agendamiento (ver más abajo, "textoEntrante = mensaje.type
+    // === 'button' ? ..."), así que "Agendar" ya funciona sin código extra.
+    // ------------------------------------------------------------
+    if (mensaje.type === 'button' && mensaje.button?.text === 'No por ahora') {
+      const clienteRecordatorio = await prisma.cliente.findFirst({
+        where: { empresaId: empresa.id, telefono: telefonoCliente },
+      });
+
+      if (clienteRecordatorio) {
+        await prisma.cliente.update({
+          where: { id: clienteRecordatorio.id },
+          data: { recordatorioControlAnualConfirmado: false },
+        });
+
+        const accessTokenRecordatorio = empresa.whatsappToken || process.env.WHATSAPP_ACCESS_TOKEN;
+        if (accessTokenRecordatorio) {
+          await sendWhatsAppTextMessage({
+            phoneNumberId, to: telefonoCliente, accessToken: accessTokenRecordatorio,
+            text: 'Entendido, gracias por avisar 🙌',
+          });
+        }
+      }
+
+      return; // igual que el bloque de ficha -- no seguir a ningún otro flujo
+    }
+    // ---- fin bloque "No por ahora" del recordatorio de control anual ----
+
     // Rubros de catálogo rotativo (panadería, rotisería, etc.) usan un motor
     // de conversación distinto al de agendamiento — reacciona a botones y
     // listas interactivas, y envía sus propias respuestas.

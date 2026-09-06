@@ -408,6 +408,11 @@ model Cliente {
   // repetidamente). Se agregarán más campos similares si se suman otros
   // tipos de recordatorio por rubro (ej. próxima sesión, mantención).
   recordatorioControlAnualEnviadoEn DateTime?
+  // Respuesta al botón de la plantilla (ver server.js, bloque "No por
+  // ahora") -- null = nunca respondió, false = declinó. No hay un "true"
+  // explícito: tocar "Agendar" simplemente entra al flujo normal de
+  // agendamiento (ver server.js:939-941), no pasa por este campo.
+  recordatorioControlAnualConfirmado Boolean?
 
   creadoEn  DateTime @default(now())
 
