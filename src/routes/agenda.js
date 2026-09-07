@@ -168,36 +168,6 @@ const mañanaChile = horaChileAFechaUTC(hoyChileISO, '23:59');
       },
     });
 
-    // 4. ASISTENCIA ÚLTIMOS 30 DÍAS
-    const hace30Dias = new Date(hoyChile.getTime() - 30 * 24 * 60 * 60 * 1000);
-    
-   const completadas = await prisma.cita.count({
-      where: {
-        empresaId,
-        ...filtroRecurso,
-        estado: 'COMPLETADA',
-        fechaHoraInicio: {
-          gte: hace30Dias,
-          lt: mañanaChile,
-        },
-      },
-    });
-    const noAsistio = await prisma.cita.count({
-      where: {
-        empresaId,
-        ...filtroRecurso,
-        estado: 'NO_ASISTIO',
-        fechaHoraInicio: {
-          gte: hace30Dias,
-          lt: mañanaChile,
-        },
-      },
-    });
-
-    const asistencia30dias = completadas + noAsistio > 0
-      ? Math.round((completadas / (completadas + noAsistio)) * 100)
-      : 0;
-
    // 5. AGENDA DEL DÍA (detalle completo)
 const agendaHoy = await prisma.cita.findMany({
   where: {
@@ -382,7 +352,6 @@ const agendaHoy = await prisma.cita.findMany({
       citasHoy,
       confirmadas,
       listaEspera,
-      asistencia30dias,
       agendaHoy: agendaFormato,
       montoHoy,
       montoSemana,
