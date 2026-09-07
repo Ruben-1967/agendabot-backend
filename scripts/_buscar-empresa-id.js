@@ -1,19 +1,19 @@
 #!/usr/bin/env node
-// Uso puntual: revisa el estado de Suscripcion de las 2 Empresa candidatas
-// de LuxVision antes de decidir cómo unificarlas. Solo lectura, no toca nada.
+// Uso puntual: confirma el estado del usuario de LuxVision tras la
+// migración (nunca imprime el passwordHash). Solo lectura.
 require('dotenv').config();
 const prisma = require('../src/lib/prisma');
 
-const IDS = [
-  'deba7912-6a28-44ae-8e06-d5bae0a7c1aa', // Luxvision EIRL -- login, sin WhatsApp, sin pacientes
-  'e277ea9e-5793-468c-aa96-e4a2f7457201', // Luxvision -- WhatsApp real + 1903 pacientes, sin login
-];
-
 async function main() {
-  for (const empresaId of IDS) {
-    const suscripcion = await prisma.suscripcion.findUnique({ where: { empresaId } });
-    console.log(empresaId, '->', JSON.stringify(suscripcion));
-  }
+  const usuario = await prisma.usuario.findFirst({
+    where: { email: { equals: 'contacto@luxvision.cl', mode: 'insensitive' } },
+    select: {
+      id: true, email: true, nombre: true, rol: true, empresaId: true,
+      tokenActivacion: true, tokenActivacionExpira: true, fechaActivacionCuenta: true,
+      creadoEn: true,
+    },
+  });
+  console.log(JSON.stringify(usuario, null, 2));
 }
 
 main()
