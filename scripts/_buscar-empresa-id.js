@@ -1,0 +1,21 @@
+#!/usr/bin/env node
+// Uso puntual: imprime el id de la Empresa cuyo nombre contiene "Luxvision"
+// (solo lectura, no toca nada) -- para confirmar el id real a usar en
+// AdminLayout.jsx del panel.
+require('dotenv').config();
+const prisma = require('../src/lib/prisma');
+
+async function main() {
+  const empresas = await prisma.empresa.findMany({
+    where: { nombre: { contains: 'Luxvision', mode: 'insensitive' } },
+    select: { id: true, nombre: true },
+  });
+  console.log(JSON.stringify(empresas, null, 2));
+}
+
+main()
+  .catch((error) => {
+    console.error('Error:', error.message);
+    process.exit(1);
+  })
+  .finally(() => prisma.$disconnect());
