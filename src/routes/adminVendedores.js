@@ -333,34 +333,39 @@ router.patch('/suscripciones/:empresaId/terminos-especiales', requireAuth, requi
 });
 
 // ------------------------------------------------------------
-// GET /admin-vendedores/suscripciones/pendientes
-// Lista empresas con Suscripcion en PENDIENTE_PAGO (vino de un vendedor,
-// esperando que el admin confirme el cobro y la marque activa).
+// GET /admin-vendedores/suscripciones
+// Lista TODAS las empresas con Suscripcion (ACTIVA y PENDIENTE_PAGO) --
+// pantalla "Clientes" del panel de vendedores (antes solo mostraba las
+// pendientes de pago, sin forma de ver de un vistazo quién ya está activo
+// y pagando). "Marcar como pagado" sigue existiendo solo para las
+// PENDIENTE_PAGO.
 // ------------------------------------------------------------
-router.get('/suscripciones/pendientes', requireAuth, requireRolVendedorAdmin, async (req, res) => {
+router.get('/suscripciones', requireAuth, requireRolVendedorAdmin, async (req, res) => {
   try {
-    const pendientes = await prisma.suscripcion.findMany({
-      where: { estado: 'PENDIENTE_PAGO' },
+    const suscripciones = await prisma.suscripcion.findMany({
       include: { empresa: { select: { id: true, nombre: true, telefonoContacto: true, vendedor: { select: { nombre: true } } } } },
-      orderBy: { fechaInicio: 'desc' },
+      orderBy: [{ estado: 'asc' }, { fechaInicio: 'desc' }],
     });
 
     const hoy = new Date();
     res.json({
-      pendientes: pendientes.map((s) => ({
+      clientes: suscripciones.map((s) => ({
         empresaId: s.empresaId,
         empresaNombre: s.empresa.nombre,
         telefonoContacto: s.empresa.telefonoContacto,
         vendedorNombre: s.empresa.vendedor?.nombre || null,
         plan: s.plan,
+        estado: s.estado,
         montoMensualActual: s.montoMensualActual,
         fechaInicio: s.fechaInicio,
-        diasSinPago: Math.floor((hoy - s.fechaInicio) / (1000 * 60 * 60 * 24)),
+        fechaActivacion: s.fechaActivacion,
+        fechaProximoCobro: s.fechaProximoCobro,
+        diasSinPago: s.estado === 'PENDIENTE_PAGO' ? Math.floor((hoy - s.fechaInicio) / (1000 * 60 * 60 * 24)) : null,
       })),
     });
   } catch (error) {
-    console.error('Error listando suscripciones pendientes:', error);
-    res.status(500).json({ error: 'Error al listar suscripciones pendientes' });
+    console.error('Error listando suscripciones:', error);
+    res.status(500).json({ error: 'Error al listar suscripciones' });
   }
 });
 
