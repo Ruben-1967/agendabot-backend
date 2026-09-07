@@ -10,6 +10,7 @@ const bcrypt = require('bcryptjs');
 const prisma = require('../lib/prisma');
 const { requireAuth, requireRolVendedorAdmin } = require('../middleware/auth');
 const { resumenLeadsPorVendedor } = require('../services/slaService');
+const { obtenerCalidadWhatsApp } = require('../services/whatsapp');
 const { conversionesDelMesPorVendedor } = require('../services/rankingService');
 const { obtenerCupoMaximo } = require('../services/distribucionLeadsService');
 const flowClient = require('../services/flowClient');
@@ -588,6 +589,59 @@ router.get('/excedente-citas', requireAuth, requireRolVendedorAdmin, async (req,
   } catch (error) {
     console.error('Error calculando excedente de citas:', error);
     res.status(500).json({ error: 'Error al calcular el excedente de citas' });
+  }
+});
+
+// ------------------------------------------------------------
+// GET /admin-vendedores/calidad-whatsapp
+//
+// Señal temprana de bloqueo (decisión 2026-09-07): consulta en vivo la
+// calificación de calidad de Meta (GREEN/YELLOW/RED) y el nivel de
+// mensajería vigente de cada Empresa con WhatsApp conectado. Aislado por
+// empresa -- si Meta falla para una, no bota el resto del reporte.
+// ------------------------------------------------------------
+router.get('/calidad-whatsapp', requireAuth, requireRolVendedorAdmin, async (req, res) => {
+  try {
+    const empresas = await prisma.empresa.findMany({
+      where: { whatsappNumeroId: { not: null } },
+      select: { id: true, nombre: true, whatsappNumeroId: true, whatsappToken: true, whatsappPhoneNumber: true },
+    });
+
+    const reporte = await Promise.all(
+      empresas.map(async (empresa) => {
+        const accessToken = empresa.whatsappToken || process.env.WHATSAPP_ACCESS_TOKEN;
+        try {
+          const { qualityRating, limiteMensajeria } = await obtenerCalidadWhatsApp(empresa.whatsappNumeroId, accessToken);
+          return {
+            empresaId: empresa.id,
+            empresaNombre: empresa.nombre,
+            whatsappPhoneNumber: empresa.whatsappPhoneNumber,
+            qualityRating,
+            limiteMensajeria,
+            error: null,
+          };
+        } catch (error) {
+          return {
+            empresaId: empresa.id,
+            empresaNombre: empresa.nombre,
+            whatsappPhoneNumber: empresa.whatsappPhoneNumber,
+            qualityRating: null,
+            limiteMensajeria: null,
+            error: error.message,
+          };
+        }
+      })
+    );
+
+    reporte.sort((a, b) => {
+      const orden = { RED: 0, YELLOW: 1, GREEN: 2 };
+      return (orden[a.qualityRating] ?? 3) - (orden[b.qualityRating] ?? 3);
+    });
+
+    res.json({ reporte });
+  } catch (error) {
+    console.error('Error consultando calidad de WhatsApp:', error);
+    res.status(500).json({ error: 'Error al consultar la calidad de WhatsApp' });
   }
 });
 

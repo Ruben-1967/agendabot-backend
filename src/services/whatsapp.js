@@ -11,6 +11,35 @@ const GRAPH_API_VERSION = 'v21.0';
 const MAX_FILAS_LISTA_INTERACTIVA = 10;
 
 /**
+ * Consulta la calificación de calidad y el nivel de mensajería vigente del
+ * número (señal temprana de bloqueos/reportes antes de que Meta corte el
+ * número — ver GET /admin-vendedores/calidad-whatsapp). No envía nada, solo
+ * lee el estado actual del phone number en Meta.
+ *
+ * @param {string} phoneNumberId
+ * @param {string} accessToken
+ * @returns {Promise<{qualityRating: string|null, limiteMensajeria: string|null}>}
+ */
+async function obtenerCalidadWhatsApp(phoneNumberId, accessToken) {
+  const url = `https://graph.facebook.com/${GRAPH_API_VERSION}/${phoneNumberId}?fields=quality_rating,whatsapp_business_manager_messaging_limit`;
+
+  const response = await fetch(url, {
+    headers: { 'Authorization': `Bearer ${accessToken}` },
+  });
+
+  const data = await response.json();
+
+  if (!response.ok) {
+    throw new Error(`WhatsApp API error: ${data.error?.message || response.statusText}`);
+  }
+
+  return {
+    qualityRating: data.quality_rating || null,
+    limiteMensajeria: data.whatsapp_business_manager_messaging_limit || null,
+  };
+}
+
+/**
  * Envía un mensaje de texto simple por WhatsApp.
  *
  * @param {Object} params
@@ -469,6 +498,7 @@ function decodificarBotonCategoriaGenerica(id) {
 
 module.exports = {
   MAX_FILAS_LISTA_INTERACTIVA,
+  obtenerCalidadWhatsApp,
   sendWhatsAppTextMessage,
   sendWhatsAppTemplateMessage,
   sendWhatsAppImageMessage,
