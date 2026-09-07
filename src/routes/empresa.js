@@ -223,6 +223,15 @@ router.patch('/catalogo-visual-activo', requireAuth, requireRole('ADMIN'), async
   }
 });
 
+// Restringido a LuxVision a propósito (decisión 2026-09-07): no hay
+// claridad todavía sobre el costo real de los "service messages" desde
+// oct-2026 (ver jobs/enviarPreguntaOptIn.js y memoria del proyecto), así
+// que ningún otro negocio puede activar marketing/opt-in por ahora — ni
+// por el panel (ver AdminLayout.jsx, oculta el bloque) ni pegándole
+// directo a este endpoint. Quitar/ampliar esta restricción cuando haya
+// claridad de precios.
+const EMPRESA_ID_LUXVISION = 'e277ea9e-5793-468c-aa96-e4a2f7457201';
+
 /**
  * Elección del negocio sobre marketing/opt-in (Ley 21.719 — ver memoria del
  * proyecto). Dos caminos:
@@ -241,6 +250,9 @@ router.put('/opt-in-marketing', requireAuth, requireRole('ADMIN'), async (req, r
     const { usaOptInMarketing } = req.body;
     if (typeof usaOptInMarketing !== 'boolean') {
       return res.status(400).json({ error: 'usaOptInMarketing debe ser true o false' });
+    }
+    if (usaOptInMarketing && req.usuario.empresaId !== EMPRESA_ID_LUXVISION) {
+      return res.status(403).json({ error: 'El marketing/opt-in todavía no está disponible para tu negocio.' });
     }
 
     const data = { usaOptInMarketing };
