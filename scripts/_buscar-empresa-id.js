@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 // Uso puntual: para cada Empresa cuyo nombre contiene "Luxvision", imprime
-// su id, cuántos Usuario tiene, cuántos Cliente tiene, y el email de sus
-// usuarios -- para desempatar entre duplicados y confirmar cuál es la
-// empresa real que usa el cliente (solo lectura, no toca nada).
+// id, usuarios, conteo de clientes, y datos de conexión de WhatsApp (solo
+// el phoneNumberId/wabaId/numero legible -- nunca el token) y fecha de
+// creación -- para entender la duplicación de Empresas encontrada y decidir
+// cómo unificarla. Solo lectura, no toca nada.
 require('dotenv').config();
 const prisma = require('../src/lib/prisma');
 
@@ -12,7 +13,12 @@ async function main() {
     select: {
       id: true,
       nombre: true,
-      usuarios: { select: { email: true, nombre: true } },
+      creadoEn: true,
+      whatsappNumeroId: true,
+      whatsappWabaId: true,
+      whatsappPhoneNumber: true,
+      recordatorioControlAnualPausado: true,
+      usuarios: { select: { email: true, nombre: true, rol: true } },
       _count: { select: { clientes: true } },
     },
   });
