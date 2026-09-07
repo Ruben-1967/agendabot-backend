@@ -314,6 +314,18 @@ const agendaHoy = await prisma.cita.findMany({
     });
     const citasProximosDias = Array.from(citasProximosDiasMap, ([fecha, cantidad]) => ({ fecha, cantidad }));
 
+    // 7.6 PACIENTES PRÓXIMOS 7 DÍAS (incluye hoy) — KPI aparte del gráfico
+    // de 6 días de arriba, mismo criterio (excluye CANCELADA).
+    const finProximos7Dias = new Date(hoyChile.getTime() + 7 * 24 * 60 * 60 * 1000);
+    const citasProximos7Dias = await prisma.cita.count({
+      where: {
+        empresaId,
+        ...filtroRecurso,
+        estado: { not: 'CANCELADA' },
+        fechaHoraInicio: { gte: hoyChile, lt: finProximos7Dias },
+      },
+    });
+
     // 8. ATENCIONES POR TIPO DE SERVICIO — Venta.categoriaProducto, último año
     const hace1Anio = new Date(hoyChile.getTime() - 365 * 24 * 60 * 60 * 1000);
     const ventasParaTipo = await prisma.venta.findMany({
@@ -376,6 +388,7 @@ const agendaHoy = await prisma.cita.findMany({
       montoSemana,
       atencionesHoy,
       citasProximosDias,
+      citasProximos7Dias,
       citasPorDia,
       atencionesPorTipo,
       citasPorMes,
