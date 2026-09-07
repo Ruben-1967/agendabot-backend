@@ -11,7 +11,6 @@
  */
 
 require('dotenv').config();
-process.env.DEBUG_CLAUDE_LOOP = '1'; // instrumentación temporal, ver services/claude.js
 const prisma = require('../src/lib/prisma');
 const { generarRespuestaChatbot } = require('../src/services/claude');
 

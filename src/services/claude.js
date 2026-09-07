@@ -544,10 +544,24 @@ ${empresa.requiereRut ? '- Este negocio además EXIGE RUT y teléfono de contact
   // atajo real SÍ pone las horas en el cuerpo del mensaje, pero eso solo
   // pasa cuando la herramienta se llamó de verdad (este chequeo corre solo
   // en el turno SIN tool_use, así que nunca choca con el atajo real).
+  // Falso positivo real encontrado (Ahorróptica, 2026-09-07, cliente
+  // preguntando "¿reparan lentes?"): el modelo respondió citando el
+  // HORARIO DE ATENCIÓN del local ("Lunes a viernes: 09:30 a 19:00 hrs,
+  // Sábado: 10:00 a 14:00 hrs") como parte de una respuesta válida — las 4
+  // horas de esos 2 rangos activaban este heurístico igual que si fueran
+  // horas de cita inventadas, forzando reintentos hasta agotar las 5
+  // rondas y caer en el mensaje de error genérico. Los rangos de horario
+  // ("HH:MM a/hasta/- HH:MM") se descartan antes de contar — el bug real
+  // que este heurístico atrapa siempre listó horas SUELTAS (ej. "14:00,
+  // 14:15, 14:30"), nunca rangos de apertura/cierre.
   const pareceListaDeHorariosInventada = (texto) => {
     const t = texto || '';
     if (/horarios? disponibles para el/i.test(t) && /elige el que más te acomode/i.test(t)) return true;
-    const horasEnTexto = t.match(/\b([01]?\d|2[0-3]):[0-5]\d\b/g) || [];
+    const sinRangosDeHorarioAtencion = t.replace(
+      /\b([01]?\d|2[0-3]):[0-5]\d\s*(a|hasta|-|–)\s*([01]?\d|2[0-3]):[0-5]\d\b/gi,
+      ''
+    );
+    const horasEnTexto = sinRangosDeHorarioAtencion.match(/\b([01]?\d|2[0-3]):[0-5]\d\b/g) || [];
     return horasEnTexto.length >= 3;
   };
 
@@ -595,17 +609,6 @@ ${empresa.requiereRut ? '- Este negocio además EXIGE RUT y teléfono de contact
     });
     forzarHerramienta = null;
 
-    // Instrumentación temporal (2026-09-07, diagnóstico del caso "ajuste de
-    // lentes" en Ahorróptica) -- solo activa con DEBUG_CLAUDE_LOOP=1, no
-    // toca el comportamiento normal. Sacar una vez resuelto el bug.
-    if (process.env.DEBUG_CLAUDE_LOOP === '1') {
-      console.log(`[DEBUG_CLAUDE_LOOP] intento ${intentos + 1}/5, stop_reason=${response.stop_reason}`);
-      for (const b of response.content) {
-        if (b.type === 'text') console.log('[DEBUG_CLAUDE_LOOP]   texto:', JSON.stringify(b.text));
-        if (b.type === 'tool_use') console.log('[DEBUG_CLAUDE_LOOP]   tool_use:', b.name, JSON.stringify(b.input));
-      }
-    }
-
     if (response.stop_reason !== 'tool_use') {
       const textBlock = response.content.find((b) => b.type === 'text');
       const texto = textBlock ? textBlock.text : '';
@@ -620,7 +623,6 @@ ${empresa.requiereRut ? '- Este negocio además EXIGE RUT y teléfono de contact
       // los mismos datos ya reunidos en la conversación) en vez de confiar
       // en lo que el modelo redactó.
       if (pareceConfirmacionDeCita(texto)) {
-        if (process.env.DEBUG_CLAUDE_LOOP === '1') console.log('[DEBUG_CLAUDE_LOOP]   -> pareceConfirmacionDeCita, forzando agendar_cita');
         forzarHerramienta = 'agendar_cita';
         continue;
       }
@@ -628,7 +630,6 @@ ${empresa.requiereRut ? '- Este negocio además EXIGE RUT y teléfono de contact
       // Mismo mecanismo para el bug de horarios inventados (ver comentario
       // de pareceListaDeHorariosInventada más arriba).
       if (pareceListaDeHorariosInventada(texto)) {
-        if (process.env.DEBUG_CLAUDE_LOOP === '1') console.log('[DEBUG_CLAUDE_LOOP]   -> pareceListaDeHorariosInventada, forzando consultar_disponibilidad');
         forzarHerramienta = 'consultar_disponibilidad';
         continue;
       }
@@ -636,7 +637,6 @@ ${empresa.requiereRut ? '- Este negocio además EXIGE RUT y teléfono de contact
       // Mismo mecanismo para la lista de PRÓXIMOS DÍAS inventada (ver
       // comentario de pareceListaDeDiasInventada más arriba).
       if (pareceListaDeDiasInventada(texto)) {
-        if (process.env.DEBUG_CLAUDE_LOOP === '1') console.log('[DEBUG_CLAUDE_LOOP]   -> pareceListaDeDiasInventada, forzando consultar_proximos_dias_disponibles');
         forzarHerramienta = 'consultar_proximos_dias_disponibles';
         continue;
       }
@@ -644,7 +644,6 @@ ${empresa.requiereRut ? '- Este negocio además EXIGE RUT y teléfono de contact
       // Mismo mecanismo para la promesa de "te paso con un ejecutivo" sin
       // pausar de verdad (ver pareceOfertaDeHumanoInventada más arriba).
       if (pareceOfertaDeHumanoInventada(texto)) {
-        if (process.env.DEBUG_CLAUDE_LOOP === '1') console.log('[DEBUG_CLAUDE_LOOP]   -> pareceOfertaDeHumanoInventada, forzando escalar_a_humano');
         forzarHerramienta = 'escalar_a_humano';
         continue;
       }
@@ -667,7 +666,6 @@ ${empresa.requiereRut ? '- Este negocio además EXIGE RUT y teléfono de contact
     for (const block of response.content) {
       if (block.type === 'tool_use') {
         const resultado = await ejecutarHerramienta(block.name, block.input, contexto);
-        if (process.env.DEBUG_CLAUDE_LOOP === '1') console.log('[DEBUG_CLAUDE_LOOP]   resultado de', block.name, ':', JSON.stringify(resultado));
         toolResults.push({
           type: 'tool_result',
           tool_use_id: block.id,
