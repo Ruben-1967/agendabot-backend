@@ -229,12 +229,23 @@ router.get('/', async (req, res) => {
 
     const clientes = await prisma.cliente.findMany({
       where: { empresaId },
-      include: { ventas: { orderBy: { fecha: 'desc' } } },
+      include: {
+        ventas: { orderBy: { fecha: 'desc' } },
+        // "Última visita" en la tarjeta del paciente no debe mirar solo
+        // ventas -- un paciente puede tener historial clínico (recetas,
+        // controles) sin ninguna venta asociada (ej. base importada).
+        atencionesClinicas: { orderBy: { fecha: 'desc' }, take: 1 },
+      },
       orderBy: { nombre: 'asc' },
     });
 
     const resultado = clientes.map((c) => {
       const totalGastado = c.ventas.reduce((acc, v) => acc + v.monto, 0);
+      const ultimaVentaFecha = c.ventas[0]?.fecha || null;
+      const ultimaAtencionFecha = c.atencionesClinicas[0]?.fecha || null;
+      const ultimaVisitaFecha = [ultimaVentaFecha, ultimaAtencionFecha]
+        .filter(Boolean)
+        .sort((a, b) => new Date(b) - new Date(a))[0] || null;
       return {
         id: c.id,
         nombre: c.nombre,
@@ -243,7 +254,7 @@ router.get('/', async (req, res) => {
         email: c.email,
         numVentas: c.ventas.length,
         totalGastado,
-        ultimaCompraFecha: c.ventas[0]?.fecha || null,
+        ultimaCompraFecha: ultimaVisitaFecha,
         fechaProximaCita: c.fechaProximaCita,
         optInCampanas: c.optInCampanas,
         optInCampanasPreguntado: c.optInCampanasPreguntado,
