@@ -18,16 +18,6 @@ const { generarRespuestaChatbot } = require('../src/services/claude');
 const EMPRESA_ID = 'ahoroptica-lautaro-seed-id';
 const TELEFONO_PRUEBA = '+56900000098';
 
-async function turno(historial, empresa, cliente, mensaje) {
-  console.log(`\n>>> CLIENTE: ${mensaje}`);
-  const inicio = Date.now();
-  const resultado = await generarRespuestaChatbot({ empresa, cliente, historial, mensajeEntrante: mensaje });
-  console.log(`<<< BOT (texto, ${Date.now() - inicio}ms):`, resultado.texto);
-  if (resultado.interactivo) console.log('<<< BOT (interactivo):', JSON.stringify(resultado.interactivo));
-  historial.push({ rol: 'usuario', contenido: mensaje, timestamp: new Date().toISOString() });
-  historial.push({ rol: 'asistente', contenido: resultado.texto, timestamp: new Date().toISOString() });
-}
-
 async function main() {
   const empresa = await prisma.empresa.findUnique({ where: { id: EMPRESA_ID }, include: { rubroTemplate: true } });
   console.log('Empresa:', empresa.nombre);
@@ -35,27 +25,50 @@ async function main() {
   const servicios = await prisma.servicio.findMany({ where: { empresaId: EMPRESA_ID }, select: { nombre: true } });
   console.log('Servicios reales configurados:', servicios.map((s) => s.nombre));
 
-  let cliente = await prisma.cliente.findFirst({ where: { empresaId: EMPRESA_ID, telefono: TELEFONO_PRUEBA } });
-  if (cliente && cliente.nombre !== 'PRUEBA CLAUDE') {
-    throw new Error(`Teléfono de prueba ya usado por un cliente real (${cliente.nombre}) — abortando.`);
-  }
-  if (!cliente) {
-    cliente = await prisma.cliente.create({ data: { empresaId: EMPRESA_ID, telefono: TELEFONO_PRUEBA, nombre: 'PRUEBA CLAUDE' } });
+  // Frase EXACTA que el dueño probó por WhatsApp real y reprodujo el error,
+  // como PRIMER mensaje de una conversación nueva -- se repite varias veces
+  // en conversaciones nuevas independientes, porque la primera corrida de
+  // este script NO reprodujo el error (el modelo no es 100% determinista
+  // con el mismo prompt). Objetivo: aumentar la chance de agarrar la corrida
+  // que sí falla, con el log de depuración prendido.
+  const NUM_INTENTOS = 8;
+  const resumen = [];
+
+  for (let i = 1; i <= NUM_INTENTOS; i++) {
+    console.log(`\n========== INTENTO GLOBAL ${i}/${NUM_INTENTOS} ==========`);
+
+    let cliente = await prisma.cliente.findFirst({ where: { empresaId: EMPRESA_ID, telefono: TELEFONO_PRUEBA } });
+    if (cliente && cliente.nombre !== 'PRUEBA CLAUDE') {
+      throw new Error(`Teléfono de prueba ya usado por un cliente real (${cliente.nombre}) — abortando.`);
+    }
+    if (!cliente) {
+      cliente = await prisma.cliente.create({ data: { empresaId: EMPRESA_ID, telefono: TELEFONO_PRUEBA, nombre: 'PRUEBA CLAUDE' } });
+    }
+
+    const historial = [];
+    let resultadoFinal;
+    try {
+      const inicio = Date.now();
+      resultadoFinal = await generarRespuestaChatbot({
+        empresa, cliente, historial, mensajeEntrante: '¿Ustedes reparan o ajustan lentes?',
+      });
+      console.log(`<<< BOT (texto, ${Date.now() - inicio}ms):`, resultadoFinal.texto);
+    } finally {
+      // Limpieza (incluye Cita por si el modelo sí llegó a agendar algo --
+      // Cita.clienteId es FK obligatoria sin onDelete, así que sin esto un
+      // cliente.delete() con una Cita real colgando fallaría a mitad de camino)
+      await prisma.cita.deleteMany({ where: { clienteId: cliente.id } });
+      await prisma.conversacion.deleteMany({ where: { empresaId: EMPRESA_ID, telefono: TELEFONO_PRUEBA } });
+      await prisma.cliente.delete({ where: { id: cliente.id } });
+    }
+
+    const cayoEnError = resultadoFinal?.texto?.includes('tuve un problema procesando tu solicitud');
+    resumen.push({ intento: i, cayoEnError });
   }
 
-  // Frase EXACTA que el dueño probó por WhatsApp real y reprodujo el error
-  // -- a diferencia del intento anterior de este script, se manda como
-  // PRIMER mensaje de una conversación nueva (así fue en la prueba real).
-  const historial = [];
-  await turno(historial, empresa, cliente, '¿Ustedes reparan o ajustan lentes?');
-
-  // Limpieza (incluye Cita por si el modelo sí llegó a agendar algo --
-  // Cita.clienteId es FK obligatoria sin onDelete, así que sin esto un
-  // cliente.delete() con una Cita real colgando fallaría a mitad de camino)
-  await prisma.cita.deleteMany({ where: { clienteId: cliente.id } });
-  await prisma.conversacion.deleteMany({ where: { empresaId: EMPRESA_ID, telefono: TELEFONO_PRUEBA } });
-  await prisma.cliente.delete({ where: { id: cliente.id } });
-  console.log('\nLimpieza completa.');
+  console.log('\n===== RESUMEN =====');
+  console.log(JSON.stringify(resumen, null, 2));
+  console.log(`Fallos: ${resumen.filter((r) => r.cayoEnError).length} de ${NUM_INTENTOS}`);
 }
 
 main().catch((e) => console.error('ERROR:', e)).finally(() => prisma.$disconnect());
