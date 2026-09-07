@@ -11,6 +11,7 @@
  */
 
 require('dotenv').config();
+process.env.DEBUG_CLAUDE_LOOP = '1'; // instrumentación temporal, ver services/claude.js
 const prisma = require('../src/lib/prisma');
 const { generarRespuestaChatbot } = require('../src/services/claude');
 
@@ -42,11 +43,11 @@ async function main() {
     cliente = await prisma.cliente.create({ data: { empresaId: EMPRESA_ID, telefono: TELEFONO_PRUEBA, nombre: 'PRUEBA CLAUDE' } });
   }
 
+  // Frase EXACTA que el dueño probó por WhatsApp real y reprodujo el error
+  // -- a diferencia del intento anterior de este script, se manda como
+  // PRIMER mensaje de una conversación nueva (así fue en la prueba real).
   const historial = [];
-  await turno(historial, empresa, cliente, 'Hola');
-  await turno(historial, empresa, cliente, 'Quiero ajustar mis lentes, se me están cayendo');
-  await turno(historial, empresa, cliente, 'Sí, quiero agendar para que me los ajusten');
-  await turno(historial, empresa, cliente, '¿Cuándo tienen hora disponible para eso?');
+  await turno(historial, empresa, cliente, '¿Ustedes reparan o ajustan lentes?');
 
   // Limpieza (incluye Cita por si el modelo sí llegó a agendar algo --
   // Cita.clienteId es FK obligatoria sin onDelete, así que sin esto un
