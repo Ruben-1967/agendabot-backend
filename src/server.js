@@ -83,14 +83,18 @@ app.use(express.json({
 }));
 app.use(express.urlencoded({ extended: true }));
 
-// Middleware CORS con soporte para múltiples orígenes
+// Middleware CORS con soporte para múltiples orígenes. Bug real encontrado
+// (2026-09-07): este bloque ignoraba `origenesPermitidos` (calculado arriba,
+// correcto: sin PANEL_FRONTEND_URL definida, permite cualquier origen para
+// no bloquear pruebas locales/staging) y en su lugar hardcodeaba la URL de
+// producción del panel como único fallback -- contradiciendo el propio
+// comentario de arriba, y bloqueando cualquier prueba local o de Staging
+// que no tuviera esa env var seteada exactamente igual.
 app.use((req, res, next) => {
-  const origenPermitido = process.env.PANEL_FRONTEND_URL || 'https://agendabot-beryl.vercel.app';
-  const origenesPermitidos = origenPermitido.split(',').map(o => o.trim());
-  
   const origen = req.get('origin');
-  
-  if (origenesPermitidos.includes(origen) || origenesPermitidos.includes('*')) {
+  const permitido = origenesPermitidos === true || origenesPermitidos.includes(origen) || origenesPermitidos.includes('*');
+
+  if (permitido) {
     res.header('Access-Control-Allow-Origin', origen);
     res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
     res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
