@@ -9,6 +9,14 @@ const prisma = require('../lib/prisma');
 const { sendWhatsAppTemplateMessage } = require('../services/whatsapp');
 const { mesesDesde, esElegible } = require('../lib/recordatorioControlAnual');
 
+// Restringido a LuxVision a propósito (decisión 2026-09-08): mensaje de
+// categoría Marketing, sin claridad todavía sobre el costo real para operar
+// esto en otras empresas — mismo guard ya usado en las rutas del panel
+// (empresa.js, recordatorioControlAnual.js). Para abrirlo a "proactivas"
+// hace falta primero un modelo de prepago, igual al de campañas de catálogo
+// rotativo (créditos), no solo quitar esta línea.
+const EMPRESA_ID_LUXVISION = 'e277ea9e-5793-468c-aa96-e4a2f7457201';
+
 // Tope de envíos por corrida del cron. Se queda cómodamente bajo el límite
 // diario de conversaciones nuevas de Meta (250 sin verificación de negocio),
 // dejando margen para otros mensajes salientes del mismo día.
@@ -20,6 +28,7 @@ async function procesarRecordatoriosControlAnual() {
   // hayan pausado el envío desde el panel (recordatorioControlAnualPausado).
   const empresas = await prisma.empresa.findMany({
     where: {
+      id: EMPRESA_ID_LUXVISION,
       rubroTemplate: { clave: 'optica' },
       whatsappNumeroId: { not: null },
       recordatorioControlAnualPausado: false,
