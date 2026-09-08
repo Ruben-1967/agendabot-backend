@@ -27,6 +27,7 @@ const {
 const { obtenerHorariosDisponibles } = require('./services/disponibilidad');
 const { fechaLegibleDesdeISO } = require('./lib/formatoFechas');
 const { procesarMensajeEntrante } = require('./services/chatbotEngine');
+const { sendInstagramTextMessage, armarTextoConInteractivo } = require('./services/instagram');
 const { renderFormulario, PLANES } = require('./services/contratoHtml');
 const authRouter = require('./routes/auth');
 const campanasRouter = require('./routes/campanas');
@@ -144,6 +145,49 @@ function verificarFirmaWebhookWhatsApp(req, res, next) {
   next();
 }
 
+// ------------------------------------------------------------
+// Verificación de firma del webhook de Instagram — mismo mecanismo HMAC que
+// WhatsApp de arriba, pero con el app secret de la app de Instagram (canal
+// nuevo, 2026-09-08, habilitado solo para LuxVision — ver EMPRESA_ID_LUXVISION
+// más abajo). Solo una app, a diferencia de WhatsApp que prueba contra 2
+// (producción y demos) porque Instagram no tiene un flujo de demo aparte.
+// ------------------------------------------------------------
+function verificarFirmaWebhookInstagram(req, res, next) {
+  const headerFirma = req.header('x-hub-signature-256');
+  if (!headerFirma || !headerFirma.startsWith('sha256=')) {
+    console.warn('[SEGURIDAD] Webhook de Instagram sin firma X-Hub-Signature-256 — rechazado.');
+    return res.sendStatus(401);
+  }
+
+  const secretoAppMeta = process.env.INSTAGRAM_APP_SECRET;
+  if (!secretoAppMeta) {
+    console.error('[SEGURIDAD] INSTAGRAM_APP_SECRET no configurado — no se puede verificar el webhook. Rechazando por seguridad.');
+    return res.sendStatus(401);
+  }
+
+  const firmaRecibida = Buffer.from(headerFirma.slice('sha256='.length), 'hex');
+  const firmaCalculada = Buffer.from(
+    crypto.createHmac('sha256', secretoAppMeta).update(req.rawBody).digest('hex'),
+    'hex'
+  );
+  const esValida = firmaCalculada.length === firmaRecibida.length && crypto.timingSafeEqual(firmaCalculada, firmaRecibida);
+
+  if (!esValida) {
+    console.warn('[SEGURIDAD] Firma de webhook de Instagram inválida — posible request falso, rechazado.');
+    return res.sendStatus(401);
+  }
+
+  next();
+}
+
+// Instagram Direct como canal nuevo (2026-09-08): arquitectura general,
+// disponible para cualquier Empresa en el código, pero habilitada y visible
+// solo para LuxVision por ahora (mismo patrón cauteloso ya usado para el
+// recordatorio de control anual y el opt-in de marketing, ver
+// src/routes/empresa.js — declarada por separado acá porque no existe una
+// tabla de feature flags ni un módulo compartido de constantes).
+const EMPRESA_ID_LUXVISION = 'e277ea9e-5793-468c-aa96-e4a2f7457201';
+
 app.use('/auth', authRouter);
 app.use('/campanas', campanasRouter);
 app.use('/productos', productosRouter);
@@ -225,6 +269,23 @@ app.get('/webhook/whatsapp', (req, res) => {
 
   if (mode === 'subscribe' && token === process.env.WHATSAPP_VERIFY_TOKEN) {
     console.log('Webhook de WhatsApp verificado correctamente.');
+    return res.status(200).send(challenge);
+  }
+
+  return res.sendStatus(403);
+});
+
+// ------------------------------------------------------------
+// WEBHOOK DE INSTAGRAM (Meta) — verificación inicial, mismo mecanismo que
+// el de WhatsApp de arriba.
+// ------------------------------------------------------------
+app.get('/webhook/instagram', (req, res) => {
+  const mode = req.query['hub.mode'];
+  const token = req.query['hub.verify_token'];
+  const challenge = req.query['hub.challenge'];
+
+  if (mode === 'subscribe' && token === process.env.INSTAGRAM_VERIFY_TOKEN) {
+    console.log('Webhook de Instagram verificado correctamente.');
     return res.status(200).send(challenge);
   }
 
@@ -1138,6 +1199,120 @@ app.post('/webhook/whatsapp', verificarFirmaWebhookWhatsApp, async (req, res) =>
     console.log(`Respondido a ${telefonoCliente} (${empresa.nombre}): "${respuestaTexto}"`);
   } catch (error) {
     console.error('Error procesando mensaje entrante de WhatsApp:', error);
+  }
+});
+
+// ------------------------------------------------------------
+// WEBHOOK DE INSTAGRAM DIRECT — recepción de mensajes entrantes. Canal nuevo
+// (2026-09-08), arquitectura general pero habilitado y visible solo para
+// LuxVision (ver EMPRESA_ID_LUXVISION más arriba). Handler separado del de
+// WhatsApp (no comparte su cadena de interceptores de botones/listas
+// interactivas de arriba) porque el payload de Instagram es distinto y no
+// tiene listas nativas — cualquier `interactivo` se aplana a texto plano
+// con armarTextoConInteractivo (ver src/services/instagram.js). Reusa el
+// mismo motor de IA (procesarMensajeEntrante) que WhatsApp sin cambios.
+// ------------------------------------------------------------
+app.post('/webhook/instagram', verificarFirmaWebhookInstagram, async (req, res) => {
+  // Igual que WhatsApp: respondemos 200 de inmediato, Meta espera <5s.
+  res.sendStatus(200);
+
+  try {
+    if (req.body.object !== 'instagram') return;
+
+    const entry = req.body.entry?.[0];
+    // entry.id = id de la cuenta de Instagram que recibió el webhook (la
+    // cuenta del negocio) — se usa para resolver el tenant, igual que
+    // phone_number_id en WhatsApp. Ver instagramCuentaId en el schema.
+    const igCuentaId = entry?.id;
+    const evento = entry?.messaging?.[0];
+
+    if (!igCuentaId || !evento) return;
+
+    const empresa = await prisma.empresa.findFirst({
+      where: { instagramCuentaId: igCuentaId },
+    });
+
+    if (!empresa) {
+      console.warn(`No se encontró ninguna Empresa para instagramCuentaId=${igCuentaId}`);
+      return;
+    }
+
+    // Guardia: el canal existe en el código para cualquier empresa, pero
+    // por ahora solo hace algo para LuxVision (ver contexto del plan).
+    if (empresa.id !== EMPRESA_ID_LUXVISION) {
+      return;
+    }
+
+    const igsidCliente = evento.sender?.id;
+    if (!igsidCliente) return;
+
+    // Echo: un humano respondió manualmente desde la app de Instagram (o
+    // desde el panel de Meta Business Suite) — mismo mecanismo de pausa que
+    // Coexistence en WhatsApp (ver bloque smb_message_echoes más arriba),
+    // pero con el campo propio de Instagram (`message.is_echo`).
+    //
+    // TODO-VERIFICAR-CON-CASO-REAL: escrito contra la documentación de Meta
+    // (Instagram Messaging API / Send & Receive), nunca probado contra un
+    // caso real (bloqueado por Advanced Access, ver plan). Confirmar el
+    // shape exacto del payload apenas haya un primer mensaje real.
+    if (evento.message?.is_echo) {
+      const conversacionEco = await prisma.conversacion.findFirst({
+        where: { empresaId: empresa.id, telefono: igsidCliente, canal: 'instagram' },
+      });
+
+      if (conversacionEco) {
+        await prisma.conversacion.update({
+          where: { id: conversacionEco.id },
+          data: { pausadaPorHumanoEn: new Date() },
+        });
+      } else {
+        await prisma.conversacion.create({
+          data: {
+            empresaId: empresa.id,
+            telefono: igsidCliente,
+            canal: 'instagram',
+            mensajes: [],
+            pausadaPorHumanoEn: new Date(),
+          },
+        });
+      }
+
+      console.log(`[INSTAGRAM] Echo detectado — bot pausado para ${igsidCliente} (${empresa.nombre}).`);
+      return;
+    }
+
+    const textoEntrante = evento.message?.text;
+    if (!textoEntrante) return; // ignoramos silenciosamente adjuntos, reacciones, etc.
+
+    const { respuestaTexto, interactivo } = await procesarMensajeEntrante({
+      empresa,
+      telefonoCliente: igsidCliente,
+      textoEntrante,
+      nombreContacto: null,
+      canal: 'instagram',
+    });
+
+    // Coexistence: conversación pausada por intervención humana — no se
+    // envía nada este turno (ver chatbotEngine.js).
+    if (respuestaTexto === null) {
+      return;
+    }
+
+    if (!empresa.instagramToken) {
+      console.error(`Empresa ${empresa.nombre} no tiene instagramToken configurado.`);
+      return;
+    }
+
+    await sendInstagramTextMessage({
+      igCuentaId,
+      to: igsidCliente,
+      text: armarTextoConInteractivo(respuestaTexto, interactivo),
+      accessToken: empresa.instagramToken,
+    });
+
+    console.log(`[INSTAGRAM] Respondido a ${igsidCliente} (${empresa.nombre}): "${respuestaTexto}"`);
+  } catch (error) {
+    console.error('Error procesando mensaje entrante de Instagram:', error);
   }
 });
 

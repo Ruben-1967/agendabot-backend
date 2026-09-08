@@ -41,13 +41,16 @@ function normalizarTexto(texto) {
  *
  * @param {Object} params
  * @param {Object} params.empresa - Empresa completa, con rubroTemplate incluido.
- * @param {string} params.telefonoCliente
+ * @param {string} params.telefonoCliente - Teléfono (WhatsApp) o IGSID del contacto (Instagram).
  * @param {string} params.textoEntrante
  * @param {string|null} params.nombreContacto
+ * @param {string} [params.canal] - 'whatsapp' (default) | 'instagram'
  * @returns {Promise<{respuestaTexto: string, interactivo: Object|null, cliente: Object}>}
  */
-async function procesarMensajeEntrante({ empresa, telefonoCliente, textoEntrante, nombreContacto }) {
-  // 1. Buscar o crear el Cliente por teléfono dentro de esa empresa
+async function procesarMensajeEntrante({ empresa, telefonoCliente, textoEntrante, nombreContacto, canal = 'whatsapp' }) {
+  // 1. Buscar o crear el Cliente por teléfono dentro de esa empresa. Cliente
+  // no tiene campo canal propio -- para Instagram este "telefono" guarda el
+  // IGSID (ver Conversacion.canal más abajo, donde sí importa distinguir).
   let cliente = await prisma.cliente.findFirst({
     where: { empresaId: empresa.id, telefono: telefonoCliente },
   });
@@ -62,9 +65,11 @@ async function procesarMensajeEntrante({ empresa, telefonoCliente, textoEntrante
     });
   }
 
-  // 2. Buscar o crear la Conversacion activa con este cliente
+  // 2. Buscar o crear la Conversacion activa con este cliente. canal entra
+  // al where para no confundir un teléfono real de WhatsApp con un IGSID de
+  // Instagram que coincida por casualidad.
   const conversacion = await prisma.conversacion.findFirst({
-    where: { empresaId: empresa.id, telefono: telefonoCliente },
+    where: { empresaId: empresa.id, telefono: telefonoCliente, canal },
   });
 
   const historialPrevio = Array.isArray(conversacion?.mensajes) ? conversacion.mensajes : [];
@@ -152,6 +157,7 @@ async function procesarMensajeEntrante({ empresa, telefonoCliente, textoEntrante
       empresaId: empresa.id,
       clienteId: cliente.id,
       telefono: telefonoCliente,
+      canal,
       mensajes: mensajesActualizados,
       ...datosPausa,
     },

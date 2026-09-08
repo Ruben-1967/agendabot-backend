@@ -413,4 +413,112 @@ router.post('/whatsapp/conectar', requireAuth, requireRole('ADMIN'), async (req,
   }
 });
 
+/**
+ * Instagram Direct — canal nuevo (2026-09-08), mismo patrón que
+ * POST /whatsapp/conectar de arriba. Restringido a LuxVision (ver
+ * EMPRESA_ID_LUXVISION más arriba) — a diferencia de esa ruta, acá el 403
+ * bloquea el endpoint completo, no solo un campo del body: el canal en sí
+ * solo hace algo para esa empresa por ahora (ver src/server.js).
+ *
+ * Body esperado: { code } — lo entrega el evento postMessage que dispara
+ * FB.login() con el config_id de Instagram en el panel (ver
+ * ConectarInstagram.jsx). A diferencia de WhatsApp, acá no hace falta que
+ * el frontend mande ningún id de cuenta — se resuelve directo con el token.
+ *
+ * TODO-VERIFICAR-CON-CASO-REAL: escrito contra la documentación de Meta
+ * (Instagram API with Instagram Login / Facebook Login for Business),
+ * nunca probado contra una cuenta real — bloqueado por Advanced Access de
+ * Meta (ver plan de esta feature). Revisar el shape exacto de cada
+ * respuesta cuando Meta apruebe y se pueda probar con la cuenta real de
+ * LuxVision.
+ */
+router.post('/instagram/conectar', requireAuth, requireRole('ADMIN'), async (req, res) => {
+  if (req.usuario.empresaId !== EMPRESA_ID_LUXVISION) {
+    return res.status(403).json({ error: 'Instagram todavía no está disponible para tu negocio.' });
+  }
+
+  const { code } = req.body;
+  if (!code || typeof code !== 'string') {
+    return res.status(400).json({ error: 'Falta "code" (el token corto que entrega FB.login())' });
+  }
+
+  const appId = process.env.INSTAGRAM_APP_ID;
+  const appSecret = process.env.INSTAGRAM_APP_SECRET;
+  if (!appId || !appSecret) {
+    console.error('[INSTAGRAM] Falta INSTAGRAM_APP_ID o INSTAGRAM_APP_SECRET en las variables de entorno.');
+    return res.status(500).json({ error: 'Falta configuración del servidor para conectar Instagram' });
+  }
+
+  try {
+    // Paso 1: cambiar el code corto por un token de acceso.
+    const urlIntercambio =
+      `https://graph.facebook.com/${GRAPH_API_VERSION}/oauth/access_token` +
+      `?client_id=${encodeURIComponent(appId)}` +
+      `&client_secret=${encodeURIComponent(appSecret)}` +
+      `&code=${encodeURIComponent(code)}`;
+
+    const respuestaIntercambio = await fetch(urlIntercambio);
+    const datosIntercambio = await respuestaIntercambio.json();
+
+    if (!respuestaIntercambio.ok || !datosIntercambio.access_token) {
+      console.error('[INSTAGRAM] Error al intercambiar el code por token:', JSON.stringify(datosIntercambio));
+      return res.status(502).json({ error: 'Meta rechazó el intercambio de token', detalle: datosIntercambio.error?.message });
+    }
+
+    const accessToken = datosIntercambio.access_token;
+
+    // Paso 2: resolver la cuenta de Instagram profesional conectada a este
+    // token y confirmar su username (valida además que el token tiene
+    // acceso real a una cuenta de Instagram).
+    const urlCuenta = `https://graph.facebook.com/${GRAPH_API_VERSION}/me?fields=id,username&access_token=${encodeURIComponent(accessToken)}`;
+    const respuestaCuenta = await fetch(urlCuenta);
+    const datosCuenta = await respuestaCuenta.json();
+
+    if (!respuestaCuenta.ok || !datosCuenta.id) {
+      console.error('[INSTAGRAM] Error al confirmar la cuenta de Instagram:', JSON.stringify(datosCuenta));
+      return res.status(502).json({ error: 'No se pudo confirmar la cuenta de Instagram con Meta', detalle: datosCuenta.error?.message });
+    }
+
+    const igCuentaId = datosCuenta.id;
+
+    // Paso 3: suscribir la app a los webhooks de mensajería de esta cuenta
+    // — mismo paso, mismo motivo, que la suscripción de WhatsApp de arriba
+    // (sin esto, Meta nunca avisa de mensajes entrantes).
+    const urlSuscripcion = `https://graph.facebook.com/${GRAPH_API_VERSION}/${encodeURIComponent(igCuentaId)}/subscribed_apps?subscribed_fields=messages`;
+    const respuestaSuscripcion = await fetch(urlSuscripcion, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+    const datosSuscripcion = await respuestaSuscripcion.json();
+
+    if (!respuestaSuscripcion.ok || !datosSuscripcion.success) {
+      console.error('[INSTAGRAM] Error al suscribir la app a los webhooks de la cuenta:', JSON.stringify(datosSuscripcion));
+      return res.status(502).json({ error: 'No se pudo completar la conexión de Instagram (falló la suscripción a webhooks) — no se guardó nada, hay que reintentar', detalle: datosSuscripcion.error?.message });
+    }
+
+    // Paso 4: guardar. instagramToken se cifra solo (ver src/lib/prisma.js).
+    const empresaActualizada = await prisma.empresa.update({
+      where: { id: req.usuario.empresaId },
+      data: {
+        instagramCuentaId: igCuentaId,
+        instagramToken: accessToken,
+        instagramUsername: datosCuenta.username || null,
+      },
+      select: {
+        id: true,
+        nombre: true,
+        instagramCuentaId: true,
+        instagramUsername: true,
+      },
+    });
+
+    console.log(`[INSTAGRAM] Cuenta conectada para empresa ${empresaActualizada.id} (${empresaActualizada.nombre}): @${empresaActualizada.instagramUsername}`);
+
+    res.json(empresaActualizada);
+  } catch (error) {
+    console.error('[INSTAGRAM] Error inesperado en POST /empresa/instagram/conectar:', error);
+    res.status(500).json({ error: 'Error al conectar Instagram' });
+  }
+});
+
 module.exports = router;

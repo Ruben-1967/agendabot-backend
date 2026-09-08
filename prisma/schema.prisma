@@ -108,6 +108,12 @@ model Empresa {
   whatsappWabaId      String?             // WABA ID (ej: "2156101751629995")
   whatsappPhoneNumber String?             // El número legible (ej: "+56921738221")
 
+  // ====== CAMPOS PARA INSTAGRAM DIRECT (2026-09-08, canal nuevo — ver
+  // routes/empresa.js POST /empresa/instagram/conectar) ======
+  instagramCuentaId  String? @unique // Instagram business account id, routing del webhook
+  instagramToken     String? @db.Text // Access token (cifrado AES-256-GCM)
+  instagramUsername  String?          // @usuario legible
+
   googleCalendarId    String?
   googleRefreshToken  String?
 
@@ -552,7 +558,7 @@ model ListaEspera {
 }
 
 // ------------------------------------------------------------
-// CONVERSACIONES DE WHATSAPP (historial + estado del chatbot)
+// CONVERSACIONES (historial + estado del chatbot) — WhatsApp e Instagram
 // ------------------------------------------------------------
 model Conversacion {
   id        String   @id @default(uuid())
@@ -562,7 +568,12 @@ model Conversacion {
   cliente   Cliente? @relation(fields: [clienteId], references: [id])
   clienteId String?
 
-  telefono  String   // número del paciente, por si aún no existe como Cliente
+  // "whatsapp" | "instagram" (2026-09-08, ver Cita.origenCanal más abajo
+  // para el mismo precedente de string libre en vez de enum). Todo lookup
+  // por {empresaId, telefono} debe incluir canal también, para no
+  // confundir un teléfono real con un IGSID de Instagram.
+  canal     String   @default("whatsapp")
+  telefono  String?  // teléfono (WhatsApp) o IGSID del contacto (Instagram) — nunca ambos a la vez
   mensajes  Json      // arreglo de {rol, contenido, timestamp}
   escaladoAHumano Boolean @default(false)
 

@@ -26,6 +26,7 @@ const cron = require('node-cron');
 const Anthropic = require('@anthropic-ai/sdk');
 const prisma = require('../lib/prisma');
 const { sendWhatsAppTextMessage, sendWhatsAppTemplateMessage } = require('../services/whatsapp');
+const { sendInstagramTextMessage } = require('../services/instagram');
 const { descifrarSiCorresponde } = require('../lib/cifrado');
 const { obtenerUrlPanelPrincipal } = require('../lib/urlPanel');
 
@@ -87,6 +88,11 @@ async function resumirConversacionParaAlerta(mensajes) {
   }
 }
 
+// Esta alerta va siempre al DUEÑO del negocio (empresa.telefonoContacto),
+// no al cliente — por eso se manda siempre por WhatsApp, sin importar el
+// canal de la conversación que la disparó (WhatsApp o Instagram). Para una
+// conversación de Instagram, conversacion.telefono es el IGSID del cliente,
+// no un teléfono real — se incluye igual en la plantilla como referencia.
 async function enviarAlertaUrgenteInterna(conversacion, empresa) {
   const phoneNumberId = process.env.DEMO_PHONE_NUMBER_ID;
   const accessToken = process.env.DEMO_WHATSAPP_ACCESS_TOKEN;
@@ -155,19 +161,40 @@ async function procesarPausasCoexistence() {
       // cliente todavía no responde), no hay silencio del cliente que medir
       // — queda pausada indefinidamente hasta que el cliente escriba.
 
-      // 2. Mensaje de contención a los 5 min.
+      // 2. Mensaje de contención a los 5 min. Mensaje al CLIENTE — acá sí
+      // branchea por canal, a diferencia de la alerta interna de arriba.
       if (minutosDesdePausa >= MINUTOS_CONTENCION && !conversacion.contencionEnviadaEn) {
-        // whatsappToken llega anidado (Conversacion -> Empresa), la
-        // extensión de Prisma no lo descifra automáticamente ahí.
-        const accessToken = descifrarSiCorresponde(empresa.whatsappToken) || process.env.WHATSAPP_ACCESS_TOKEN;
-        if (accessToken && empresa.whatsappNumeroId) {
-          await sendWhatsAppTextMessage({
-            phoneNumberId: empresa.whatsappNumeroId,
-            to: conversacion.telefono,
-            accessToken,
-            text: TEXTO_CONTENCION,
-          });
+        let contencionEnviada = false;
 
+        if (conversacion.canal === 'instagram') {
+          // instagramToken llega anidado (Conversacion -> Empresa), la
+          // extensión de Prisma no lo descifra automáticamente ahí.
+          const accessTokenInstagram = descifrarSiCorresponde(empresa.instagramToken);
+          if (accessTokenInstagram && empresa.instagramCuentaId) {
+            await sendInstagramTextMessage({
+              igCuentaId: empresa.instagramCuentaId,
+              to: conversacion.telefono,
+              accessToken: accessTokenInstagram,
+              text: TEXTO_CONTENCION,
+            });
+            contencionEnviada = true;
+          }
+        } else {
+          // whatsappToken llega anidado (Conversacion -> Empresa), la
+          // extensión de Prisma no lo descifra automáticamente ahí.
+          const accessToken = descifrarSiCorresponde(empresa.whatsappToken) || process.env.WHATSAPP_ACCESS_TOKEN;
+          if (accessToken && empresa.whatsappNumeroId) {
+            await sendWhatsAppTextMessage({
+              phoneNumberId: empresa.whatsappNumeroId,
+              to: conversacion.telefono,
+              accessToken,
+              text: TEXTO_CONTENCION,
+            });
+            contencionEnviada = true;
+          }
+        }
+
+        if (contencionEnviada) {
           const mensajesActualizados = [
             ...(Array.isArray(conversacion.mensajes) ? conversacion.mensajes : []),
             { rol: 'asistente', contenido: TEXTO_CONTENCION, timestamp: new Date().toISOString() },

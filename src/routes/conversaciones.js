@@ -2,6 +2,7 @@ const express = require('express');
 const prisma = require('../lib/prisma');
 const { requireAuth } = require('../middleware/auth');
 const { sendWhatsAppTextMessage } = require('../services/whatsapp');
+const { sendInstagramTextMessage } = require('../services/instagram');
 const { listarEjemplosParaResumen, obtenerEjemploCompleto } = require('../lib/ejemplosDemoChats');
 
 const router = express.Router();
@@ -40,6 +41,7 @@ router.get('/:empresaId', requireAuth, async (req, res) => {
         id: conv.id,
         clienteNombre: conv.cliente?.nombre || conv.telefono,
         telefono: conv.telefono,
+        canal: conv.canal,
         clienteId: conv.clienteId,
         ultimoMensaje: ultimoMensaje?.contenido || '—',
         ultimoMensajeTimestamp: ultimoMensaje?.timestamp || conv.actualizadoEn,
@@ -135,6 +137,7 @@ router.get('/:empresaId/:conversacionId', requireAuth, async (req, res) => {
         id: conversacion.id,
         clienteNombre: conversacion.cliente?.nombre || conversacion.telefono,
         telefono: conversacion.telefono,
+        canal: conversacion.canal,
         cliente: conversacion.cliente,
         escaladoAHumano: conversacion.escaladoAHumano,
         mensajes: mensajesList,
@@ -175,24 +178,39 @@ router.post('/:empresaId/:conversacionId/mensaje', requireAuth, async (req, res)
     }
 
     const empresa = await prisma.empresa.findUnique({ where: { id: empresaId } });
-    const accessToken = empresa?.whatsappToken || process.env.WHATSAPP_ACCESS_TOKEN;
 
-    if (!accessToken || !empresa?.whatsappNumeroId) {
-      return res.status(400).json({ error: 'Esta empresa no tiene WhatsApp conectado, no se puede enviar el mensaje' });
-    }
-
-    // Enviar primero por WhatsApp — si falla, no guardamos el mensaje como
-    // si hubiera llegado al cliente (antes este endpoint solo lo guardaba
-    // en la BD sin enviarlo nunca de verdad).
-    try {
-      await sendWhatsAppTextMessage({
-        phoneNumberId: empresa.whatsappNumeroId,
-        to: conversacion.telefono,
-        text: contenido.trim(),
-        accessToken,
-      });
-    } catch (errorEnvio) {
-      return res.status(502).json({ error: `No se pudo enviar el mensaje por WhatsApp: ${errorEnvio.message}` });
+    // Enviar primero por el canal real de la conversación — si falla, no
+    // guardamos el mensaje como si hubiera llegado al cliente (antes este
+    // endpoint solo lo guardaba en la BD sin enviarlo nunca de verdad).
+    if (conversacion.canal === 'instagram') {
+      if (!empresa?.instagramToken || !empresa?.instagramCuentaId) {
+        return res.status(400).json({ error: 'Esta empresa no tiene Instagram conectado, no se puede enviar el mensaje' });
+      }
+      try {
+        await sendInstagramTextMessage({
+          igCuentaId: empresa.instagramCuentaId,
+          to: conversacion.telefono,
+          text: contenido.trim(),
+          accessToken: empresa.instagramToken,
+        });
+      } catch (errorEnvio) {
+        return res.status(502).json({ error: `No se pudo enviar el mensaje por Instagram: ${errorEnvio.message}` });
+      }
+    } else {
+      const accessToken = empresa?.whatsappToken || process.env.WHATSAPP_ACCESS_TOKEN;
+      if (!accessToken || !empresa?.whatsappNumeroId) {
+        return res.status(400).json({ error: 'Esta empresa no tiene WhatsApp conectado, no se puede enviar el mensaje' });
+      }
+      try {
+        await sendWhatsAppTextMessage({
+          phoneNumberId: empresa.whatsappNumeroId,
+          to: conversacion.telefono,
+          text: contenido.trim(),
+          accessToken,
+        });
+      } catch (errorEnvio) {
+        return res.status(502).json({ error: `No se pudo enviar el mensaje por WhatsApp: ${errorEnvio.message}` });
+      }
     }
 
     // Construir array de mensajes
