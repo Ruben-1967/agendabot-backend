@@ -61,7 +61,10 @@ async function procesarRecordatoriosControlAnual() {
         phoneNumberId: empresa.whatsappNumeroId,
         to: cliente.telefono,
         accessToken,
-        templateName: 'recordatorio_control_anual',
+        // "_v2" (2026-09-08): el nombre original quedó bloqueado 4 semanas
+        // en Meta tras un intento previo fallido — ver
+        // scripts/_crear-plantilla-recordatorio-control-anual-luxvision.js.
+        templateName: 'recordatorio_control_anual_v2',
         variables: [cliente.nombre, empresa.nombre],
       });
 

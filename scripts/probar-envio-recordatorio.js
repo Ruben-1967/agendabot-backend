@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * Prueba puntual y aislada del envío real del recordatorio de control
- * anual — manda la plantilla `recordatorio_control_anual` a UN teléfono
+ * anual — manda la plantilla `recordatorio_control_anual_v2` a UN teléfono
  * elegido a mano, sin tocar ningún Cliente ni correr el query real del
  * cron (jobs/enviarRecordatorios.js), para no arriesgar mandarle algo a
  * un paciente real de otra óptica que esté pendiente hoy.
@@ -41,7 +41,7 @@ async function main() {
     phoneNumberId: empresa.whatsappNumeroId,
     to: telefono,
     accessToken,
-    templateName: 'recordatorio_control_anual',
+    templateName: 'recordatorio_control_anual_v2',
     variables: ['Prueba', empresa.nombre],
   });
 

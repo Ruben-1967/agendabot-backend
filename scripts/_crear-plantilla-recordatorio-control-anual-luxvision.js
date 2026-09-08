@@ -1,11 +1,18 @@
 #!/usr/bin/env node
-// Uso puntual: crea la plantilla `recordatorio_control_anual` en la WABA
-// real de LuxVision ("Totemsystem Producción"), reusando el mismo texto y
-// botones que ya están aprobados en la cuenta equivocada (Multidigital SpA
-// / "Test WhatsApp Business Account") — ver
+// Uso puntual: crea la plantilla `recordatorio_control_anual_v2` en la
+// WABA real de LuxVision ("Totemsystem Producción"), reusando el mismo
+// texto y botones que ya están aprobados en la cuenta equivocada
+// (Multidigital SpA / "Test WhatsApp Business Account") — ver
 // scripts/_ver-plantillas-luxvision-produccion.js, que confirmó que acá
 // todavía no existe. Usa el whatsappToken ya guardado en la Empresa (se
 // descifra solo) en vez de WHATSAPP_ACCESS_TOKEN/WHATSAPP_WABA_ID.
+//
+// Nombre "_v2" (2026-09-08): el nombre original `recordatorio_control_anual`
+// tuvo un intento previo directo en esta WABA que quedó en proceso de
+// eliminación — Meta bloquea reusar el mismo nombre+idioma por 4 semanas
+// (error_subcode 2388023), y esa ventana no se cumple a tiempo para la
+// activación real programada el 21 de septiembre. Meta mismo sugiere usar
+// un nombre nuevo en vez de esperar.
 //
 // Solo CREA la plantilla (queda pendiente de revisión de Meta) — no manda
 // ningún mensaje a ningún cliente.
@@ -20,7 +27,7 @@ const EMPRESA_ID_LUXVISION = 'e277ea9e-5793-468c-aa96-e4a2f7457201';
 const WABA_ID_ESPERADO = '2156101751629995'; // "Totemsystem Producción"
 const GRAPH_API_VERSION = 'v21.0';
 
-const NOMBRE_PLANTILLA = 'recordatorio_control_anual';
+const NOMBRE_PLANTILLA = 'recordatorio_control_anual_v2';
 const TEXTO_BODY = 'Hola {{1}}, ya pasó un año desde tu último control de la vista en {{2}}. Te recomendamos agendar una nueva evaluación para mantener tu receta al día.';
 const BOTONES = ['Agendar', 'No por ahora'];
 const EJEMPLOS = ['Juan Pérez', 'LuxVision'];
