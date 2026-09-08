@@ -18,6 +18,19 @@ const { esElegible } = require('../lib/recordatorioControlAnual');
 
 router.use(requireAuth, requireRole('ADMIN'));
 
+// Restringido a LuxVision a propósito (decisión 2026-09-06, ver AdminLayout.jsx
+// que ya esconde el link del menú para cualquier otro negocio) — antes esto
+// solo bloqueaba en el frontend, cualquier otro ADMIN podía pegarle directo a
+// estos 3 endpoints. Mismo guard ya usado en /empresa/opt-in-marketing y
+// /empresa/instagram/conectar.
+const EMPRESA_ID_LUXVISION = 'e277ea9e-5793-468c-aa96-e4a2f7457201';
+router.use((req, res, next) => {
+  if (req.usuario.empresaId !== EMPRESA_ID_LUXVISION) {
+    return res.status(403).json({ error: 'El recordatorio de control anual todavía no está disponible para tu negocio.' });
+  }
+  next();
+});
+
 // ------------------------------------------------------------
 // GET /empresa/recordatorio-control-anual/resumen
 // ------------------------------------------------------------
