@@ -594,10 +594,27 @@ ${empresa.requiereRut ? '- Este negocio además EXIGE RUT y teléfono de contact
   const pareceOfertaDeHumanoInventada = (texto) =>
     /te (paso|comunico|conecto|derivo)\s+(con|a)\s+(un|una|el|la)?\s*(ejecutivo|persona|agente|humano)/i.test(texto || '');
 
+  // Bug real reportado por Ahorróptica (2026-09-09): el cliente escribe
+  // "quiero agendar una hora" sin decir el servicio, y el bot a veces
+  // responde con un menú de texto libre propio ("1️⃣ Agendar hora / 2️⃣
+  // Cotizar... / 3️⃣ Chatear con un ejecutivo") en vez de llamar a
+  // mostrar_lista_servicios como exige la instrucción de arriba — el
+  // cliente tiene que volver a escribir el servicio para que el bot recién
+  // ahí avance. Reproducido en vivo (scripts/_probar-fechas-no-automaticas-ahoroptica.js).
+  // Mismo mecanismo que los otros bugs de esta familia: si el texto tiene
+  // pinta de menú numerado (2+ opciones con marcador tipo "1️⃣"/"1)"/"1.")
+  // y el negocio sí tiene la herramienta real disponible, se descarta y se
+  // reintenta forzando la llamada.
+  const pareceMenuDeOpcionesSinHerramienta = (texto) => {
+    if (!tieneServiciosReales) return false;
+    const marcadores = (texto || '').match(/(?:^|\n)\s*(?:[1-9]️⃣|[1-9][.)])\s*\S/gm) || [];
+    return marcadores.length >= 2;
+  };
+
   // Bucle de tool use: Claude puede pedir usar una herramienta varias veces
   // seguidas (ej. consultar disponibilidad y luego agendar) antes de dar
   // la respuesta final en texto.
-  let forzarHerramienta = null; // null | 'agendar_cita' | 'consultar_disponibilidad' | 'consultar_proximos_dias_disponibles' | 'escalar_a_humano'
+  let forzarHerramienta = null; // null | 'agendar_cita' | 'consultar_disponibilidad' | 'consultar_proximos_dias_disponibles' | 'escalar_a_humano' | 'mostrar_lista_servicios'
   for (let intentos = 0; intentos < 5; intentos++) {
     const response = await anthropic.messages.create({
       model: MODEL,
@@ -645,6 +662,13 @@ ${empresa.requiereRut ? '- Este negocio además EXIGE RUT y teléfono de contact
       // pausar de verdad (ver pareceOfertaDeHumanoInventada más arriba).
       if (pareceOfertaDeHumanoInventada(texto)) {
         forzarHerramienta = 'escalar_a_humano';
+        continue;
+      }
+
+      // Mismo mecanismo para el menú de opciones inventado sin llamar a
+      // mostrar_lista_servicios (ver pareceMenuDeOpcionesSinHerramienta más arriba).
+      if (pareceMenuDeOpcionesSinHerramienta(texto)) {
+        forzarHerramienta = 'mostrar_lista_servicios';
         continue;
       }
 
