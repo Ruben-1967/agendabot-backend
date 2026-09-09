@@ -27,6 +27,7 @@ const Anthropic = require('@anthropic-ai/sdk');
 const prisma = require('../lib/prisma');
 const { sendWhatsAppTextMessage, sendWhatsAppTemplateMessage } = require('../services/whatsapp');
 const { sendInstagramTextMessage } = require('../services/instagram');
+const { sendFacebookTextMessage } = require('../services/facebook');
 const { descifrarSiCorresponde } = require('../lib/cifrado');
 const { obtenerUrlPanelPrincipal } = require('../lib/urlPanel');
 
@@ -175,6 +176,19 @@ async function procesarPausasCoexistence() {
               igCuentaId: empresa.instagramCuentaId,
               to: conversacion.telefono,
               accessToken: accessTokenInstagram,
+              text: TEXTO_CONTENCION,
+            });
+            contencionEnviada = true;
+          }
+        } else if (conversacion.canal === 'facebook') {
+          // facebookToken llega anidado (Conversacion -> Empresa), la
+          // extensión de Prisma no lo descifra automáticamente ahí.
+          const accessTokenFacebook = descifrarSiCorresponde(empresa.facebookToken);
+          if (accessTokenFacebook && empresa.facebookPaginaId) {
+            await sendFacebookTextMessage({
+              paginaId: empresa.facebookPaginaId,
+              to: conversacion.telefono,
+              accessToken: accessTokenFacebook,
               text: TEXTO_CONTENCION,
             });
             contencionEnviada = true;

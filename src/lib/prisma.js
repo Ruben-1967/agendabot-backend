@@ -11,7 +11,7 @@ const prismaBase = new PrismaClient();
 // sigue usando estos campos como texto plano normal, sin saber que están
 // cifrados en la base de datos.
 const CAMPOS_CIFRADOS = {
-  Empresa: ['whatsappToken', 'googleRefreshToken', 'instagramToken'],
+  Empresa: ['whatsappToken', 'googleRefreshToken', 'instagramToken', 'facebookToken'],
   Cliente: ['rut'],
 };
 

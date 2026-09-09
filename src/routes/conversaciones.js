@@ -3,6 +3,7 @@ const prisma = require('../lib/prisma');
 const { requireAuth } = require('../middleware/auth');
 const { sendWhatsAppTextMessage } = require('../services/whatsapp');
 const { sendInstagramTextMessage } = require('../services/instagram');
+const { sendFacebookTextMessage } = require('../services/facebook');
 const { listarEjemplosParaResumen, obtenerEjemploCompleto } = require('../lib/ejemplosDemoChats');
 
 const router = express.Router();
@@ -195,6 +196,20 @@ router.post('/:empresaId/:conversacionId/mensaje', requireAuth, async (req, res)
         });
       } catch (errorEnvio) {
         return res.status(502).json({ error: `No se pudo enviar el mensaje por Instagram: ${errorEnvio.message}` });
+      }
+    } else if (conversacion.canal === 'facebook') {
+      if (!empresa?.facebookToken || !empresa?.facebookPaginaId) {
+        return res.status(400).json({ error: 'Esta empresa no tiene Messenger conectado, no se puede enviar el mensaje' });
+      }
+      try {
+        await sendFacebookTextMessage({
+          paginaId: empresa.facebookPaginaId,
+          to: conversacion.telefono,
+          text: contenido.trim(),
+          accessToken: empresa.facebookToken,
+        });
+      } catch (errorEnvio) {
+        return res.status(502).json({ error: `No se pudo enviar el mensaje por Messenger: ${errorEnvio.message}` });
       }
     } else {
       const accessToken = empresa?.whatsappToken || process.env.WHATSAPP_ACCESS_TOKEN;

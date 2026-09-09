@@ -114,6 +114,12 @@ model Empresa {
   instagramToken     String? @db.Text // Access token (cifrado AES-256-GCM)
   instagramUsername  String?          // @usuario legible
 
+  // ====== CAMPOS PARA MESSENGER (Facebook) (2026-09-09, canal nuevo — mismo
+  // patrón que Instagram, ver routes/empresa.js POST /empresa/facebook/conectar) ======
+  facebookPaginaId     String? @unique // Page id de Facebook, routing del webhook
+  facebookToken        String? @db.Text // Page Access Token (cifrado AES-256-GCM)
+  facebookPaginaNombre String?          // Nombre legible de la Página
+
   googleCalendarId    String?
   googleRefreshToken  String?
 

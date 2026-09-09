@@ -28,6 +28,7 @@ const { obtenerHorariosDisponibles } = require('./services/disponibilidad');
 const { fechaLegibleDesdeISO } = require('./lib/formatoFechas');
 const { procesarMensajeEntrante } = require('./services/chatbotEngine');
 const { sendInstagramTextMessage, armarTextoConInteractivo } = require('./services/instagram');
+const { sendFacebookTextMessage, armarTextoConInteractivo: armarTextoConInteractivoFacebook } = require('./services/facebook');
 const { renderFormulario, PLANES } = require('./services/contratoHtml');
 const authRouter = require('./routes/auth');
 const campanasRouter = require('./routes/campanas');
@@ -180,12 +181,46 @@ function verificarFirmaWebhookInstagram(req, res, next) {
   next();
 }
 
+// ------------------------------------------------------------
+// Verificación de firma del webhook de Messenger (Facebook) — mismo
+// mecanismo que Instagram arriba, con el app secret propio (canal nuevo,
+// 2026-09-09, habilitado solo para LuxVision).
+// ------------------------------------------------------------
+function verificarFirmaWebhookFacebook(req, res, next) {
+  const headerFirma = req.header('x-hub-signature-256');
+  if (!headerFirma || !headerFirma.startsWith('sha256=')) {
+    console.warn('[SEGURIDAD] Webhook de Messenger sin firma X-Hub-Signature-256 — rechazado.');
+    return res.sendStatus(401);
+  }
+
+  const secretoAppMeta = process.env.FACEBOOK_APP_SECRET;
+  if (!secretoAppMeta) {
+    console.error('[SEGURIDAD] FACEBOOK_APP_SECRET no configurado — no se puede verificar el webhook. Rechazando por seguridad.');
+    return res.sendStatus(401);
+  }
+
+  const firmaRecibida = Buffer.from(headerFirma.slice('sha256='.length), 'hex');
+  const firmaCalculada = Buffer.from(
+    crypto.createHmac('sha256', secretoAppMeta).update(req.rawBody).digest('hex'),
+    'hex'
+  );
+  const esValida = firmaCalculada.length === firmaRecibida.length && crypto.timingSafeEqual(firmaCalculada, firmaRecibida);
+
+  if (!esValida) {
+    console.warn('[SEGURIDAD] Firma de webhook de Messenger inválida — posible request falso, rechazado.');
+    return res.sendStatus(401);
+  }
+
+  next();
+}
+
 // Instagram Direct como canal nuevo (2026-09-08): arquitectura general,
 // disponible para cualquier Empresa en el código, pero habilitada y visible
 // solo para LuxVision por ahora (mismo patrón cauteloso ya usado para el
 // recordatorio de control anual y el opt-in de marketing, ver
 // src/routes/empresa.js — declarada por separado acá porque no existe una
-// tabla de feature flags ni un módulo compartido de constantes).
+// tabla de feature flags ni un módulo compartido de constantes). Reusada
+// igual para Messenger (2026-09-09, mismo criterio).
 const EMPRESA_ID_LUXVISION = 'e277ea9e-5793-468c-aa96-e4a2f7457201';
 
 app.use('/auth', authRouter);
@@ -286,6 +321,22 @@ app.get('/webhook/instagram', (req, res) => {
 
   if (mode === 'subscribe' && token === process.env.INSTAGRAM_VERIFY_TOKEN) {
     console.log('Webhook de Instagram verificado correctamente.');
+    return res.status(200).send(challenge);
+  }
+
+  return res.sendStatus(403);
+});
+
+// ------------------------------------------------------------
+// WEBHOOK DE MESSENGER (Facebook) — verificación inicial, mismo mecanismo.
+// ------------------------------------------------------------
+app.get('/webhook/facebook', (req, res) => {
+  const mode = req.query['hub.mode'];
+  const token = req.query['hub.verify_token'];
+  const challenge = req.query['hub.challenge'];
+
+  if (mode === 'subscribe' && token === process.env.FACEBOOK_VERIFY_TOKEN) {
+    console.log('Webhook de Messenger verificado correctamente.');
     return res.status(200).send(challenge);
   }
 
@@ -1313,6 +1364,116 @@ app.post('/webhook/instagram', verificarFirmaWebhookInstagram, async (req, res) 
     console.log(`[INSTAGRAM] Respondido a ${igsidCliente} (${empresa.nombre}): "${respuestaTexto}"`);
   } catch (error) {
     console.error('Error procesando mensaje entrante de Instagram:', error);
+  }
+});
+
+// ------------------------------------------------------------
+// WEBHOOK DE MESSENGER (Facebook) — recepción de mensajes entrantes. Canal
+// nuevo (2026-09-09), mismo patrón que Instagram arriba: handler separado,
+// arquitectura general pero habilitado y visible solo para LuxVision (ver
+// EMPRESA_ID_LUXVISION). Mismo aplanado de `interactivo` a texto plano
+// (ver src/services/facebook.js) y mismo motor de IA sin cambios.
+// ------------------------------------------------------------
+app.post('/webhook/facebook', verificarFirmaWebhookFacebook, async (req, res) => {
+  // Igual que Instagram/WhatsApp: respondemos 200 de inmediato.
+  res.sendStatus(200);
+
+  try {
+    if (req.body.object !== 'page') return;
+
+    const entry = req.body.entry?.[0];
+    // entry.id = id de la Página de Facebook que recibió el webhook — se
+    // usa para resolver el tenant, igual que instagramCuentaId en el
+    // webhook de Instagram. Ver facebookPaginaId en el schema.
+    const paginaId = entry?.id;
+    const evento = entry?.messaging?.[0];
+
+    if (!paginaId || !evento) return;
+
+    const empresa = await prisma.empresa.findFirst({
+      where: { facebookPaginaId: paginaId },
+    });
+
+    if (!empresa) {
+      console.warn(`No se encontró ninguna Empresa para facebookPaginaId=${paginaId}`);
+      return;
+    }
+
+    // Guardia: el canal existe en el código para cualquier empresa, pero
+    // por ahora solo hace algo para LuxVision.
+    if (empresa.id !== EMPRESA_ID_LUXVISION) {
+      return;
+    }
+
+    const psidCliente = evento.sender?.id;
+    if (!psidCliente) return;
+
+    // Echo: un humano respondió manualmente desde la Bandeja de entrada de
+    // Meta Business Suite o la app de Messenger — mismo mecanismo de pausa
+    // que Instagram/Coexistence, mismo campo `message.is_echo`. Confirmado
+    // contra un caso real ayer con Instagram (mismo payload shape en la
+    // familia Messenger Platform) — pero ojo: como con Instagram, la
+    // "Respuesta instantánea" nativa de Meta Business Suite también
+    // dispara un echo y pausaría el bot si sigue activada para esta
+    // Página — desactivarla antes de la primera prueba real.
+    if (evento.message?.is_echo) {
+      const conversacionEco = await prisma.conversacion.findFirst({
+        where: { empresaId: empresa.id, telefono: psidCliente, canal: 'facebook' },
+      });
+
+      if (conversacionEco) {
+        await prisma.conversacion.update({
+          where: { id: conversacionEco.id },
+          data: { pausadaPorHumanoEn: new Date() },
+        });
+      } else {
+        await prisma.conversacion.create({
+          data: {
+            empresaId: empresa.id,
+            telefono: psidCliente,
+            canal: 'facebook',
+            mensajes: [],
+            pausadaPorHumanoEn: new Date(),
+          },
+        });
+      }
+
+      console.log(`[FACEBOOK] Echo detectado — bot pausado para ${psidCliente} (${empresa.nombre}).`);
+      return;
+    }
+
+    const textoEntrante = evento.message?.text;
+    if (!textoEntrante) return; // ignoramos silenciosamente adjuntos, reacciones, etc.
+
+    const { respuestaTexto, interactivo } = await procesarMensajeEntrante({
+      empresa,
+      telefonoCliente: psidCliente,
+      textoEntrante,
+      nombreContacto: null,
+      canal: 'facebook',
+    });
+
+    // Coexistence: conversación pausada por intervención humana — no se
+    // envía nada este turno (ver chatbotEngine.js).
+    if (respuestaTexto === null) {
+      return;
+    }
+
+    if (!empresa.facebookToken) {
+      console.error(`Empresa ${empresa.nombre} no tiene facebookToken configurado.`);
+      return;
+    }
+
+    await sendFacebookTextMessage({
+      paginaId,
+      to: psidCliente,
+      text: armarTextoConInteractivoFacebook(respuestaTexto, interactivo),
+      accessToken: empresa.facebookToken,
+    });
+
+    console.log(`[FACEBOOK] Respondido a ${psidCliente} (${empresa.nombre}): "${respuestaTexto}"`);
+  } catch (error) {
+    console.error('Error procesando mensaje entrante de Messenger:', error);
   }
 });
 

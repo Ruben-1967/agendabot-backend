@@ -531,4 +531,106 @@ router.post('/instagram/conectar', requireAuth, requireRole('ADMIN'), async (req
   }
 });
 
+/**
+ * Messenger (Facebook) — canal nuevo (2026-09-09), mismo patrón que
+ * POST /instagram/conectar de arriba. Restringido a LuxVision.
+ *
+ * Body esperado: { code } — mismo evento postMessage de FB.login() que
+ * Instagram, pero con el config_id de Messenger en el panel.
+ *
+ * TODO-VERIFICAR-CON-CASO-REAL: a diferencia de Instagram, acá el token de
+ * usuario NO sirve directo para mandar mensajes — hay que resolver la
+ * Página que administra ese usuario (/me/accounts) y usar el Page Access
+ * Token de esa fila, no el token de usuario. Si el usuario administra más
+ * de una Página, esto toma la primera — ajustar para dejar elegir cuál si
+ * hace falta cuando se pruebe con un caso real (LuxVision solo tiene una
+ * Página, así que no bloquea el caso de hoy).
+ */
+router.post('/facebook/conectar', requireAuth, requireRole('ADMIN'), async (req, res) => {
+  if (req.usuario.empresaId !== EMPRESA_ID_LUXVISION) {
+    return res.status(403).json({ error: 'Messenger todavía no está disponible para tu negocio.' });
+  }
+
+  const { code } = req.body;
+  if (!code || typeof code !== 'string') {
+    return res.status(400).json({ error: 'Falta "code" (el token corto que entrega FB.login())' });
+  }
+
+  const appId = process.env.FACEBOOK_APP_ID;
+  const appSecret = process.env.FACEBOOK_APP_SECRET;
+  if (!appId || !appSecret) {
+    console.error('[FACEBOOK] Falta FACEBOOK_APP_ID o FACEBOOK_APP_SECRET en las variables de entorno.');
+    return res.status(500).json({ error: 'Falta configuración del servidor para conectar Messenger' });
+  }
+
+  try {
+    // Paso 1: cambiar el code corto por el token de usuario.
+    const urlIntercambio =
+      `https://graph.facebook.com/${GRAPH_API_VERSION}/oauth/access_token` +
+      `?client_id=${encodeURIComponent(appId)}` +
+      `&client_secret=${encodeURIComponent(appSecret)}` +
+      `&code=${encodeURIComponent(code)}`;
+
+    const respuestaIntercambio = await fetch(urlIntercambio);
+    const datosIntercambio = await respuestaIntercambio.json();
+
+    if (!respuestaIntercambio.ok || !datosIntercambio.access_token) {
+      console.error('[FACEBOOK] Error al intercambiar el code por token:', JSON.stringify(datosIntercambio));
+      return res.status(502).json({ error: 'Meta rechazó el intercambio de token', detalle: datosIntercambio.error?.message });
+    }
+
+    const tokenUsuario = datosIntercambio.access_token;
+
+    // Paso 2: resolver la(s) Página(s) que administra este usuario y su
+    // Page Access Token propio — el que realmente sirve para mandar
+    // mensajes por esa Página, no el token de usuario del paso 1.
+    const urlPaginas = `https://graph.facebook.com/${GRAPH_API_VERSION}/me/accounts?access_token=${encodeURIComponent(tokenUsuario)}`;
+    const respuestaPaginas = await fetch(urlPaginas);
+    const datosPaginas = await respuestaPaginas.json();
+
+    if (!respuestaPaginas.ok || !Array.isArray(datosPaginas.data) || datosPaginas.data.length === 0) {
+      console.error('[FACEBOOK] Error al listar las Páginas del usuario:', JSON.stringify(datosPaginas));
+      return res.status(502).json({ error: 'No se encontró ninguna Página de Facebook administrada por este usuario', detalle: datosPaginas.error?.message });
+    }
+
+    const pagina = datosPaginas.data[0];
+
+    // Paso 3: suscribir la app a los webhooks de mensajería de esta Página.
+    const urlSuscripcion = `https://graph.facebook.com/${GRAPH_API_VERSION}/${encodeURIComponent(pagina.id)}/subscribed_apps?subscribed_fields=messages`;
+    const respuestaSuscripcion = await fetch(urlSuscripcion, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${pagina.access_token}` },
+    });
+    const datosSuscripcion = await respuestaSuscripcion.json();
+
+    if (!respuestaSuscripcion.ok || !datosSuscripcion.success) {
+      console.error('[FACEBOOK] Error al suscribir la app a los webhooks de la Página:', JSON.stringify(datosSuscripcion));
+      return res.status(502).json({ error: 'No se pudo completar la conexión de Messenger (falló la suscripción a webhooks) — no se guardó nada, hay que reintentar', detalle: datosSuscripcion.error?.message });
+    }
+
+    // Paso 4: guardar. facebookToken se cifra solo (ver src/lib/prisma.js).
+    const empresaActualizada = await prisma.empresa.update({
+      where: { id: req.usuario.empresaId },
+      data: {
+        facebookPaginaId: pagina.id,
+        facebookToken: pagina.access_token,
+        facebookPaginaNombre: pagina.name || null,
+      },
+      select: {
+        id: true,
+        nombre: true,
+        facebookPaginaId: true,
+        facebookPaginaNombre: true,
+      },
+    });
+
+    console.log(`[FACEBOOK] Página conectada para empresa ${empresaActualizada.id} (${empresaActualizada.nombre}): ${empresaActualizada.facebookPaginaNombre}`);
+
+    res.json(empresaActualizada);
+  } catch (error) {
+    console.error('[FACEBOOK] Error inesperado en POST /empresa/facebook/conectar:', error);
+    res.status(500).json({ error: 'Error al conectar Messenger' });
+  }
+});
+
 module.exports = router;
