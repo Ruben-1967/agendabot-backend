@@ -59,7 +59,14 @@ function armarTextoConInteractivo(respuestaTexto, interactivo) {
  * @param {string} params.accessToken - Token de acceso de Instagram para esa empresa.
  */
 async function sendInstagramTextMessage({ igCuentaId, to, text, accessToken }) {
-  const url = `https://graph.facebook.com/${GRAPH_API_VERSION}/${igCuentaId}/messages`;
+  // graph.instagram.com, no graph.facebook.com (2026-09-09): el token que
+  // usamos viene del flujo "Instagram API with Instagram Login" (login
+  // directo con Instagram, sin Facebook Page de por medio — prefijo IGAA),
+  // no de "Facebook Login for Business". Meta rechazaba con "Invalid OAuth
+  // access token - Cannot parse access token" (code 190) al pegarle a
+  // graph.facebook.com con un token de este tipo — confirmado con el
+  // primer mensaje real a LuxVision.
+  const url = `https://graph.instagram.com/${GRAPH_API_VERSION}/${igCuentaId}/messages`;
 
   const response = await fetch(url, {
     method: 'POST',

@@ -431,6 +431,16 @@ router.post('/whatsapp/conectar', requireAuth, requireRole('ADMIN'), async (req,
  * Meta (ver plan de esta feature). Revisar el shape exacto de cada
  * respuesta cuando Meta apruebe y se pueda probar con la cuenta real de
  * LuxVision.
+ *
+ * OJO (2026-09-09): al conectar LuxVision a mano vía Instagram Tester (sin
+ * pasar por esta ruta) el token generado fue de tipo "Instagram API with
+ * Instagram Login" (prefijo IGAA) — ese tipo de token funciona contra
+ * graph.instagram.com, NO graph.facebook.com (que sí sirve para tokens del
+ * flujo "Facebook Login for Business"). Ver src/services/instagram.js,
+ * donde tuvimos que corregir la URL por el mismo motivo. Si el `code` que
+ * llega acá también sale del flujo de Instagram Login, todas las llamadas
+ * de abajo (`/me`, `/subscribed_apps`) probablemente necesiten el mismo
+ * cambio de host antes de que esta ruta funcione de verdad.
  */
 router.post('/instagram/conectar', requireAuth, requireRole('ADMIN'), async (req, res) => {
   if (req.usuario.empresaId !== EMPRESA_ID_LUXVISION) {
