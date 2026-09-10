@@ -30,14 +30,19 @@ async function main() {
     where: {
       empresaId: EMPRESA_ID,
       cliente: { nombre: { contains: nombreBuscado, mode: 'insensitive' } },
-      estado: 'PENDIENTE',
     },
     include: { cliente: true },
     orderBy: { fechaHoraInicio: 'asc' },
   });
 
   if (citas.length === 0) {
-    console.log(`No se encontró ninguna Cita PENDIENTE con cliente que calce "${nombreBuscado}".`);
+    console.log(`No se encontró ninguna Cita (de ningún estado) con cliente que calce "${nombreBuscado}".`);
+    const clientesParecidos = await prisma.cliente.findMany({
+      where: { empresaId: EMPRESA_ID, nombre: { contains: nombreBuscado, mode: 'insensitive' } },
+      select: { nombre: true, telefono: true },
+      take: 5,
+    });
+    console.log(`Clientes con ese nombre (sin importar si tienen Cita): ${JSON.stringify(clientesParecidos)}`);
     return;
   }
 
@@ -49,6 +54,7 @@ async function main() {
 
     console.log('\n' + '='.repeat(60));
     console.log(`Cliente: ${cita.cliente.nombre} (tel: ${cita.cliente.telefono})`);
+    console.log(`Estado de la cita: ${cita.estado}`);
     console.log(`Cita creada: ${cita.creadoEn.toISOString()} (hace ${horasDesdeCreacion.toFixed(1)}h)`);
     console.log(`Cita programada: ${cita.fechaHoraInicio.toISOString()} (en ${horasHastaCita.toFixed(1)}h)`);
     console.log(`confirmacionIntentos: ${cita.confirmacionIntentos}`);
