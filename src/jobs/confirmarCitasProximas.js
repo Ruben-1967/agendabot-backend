@@ -25,15 +25,14 @@ const PLANTILLA_ULTIMO_AVISO = 'confirmacion_cita_ultimo_aviso'; // intento 3
 
 const HORAS_ANTES_PRIMER_INTENTO = 24;
 const HORAS_ENTRE_INTENTOS = 1;
-// Si el cliente agenda con 24h o menos de anticipación, la condición de
-// arriba se cumple al toque — el primer recordatorio salía casi al mismo
-// tiempo que la confirmación del bot, en vez de sentirse como un
-// recordatorio real. Este mínimo evita eso: el primer intento espera a que
-// pasen 24h desde que se creó la cita, además de estar a 24h o menos de la
-// hora real. Solo afecta al primer intento — el resto del ciclo (2do
-// aviso/último aviso/cancelación) sigue anclado a la fecha de la cita, sin
-// tocar, para no debilitar la protección de no-show. Pedido 2026-09-03.
-const HORAS_MINIMAS_DESDE_CREACION = 24;
+// Horas mínimas desde que se creó la Cita hasta el primer intento — antes
+// un fijo global (24h, pensado para no sentirse redundante si alguien
+// agenda con poca anticipación), ahora configurable por empresa
+// (Empresa.horasMinimasConfirmacionCita, ver schema — pedido 2026-09-10 por
+// Ahorróptica, que quiere el aviso igual aunque se haya agendado hace
+// poco). Solo afecta al primer intento — el resto del ciclo (2do aviso/
+// último aviso/cancelación) sigue anclado a la fecha de la cita, sin
+// tocar, para no debilitar la protección de no-show.
 
 function horasEntre(a, b) {
   return (a - b) / (1000 * 60 * 60);
@@ -98,7 +97,7 @@ async function procesarConfirmacionesDeCitas() {
         if (
           horasHastaCita <= HORAS_ANTES_PRIMER_INTENTO &&
           horasHastaCita > -1 &&
-          horasDesdeCreacion >= HORAS_MINIMAS_DESDE_CREACION
+          horasDesdeCreacion >= empresa.horasMinimasConfirmacionCita
         ) {
           await sendWhatsAppTemplateMessage({
             phoneNumberId: empresa.whatsappNumeroId, to: cliente.telefono, accessToken,

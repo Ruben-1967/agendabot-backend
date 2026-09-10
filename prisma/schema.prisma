@@ -102,6 +102,14 @@ model Empresa {
   // cada negocio decide qué es apropiado para él.
   minutosAlertaUrgente Int @default(10)
 
+  // Horas mínimas desde que se creó la Cita hasta que el job de
+  // confirmación (jobs/confirmarCitasProximas.js) manda el primer
+  // recordatorio — antes era un valor fijo global (24h, pensado para no
+  // sentirse redundante si alguien agenda con poca anticipación), ahora
+  // cada negocio decide (2026-09-10, pedido por Ahorróptica: quieren que
+  // el aviso salga igual aunque se haya agendado hace poco).
+  horasMinimasConfirmacionCita Int @default(24)
+
   // ====== CAMPOS PARA WHATSAPP BUSINESS ======
   whatsappNumeroId    String?   @unique  // phone_number_id de Meta (ej: "135018715483508")
   whatsappToken       String?   @db.Text // Access token permanente (cifrado AES-256-GCM)

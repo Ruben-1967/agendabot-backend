@@ -25,8 +25,8 @@ const router = express.Router();
 const prisma = require('../lib/prisma');
 const { requireAuth, requireRole } = require('../middleware/auth');
 
-const CAMPOS_INFO = ['direccion', 'notaAgendamiento', 'informacionAdicional', 'requiereRut', 'tonoComunicacion', 'telefonoContacto', 'minutosAlertaUrgente', 'minutosEsperaOptIn'];
-const CAMPOS_INFO_NUMERICOS = ['minutosAlertaUrgente', 'minutosEsperaOptIn'];
+const CAMPOS_INFO = ['direccion', 'notaAgendamiento', 'informacionAdicional', 'requiereRut', 'tonoComunicacion', 'telefonoContacto', 'minutosAlertaUrgente', 'minutosEsperaOptIn', 'horasMinimasConfirmacionCita'];
+const CAMPOS_INFO_NUMERICOS = ['minutosAlertaUrgente', 'minutosEsperaOptIn', 'horasMinimasConfirmacionCita'];
 
 const GRAPH_API_VERSION = 'v21.0';
 
@@ -77,6 +77,7 @@ router.get('/info', requireAuth, requireRole('ADMIN'), async (req, res) => {
         telefonoContacto: true,
         minutosAlertaUrgente: true,
         minutosEsperaOptIn: true,
+        horasMinimasConfirmacionCita: true,
         usaOptInMarketing: true,
         compromisoSoloAgendamientoAceptadoEn: true,
       },
@@ -139,6 +140,7 @@ router.put('/info', requireAuth, requireRole('ADMIN'), async (req, res) => {
         telefonoContacto: true,
         minutosAlertaUrgente: true,
         minutosEsperaOptIn: true,
+        horasMinimasConfirmacionCita: true,
       },
     });
 
