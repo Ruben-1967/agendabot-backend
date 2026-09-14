@@ -43,6 +43,20 @@ const anthropic = new Anthropic({
 
 const MODEL = 'claude-haiku-4-5-20251001';
 
+// Texto fijo de la pregunta de servicios (nunca lo redacta el modelo, ver
+// mostrar_lista_servicios más abajo) y su variante para cuando ya se
+// preguntó antes en la misma conversación sin que el cliente eligiera del
+// menú — ver comentario en el bloque "serviciosParaMostrar".
+const TEXTO_PREGUNTA_SERVICIOS = '¿Para cuál de estos servicios necesitas la hora? 👇';
+const SUFIJO_PREGUNTA_SERVICIOS_REPETIDA = '¿Podrías elegir uno de estos servicios del menú de arriba? 👇';
+const TEXTO_PREGUNTA_SERVICIOS_REPETIDA = (primerNombre) =>
+  `¡Perfecto${primerNombre ? `, ${primerNombre}` : ''}! ${SUFIJO_PREGUNTA_SERVICIOS_REPETIDA}`;
+// El nombre interpolado en TEXTO_PREGUNTA_SERVICIOS_REPETIDA hace que su
+// resultado varíe -- para detectar si el turno anterior ya fue esta
+// pregunta (cualquiera de las 2 variantes), comparamos por el sufijo fijo
+// en vez de por igualdad exacta contra la función.
+const esPreguntaDeServiciosRepetida = (texto) => (texto || '').endsWith(SUFIJO_PREGUNTA_SERVICIOS_REPETIDA);
+
 // Sin esto, un "rut" mal extraído por el modelo (texto libre, un id, lo que
 // sea) se guardaba tal cual en Cliente.rut — visto en producción como un
 // string larguísimo en la columna Rut del panel.
@@ -768,8 +782,27 @@ ${empresa.requiereRut ? '- Este negocio además EXIGE RUT y teléfono de contact
     }
 
     if (serviciosParaMostrar) {
+      // Bug real reportado por Ahorróptica (2026-09-14, clienta "Rosa
+      // Levi"): el cliente no elige ningún servicio de la lista mostrada
+      // (ej. responde con su nombre en vez de tocar una opción), y el bot
+      // vuelve a preguntar con el EXACTO mismo texto — se ve como que "no
+      // entrega alternativas" cuando en realidad sí las mandó la primera
+      // vez, solo que el cliente no las usó. Si el turno anterior del bot
+      // ya fue esta misma pregunta (cualquiera de sus 2 variantes), la
+      // segunda vez usamos un texto que reconoce su mensaje y lo dirige
+      // explícitamente al menú — con su nombre si ya lo tenemos guardado
+      // (nunca inventado, ver Cliente.nombre) — en vez de repetir la
+      // pregunta tal cual, para que quede claro que falta elegir del menú.
+      const yaHabiaPreguntado = ultimoTurnoBot?.contenido === TEXTO_PREGUNTA_SERVICIOS || esPreguntaDeServiciosRepetida(ultimoTurnoBot?.contenido);
+      let texto = TEXTO_PREGUNTA_SERVICIOS;
+      if (yaHabiaPreguntado) {
+        const primerNombre = cliente.nombre && cliente.nombre !== 'Sin nombre'
+          ? cliente.nombre.trim().split(/\s+/)[0]
+          : null;
+        texto = TEXTO_PREGUNTA_SERVICIOS_REPETIDA(primerNombre);
+      }
       return {
-        texto: '¿Para cuál de estos servicios necesitas la hora? 👇',
+        texto,
         interactivo: { tipo: 'lista_servicios', servicios: serviciosParaMostrar },
       };
     }
