@@ -438,6 +438,23 @@ async function generarRespuestaChatbotSinCorregirVoseo({ empresa, cliente, histo
     ? serviciosReales.map((s) => s.nombre)
     : (empresa.rubroTemplate?.serviciosBase || []);
   const tieneServiciosReales = serviciosReales.length > 0;
+  // Bug real reportado en vivo (Ahorróptica, 2026-09-17): con un solo
+  // servicio real, el modelo igual llamaba a mostrar_lista_servicios en
+  // medio del flujo -- incluso DESPUÉS de que el cliente ya había elegido
+  // día y hora, descartando todo el progreso y volviendo a preguntar algo
+  // que no tiene ninguna ambigüedad real (solo hay 1 opción posible).
+  // Causa probable: el campo "servicio" de las demás herramientas exige
+  // el nombre EXACTO de SERVICIOS AGENDABLES, y si el cliente nunca
+  // escribió ese nombre literal (ej. dijo "Examen visual" en vez de
+  // "Evaluación examen visual"), el modelo se pone cauteloso y prefiere
+  // reconfirmar por la herramienta antes de comprometerse -- en vez de
+  // simplemente asumir la única opción posible. Fix: cuando hay 2+
+  // servicios reales SÍ tiene sentido ofrecer el selector interactivo
+  // (ahí la ambigüedad es real); con 0 o 1, no se incluye la herramienta
+  // en absoluto, y el modelo sigue la rama de instrucciones en texto de
+  // abajo, que para el caso de 1 servicio le dice explícitamente que no
+  // pregunte cuál es.
+  const hayAmbiguedadDeServicio = serviciosReales.length > 1;
 
   // Por ahora asumimos un solo RecursoAgendable por empresa (el primero activo).
   // Cuando una empresa tenga varios profesionales, esto deberá preguntarle al
@@ -469,7 +486,7 @@ async function generarRespuestaChatbotSinCorregirVoseo({ empresa, cliente, histo
     year: 'numeric',
   }).format(new Date());
 
-  const tools = construirTools(empresa, tieneServiciosReales, incluirCatalogo);
+  const tools = construirTools(empresa, hayAmbiguedadDeServicio, incluirCatalogo);
 
   // Leer el tono de comunicación (default "Neutral")
   const tono = empresa.tonoComunicacion || 'Neutral';
@@ -499,14 +516,14 @@ if (empresa.sitioWeb) {
     );
   }
 
-  // Si el negocio tiene Servicio reales cargados, CUALQUIER pregunta sobre
-  // qué servicios/atenciones ofrece (informativa o para agendar) debe
-  // resolverse llamando a la herramienta — nunca en texto libre, y nunca
-  // usando la información adicional para armar esa lista. Si todavía no
-  // tiene Servicio reales, no hay herramienta disponible y se responde en
-  // texto con la lista genérica del rubro.
-  const instruccionServicioAgendar = tieneServiciosReales
+  // 3 casos reales, no 2: 0 servicios reales (lista genérica del rubro),
+  // exactamente 1 servicio real (sin ninguna ambigüedad que resolver —
+  // nunca preguntar ni mostrar selector), y 2+ servicios reales (ahí sí
+  // hay una elección real, se resuelve con la herramienta).
+  const instruccionServicioAgendar = hayAmbiguedadDeServicio
     ? `- Si el cliente pregunta, de cualquier forma, qué servicios o atenciones ofrece el negocio — sea informativamente (ej. "servicios", "qué atienden", "qué hacen") o porque quiere agendar y no sabes cuál necesita — tu SIGUIENTE ACCIÓN es obligatoriamente llamar a mostrar_lista_servicios, inmediatamente. NUNCA escribas la lista de servicios en texto plano, y NUNCA la construyas ni la completes usando la "información adicional" — esa lista SOLO puede venir de esta herramienta.`
+    : tieneServiciosReales
+    ? `- Este negocio tiene UN SOLO servicio real: "${serviciosBase[0]}". No hay ninguna ambigüedad que resolver — NUNCA le preguntes al cliente cuál servicio necesita, NUNCA le ofrezcas elegir entre opciones, y NUNCA vuelvas a mencionar el servicio como si hiciera falta confirmarlo de nuevo en algún punto posterior de la conversación (ej. después de que ya eligió día y hora) — el campo "servicio" de cualquier herramienta que llames siempre es exactamente ese nombre, tal cual está escrito arriba, sin importar con qué palabras lo haya nombrado el cliente (ej. si dice "examen visual" o "una hora para la vista", igual es ese servicio). Si el cliente pregunta informativamente qué servicios ofrecen, respóndele con ese único nombre en texto plano.`
     : `- Si el cliente quiere agendar, necesitas saber el SERVICIO antes de mostrar disponibilidad. Si no lo mencionó, pregúntale ÚNICAMENTE el servicio, en un mensaje breve — NUNCA menciones "día", "fecha" ni "cuándo" en ese mensaje.
 - Si el cliente pregunta qué servicios ofrecen (y este negocio todavía no tiene servicios reales cargados), respondes ÚNICAMENTE con los nombres de la lista "SERVICIOS AGENDABLES" de arriba, tal cual están escritos — nunca los desgloses en sub-procedimientos ni los reemplaces por detalles clínicos, y nunca uses la "información adicional" para completar o ampliar esa lista.`;
 
@@ -675,7 +692,11 @@ ${empresa.requiereRut ? '- Este negocio además EXIGE RUT y teléfono de contact
   // numerados -- la regex original solo buscaba "1️⃣"/"1)"/"1.", así que
   // esta variante se coló sin ser detectada.
   const pareceMenuDeOpcionesSinHerramienta = (texto) => {
-    if (!tieneServiciosReales) return false;
+    // Si no hay ambigüedad real de servicio (0 o 1 servicio real),
+    // mostrar_lista_servicios ni siquiera está en `tools` -- forzarla
+    // igual rompería la llamada a la API (tool_choice apuntando a una
+    // herramienta que no existe en este turno).
+    if (!hayAmbiguedadDeServicio) return false;
     const marcadores = (texto || '').match(/(?:^|\n)\s*(?:[1-9]️⃣|[1-9][.)]|[·•])\s*\S/gm) || [];
     return marcadores.length >= 2;
   };
