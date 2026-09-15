@@ -16,6 +16,40 @@ const { normalizarRut, esRutValido } = require('../lib/rut');
 const DIAS_SEMANA_SINGULAR = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'];
 const DIAS_SEMANA_PLURAL = ['domingos', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábados'];
 
+// Bug real reportado (Ahorróptica, 2026-09-15): el cliente escribe en
+// texto libre el nombre EXACTO de un servicio real recién mostrado en la
+// lista (ej. "Evaluación examen visual" — el único servicio real de ese
+// negocio) y el modelo, en vez de proceder, vuelve a llamar a
+// mostrar_lista_servicios — pese a tener ese nombre exacto tanto en su
+// propio contexto (SERVICIOS AGENDABLES) como en el mensaje del cliente.
+// Es una falla de confiabilidad del modelo, no un problema de datos (Meta/
+// Anthropic documentan que incluso con tool_choice forzado el modelo puede
+// decidir mal la herramienta) — mismo principio que las demás heurísticas
+// de esta familia: no confiar en que el modelo lo resuelva solo, detectar
+// el calce exacto (normalizado) del mensaje del cliente contra los
+// Servicio reales.
+function normalizarNombreServicio(texto) {
+  return (texto || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .replace(/[¿?¡!.,]/g, '')
+    .trim();
+}
+
+// Si además el mismo mensaje menciona un día, no forzamos nada acá —
+// dejamos que el ciclo normal de Claude decida (podría necesitar
+// consultar_disponibilidad con esa fecha en vez de
+// consultar_proximos_dias_disponibles), evitando forzar la herramienta
+// equivocada para ese caso menos común.
+function mensajeNombraServicioExactoSinDia(mensaje, serviciosReales) {
+  const normalizado = normalizarNombreServicio(mensaje);
+  if (!normalizado) return null;
+  const mencionaDia = DIAS_SEMANA_SINGULAR.some((d) => normalizado.includes(d)) || /\d{1,2}[\/-]\d{1,2}/.test(normalizado);
+  if (mencionaDia) return null;
+  return (serviciosReales || []).find((s) => normalizarNombreServicio(s.nombre) === normalizado) || null;
+}
+
 function diaSemanaDesdeFechaISO(fechaISO) {
   const [anio, mes, dia] = fechaISO.split('-').map(Number);
   return new Date(Date.UTC(anio, mes - 1, dia)).getUTCDay();
@@ -783,6 +817,21 @@ ${empresa.requiereRut ? '- Este negocio además EXIGE RUT y teléfono de contact
     }
 
     if (serviciosParaMostrar) {
+      // Bug real reportado por Ahorróptica (2026-09-15): el cliente ya
+      // había escrito el nombre EXACTO de un servicio real en ESTE mismo
+      // mensaje (ver mensajeNombraServicioExactoSinDia arriba), pero Claude
+      // de todas formas llamó a mostrar_lista_servicios de nuevo en vez de
+      // avanzar. En este caso no tiene sentido repetir la pregunta — ya
+      // sabemos el servicio — así que forzamos el siguiente paso real
+      // (consultar_proximos_dias_disponibles, ya que este mensaje no
+      // mencionó ningún día) en vez de devolver la lista otra vez.
+      const servicioYaNombrado = mensajeNombraServicioExactoSinDia(mensajeEntrante, serviciosReales);
+      if (servicioYaNombrado) {
+        forzarHerramienta = 'consultar_proximos_dias_disponibles';
+        messages.push({ role: 'user', content: toolResults });
+        continue;
+      }
+
       // Bug real reportado por Ahorróptica (2026-09-14, clienta "Rosa
       // Levi"): el cliente no elige ningún servicio de la lista mostrada
       // (ej. responde con su nombre en vez de tocar una opción), y el bot
