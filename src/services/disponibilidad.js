@@ -9,6 +9,22 @@ function horaAMinutos(horaStr) {
   return h * 60 + m;
 }
 
+// Nombre del EXCLUDE constraint de Postgres que impide 2 Cita PENDIENTE/
+// CONFIRMADA solapadas para el mismo recurso (ver
+// scripts/_migracion-exclude-constraint-doble-reserva.js). Cualquier
+// INSERT o UPDATE sobre Cita que pueda generar un solapamiento (crear,
+// reagendar, o reactivar una CANCELADA de vuelta a PENDIENTE/CONFIRMADA)
+// puede chocar contra este constraint -- usar esConflictoDeHorario(err)
+// para detectarlo de forma consistente en vez de repetir el string-match
+// en cada lugar. Prisma no expone un código de error conocido para esto
+// (no es P2002): es un PrismaClientUnknownRequestError con err.code
+// undefined, así que se detecta por el nombre del constraint en el
+// mensaje crudo de Postgres.
+const NOMBRE_CONSTRAINT_DOBLE_RESERVA = 'cita_no_solapa_horario';
+function esConflictoDeHorario(err) {
+  return typeof err.message === 'string' && err.message.includes(NOMBRE_CONSTRAINT_DOBLE_RESERVA);
+}
+
 function minutosAHora(minutos) {
   const h = Math.floor(minutos / 60).toString().padStart(2, '0');
   const m = (minutos % 60).toString().padStart(2, '0');
@@ -454,25 +470,48 @@ async function crearCita({ empresaId, clienteId, recursoAgendableId = null, serv
   const fechaHoraInicio = horaChileAFechaUTC(fechaISO, horaInicio);
   const fechaHoraFin = new Date(fechaHoraInicio.getTime() + recurso.duracionCitaMinutos * 60000);
 
-  // Revalidamos disponibilidad justo antes de crear, para evitar condiciones de carrera
-  // (dos clientes pidiendo el mismo horario casi al mismo tiempo).
+  // Revalidamos disponibilidad justo antes de crear -- esto es solo UX (falla
+  // rápido, sin ida y vuelta a la base para el caso común), NO evita la
+  // condición de carrera real (dos clientes pidiendo el mismo horario casi
+  // al mismo tiempo pueden ambos pasar este check antes de que el otro
+  // complete su INSERT). La garantía real de integridad es el constraint
+  // "cita_no_solapa_horario" de Postgres (EXCLUDE USING gist, creado con
+  // scripts/_migracion-exclude-constraint-doble-reserva.js -- fuera del
+  // schema.prisma porque Prisma no soporta EXCLUDE constraints de forma
+  // declarativa; confirmado que "prisma db push" no lo toca ni lo borra, ni
+  // siquiera lo detecta) -- Postgres rechaza el INSERT a nivel de motor si
+  // se solapa con otra Cita PENDIENTE o
+  // CONFIRMADA del mismo recurso, sin importar si la petición viene de acá,
+  // de un job, o de una edición futura desde el panel. 2026-09-15: se
+  // encontraron 68 pares de citas ya solapadas en Staging (data de
+  // demo/seed, limpiada con scripts/_limpieza-citas-solapadas-staging.js)
+  // antes de poder crear el constraint -- confirma que el check-then-act de
+  // abajo, solo, no bastaba.
   const disponibles = await obtenerHorariosDisponibles(recursoAgendableId, fechaISO);
   if (!disponibles.includes(horaInicio)) {
     throw new Error('HORARIO_YA_NO_DISPONIBLE');
   }
 
-  return prisma.cita.create({
-    data: {
-      empresaId,
-      clienteId,
-      recursoAgendableId,
-      servicioId,
-      fechaHoraInicio,
-      fechaHoraFin,
-      estado: 'PENDIENTE',
-      origenCanal: 'whatsapp',
-    },
-  });
+  try {
+    return await prisma.cita.create({
+      data: {
+        empresaId,
+        clienteId,
+        recursoAgendableId,
+        servicioId,
+        fechaHoraInicio,
+        fechaHoraFin,
+        estado: 'PENDIENTE',
+        origenCanal: 'whatsapp',
+      },
+    });
+  } catch (err) {
+    // El caso real de carrera que el check de arriba no alcanza a atrapar.
+    if (esConflictoDeHorario(err)) {
+      throw new Error('HORARIO_YA_NO_DISPONIBLE');
+    }
+    throw err;
+  }
 }
 
 module.exports = {
@@ -480,6 +519,7 @@ module.exports = {
   obtenerHorariosDisponibles,
   obtenerHorariosDisponiblesPorBloque,
   crearCita,
+  esConflictoDeHorario,
   obtenerProximosDiasConDisponibilidad,
   obtenerDisponibilidad,
   validarSlot,

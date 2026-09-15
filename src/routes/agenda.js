@@ -27,7 +27,7 @@ const prisma = require('../lib/prisma');
 const { requireAuth, requireRole } = require('../middleware/auth');
 const { horaChileAFechaUTC } = require('../lib/horaChile');
 const { normalizarRut, esRutValido } = require('../lib/rut');
-const { obtenerHorariosDisponibles, obtenerHorarioDelDia } = require('../services/disponibilidad');
+const { obtenerHorariosDisponibles, obtenerHorarioDelDia, esConflictoDeHorario } = require('../services/disponibilidad');
 // descifrarSiCorresponde: Cliente.rut (y Empresa.whatsappToken en otros
 // archivos) están cifrados en reposo (Ley 21.719) — la extensión de Prisma
 // solo descifra automáticamente cuando se consulta el modelo dueño del
@@ -891,18 +891,31 @@ router.patch('/citas/:id/estado', requireRole('ADMIN', 'RECEPCION'), async (req,
       return res.status(404).json({ error: 'Cita no encontrada' });
     }
 
-    // Actualizar la cita
-    const cita = await prisma.cita.update({
-      where: { id: citaId },
-      data: { estado },
-      include: {
-        cliente: {
-          select: { id: true, nombre: true, telefono: true }
+    // Actualizar la cita. Caso borde real: reactivar una cita CANCELADA de
+    // vuelta a PENDIENTE/CONFIRMADA puede chocar con el EXCLUDE constraint
+    // (cita_no_solapa_horario) si otra cita ya ocupó ese mismo horario
+    // mientras esta estaba cancelada -- una CANCELADA no bloquea el
+    // constraint, así que el horario quedó libre para que alguien más lo
+    // tomara.
+    let cita;
+    try {
+      cita = await prisma.cita.update({
+        where: { id: citaId },
+        data: { estado },
+        include: {
+          cliente: {
+            select: { id: true, nombre: true, telefono: true }
+          },
+          servicio: true,
+          recurso: true,
         },
-        servicio: true,
-        recurso: true,
-      },
-    });
+      });
+    } catch (err) {
+      if (esConflictoDeHorario(err)) {
+        return res.status(400).json({ error: 'No se puede reactivar esta cita: otra cita ya ocupa ese horario' });
+      }
+      throw err;
+    }
 
     res.json({ cita });
   } catch (error) {
@@ -992,12 +1005,19 @@ router.post('/citas/:id/reagendar', requireRole('ADMIN', 'RECEPCION'), async (re
       nuevaFechaHoraInicio.getTime() + (cita.recurso.duracionCitaMinutos || 30) * 60 * 1000
     );
 
-    // Verificar que no haya conflicto con otras citas
+    // Verificar que no haya conflicto con otras citas -- mismo criterio que
+    // el EXCLUDE constraint real (cita_no_solapa_horario, ver
+    // disponibilidad.js) y que obtenerHorariosDisponibles: solo PENDIENTE/
+    // CONFIRMADA bloquean un horario. Antes decía `estado: { not:
+    // 'CANCELADA' }`, más estricto que el constraint (también contaba
+    // COMPLETADA/NO_ASISTIO) -- podía rechazar un reagendamiento válido que
+    // la base sí habría permitido. Este pre-check sigue siendo solo UX
+    // (falla rápido); la garantía real es el catch de abajo.
     const conflicto = await prisma.cita.findFirst({
       where: {
         id: { not: id },
         recursoAgendableId: cita.recursoAgendableId,
-        estado: { not: 'CANCELADA' },
+        estado: { in: ['PENDIENTE', 'CONFIRMADA'] },
         fechaHoraInicio: { lt: nuevaFechaHoraFin },
         fechaHoraFin: { gt: nuevaFechaHoraInicio },
       },
@@ -1012,18 +1032,31 @@ router.post('/citas/:id/reagendar', requireRole('ADMIN', 'RECEPCION'), async (re
     // un RecursoAgendable) — el campo "profesionalAsignadoId" que se
     // intentaba escribir acá antes no existe en el modelo Cita, así que
     // esta actualización siempre fallaba con un error de Prisma.
-    const citaActualizada = await prisma.cita.update({
-      where: { id },
-      data: {
-        fechaHoraInicio: nuevaFechaHoraInicio,
-        fechaHoraFin: nuevaFechaHoraFin,
-        ...(profesionalId && { recursoAgendableId: profesionalId }),
-      },
-      include: {
-        cliente: true,
-        recurso: true,
-      },
-    });
+    let citaActualizada;
+    try {
+      citaActualizada = await prisma.cita.update({
+        where: { id },
+        data: {
+          fechaHoraInicio: nuevaFechaHoraInicio,
+          fechaHoraFin: nuevaFechaHoraFin,
+          ...(profesionalId && { recursoAgendableId: profesionalId }),
+        },
+        include: {
+          cliente: true,
+          recurso: true,
+        },
+      });
+    } catch (err) {
+      // El pre-check de arriba es check-then-act (no atómico) -- si 2
+      // reagendamientos chocan casi al mismo tiempo, o si el conflicto real
+      // se coló por otra vía, el EXCLUDE constraint de Postgres lo atrapa
+      // acá. Sin este catch, error.message exponía el texto crudo de
+      // Postgres (con nombres de columna internos) directo al panel.
+      if (esConflictoDeHorario(err)) {
+        return res.status(400).json({ error: 'Hay un conflicto con otra cita en ese horario' });
+      }
+      throw err;
+    }
 
     res.json({
       message: 'Cita reagendada correctamente',
