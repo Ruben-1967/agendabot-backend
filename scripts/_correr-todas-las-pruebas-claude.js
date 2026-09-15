@@ -15,7 +15,7 @@
  *   node scripts/_correr-todas-las-pruebas-claude.js
  */
 
-const { execFileSync } = require('child_process');
+const { spawnSync } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 
@@ -46,14 +46,17 @@ for (const nombre of scripts) {
   console.log(nombre);
   console.log('='.repeat(70));
 
-  let salida = '';
-  let crasheo = false;
-  try {
-    salida = execFileSync('node', [ruta], { encoding: 'utf8', timeout: 120000 });
-  } catch (err) {
-    crasheo = true;
-    salida = (err.stdout || '') + '\n' + (err.stderr || err.message || '');
-  }
+  // execFileSync solo devuelve stdout cuando el proceso sale con código 0
+  // -- si el script hijo atrapa su propio error (try/catch interno sin
+  // relanzar, ej. _probar-nunca-vosea.js) el mensaje sale por stderr y el
+  // proceso igual sale con 0, así que ese texto se perdía por completo
+  // (bug real encontrado 2026-09-17: por eso ese script SIEMPRE aparecía
+  // sin marcador, incluso después del primer fix del detector de "N/A").
+  // spawnSync entrega stdout Y stderr por separado sin importar el código
+  // de salida, así que se concatenan siempre.
+  const resultado = spawnSync('node', [ruta], { encoding: 'utf8', timeout: 120000 });
+  const crasheo = resultado.status !== 0;
+  const salida = (resultado.stdout || '') + '\n' + (resultado.stderr || '');
 
   console.log(salida.trim());
   console.log('');
