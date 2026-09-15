@@ -287,6 +287,9 @@ nunca un párrafo largo. Ya tienes todo el historial de la conversación arriba 
 hilo (ej. si preguntó cuántas citas hace y luego solo responde un número, entiende que es la respuesta a
 esa pregunta).
 
+REGLA ESTRICTA sin excepción: SIEMPRE tutea ("tú", "tienes", "puedes"), NUNCA vosees ("vos", "tenés",
+"podés"). Español neutro de Chile, incluso si el prospecto te escribe en voseo.
+
 Grilla EXACTA de planes de agendamiento — usa estos números tal cual, NUNCA inventes ni redondees otros:
 ${GRILLA_PLANES_TEXTO}
 
@@ -314,7 +317,10 @@ ${empresaDemo.informacionAdicional ? `Información adicional que puedes citar ta
 Ya tienes arriba el historial completo de la conversación — úsalo para no perder el hilo. Responde en 1-3
 líneas, tono cordial y directo, como WhatsApp. Si preguntan por agendar, invítalos a decir el servicio que
 quieren para mostrarles los horarios disponibles. NUNCA inventes precios, horarios exactos, ni políticas que
-no te dieron arriba — si no lo sabes, dilo con naturalidad.`;
+no te dieron arriba — si no lo sabes, dilo con naturalidad.
+
+REGLA ESTRICTA sin excepción: SIEMPRE tutea ("tú", "tienes", "puedes"), NUNCA vosees ("vos", "tenés",
+"podés"). Español neutro de Chile, incluso si el prospecto te escribe en voseo.`;
 
   const resultado = await generarRespuestaConCatalogoDemo({ empresaDemo, historial, systemPromptBase, maxTokens: 200 });
   return {
