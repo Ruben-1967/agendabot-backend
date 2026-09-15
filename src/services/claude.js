@@ -89,12 +89,20 @@ const MODEL = 'claude-sonnet-5';
 // preguntó antes en la misma conversación sin que el cliente eligiera del
 // menú — ver comentario en el bloque "serviciosParaMostrar".
 const TEXTO_PREGUNTA_SERVICIOS = '¿Para cuál de estos servicios necesitas la hora? 👇';
+// Bug real reportado (2026-09-17): esta variante ANTES saludaba por
+// nombre ("¡Perfecto, [nombre]!"), usando Cliente.nombre -- pero en este
+// punto de la conversación esa columna NUNCA es confiable todavía
+// (agendar_cita, que sí guarda el nombre real que el cliente acaba de
+// decir, todavía no se ejecutó): puede ser el nombre de perfil de
+// WhatsApp de quien sea que esté escribiendo (visto en producción:
+// "¡Perfecto, Luxvision!" para una clienta real llamada Rosa Levi, porque
+// el teléfono de prueba tenía ese perfil) o un placeholder de test. Mismo
+// principio que ya aplica en agendar_cita: nunca asumir el nombre de
+// perfil de WhatsApp del contacto. Se saca el nombre por completo.
 const SUFIJO_PREGUNTA_SERVICIOS_REPETIDA = '¿Podrías elegir uno de estos servicios del menú de arriba? 👇';
-const TEXTO_PREGUNTA_SERVICIOS_REPETIDA = (primerNombre) =>
-  `¡Perfecto${primerNombre ? `, ${primerNombre}` : ''}! ${SUFIJO_PREGUNTA_SERVICIOS_REPETIDA}`;
-// El nombre interpolado en TEXTO_PREGUNTA_SERVICIOS_REPETIDA hace que su
-// resultado varíe -- para detectar si el turno anterior ya fue esta
-// pregunta (cualquiera de las 2 variantes), comparamos por el sufijo fijo
+const TEXTO_PREGUNTA_SERVICIOS_REPETIDA = `¡Perfecto! ${SUFIJO_PREGUNTA_SERVICIOS_REPETIDA}`;
+// Para detectar si el turno anterior ya fue esta pregunta, comparamos por
+// el sufijo fijo
 // en vez de por igualdad exacta contra la función.
 const esPreguntaDeServiciosRepetida = (texto) => (texto || '').endsWith(SUFIJO_PREGUNTA_SERVICIOS_REPETIDA);
 
@@ -874,16 +882,14 @@ ${empresa.requiereRut ? '- Este negocio además EXIGE RUT y teléfono de contact
       // vez, solo que el cliente no las usó. Si el turno anterior del bot
       // ya fue esta misma pregunta (cualquiera de sus 2 variantes), la
       // segunda vez usamos un texto que reconoce su mensaje y lo dirige
-      // explícitamente al menú — con su nombre si ya lo tenemos guardado
-      // (nunca inventado, ver Cliente.nombre) — en vez de repetir la
-      // pregunta tal cual, para que quede claro que falta elegir del menú.
+      // explícitamente al menú, en vez de repetir la pregunta tal cual,
+      // para que quede claro que falta elegir del menú. Ya NO se
+      // personaliza con el nombre (ver comentario de
+      // TEXTO_PREGUNTA_SERVICIOS_REPETIDA más arriba).
       const yaHabiaPreguntado = ultimoTurnoBot?.contenido === TEXTO_PREGUNTA_SERVICIOS || esPreguntaDeServiciosRepetida(ultimoTurnoBot?.contenido);
       let texto = TEXTO_PREGUNTA_SERVICIOS;
       if (yaHabiaPreguntado) {
-        const primerNombre = cliente.nombre && cliente.nombre !== 'Sin nombre'
-          ? cliente.nombre.trim().split(/\s+/)[0]
-          : null;
-        texto = TEXTO_PREGUNTA_SERVICIOS_REPETIDA(primerNombre);
+        texto = TEXTO_PREGUNTA_SERVICIOS_REPETIDA;
       }
       return {
         texto,
