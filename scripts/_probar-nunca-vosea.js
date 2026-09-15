@@ -21,7 +21,14 @@ const { generarRespuestaChatbot } = require('../src/services/claude');
 const EMPRESA_ID = '007a8c7b-c348-4d9e-a0b8-35e1ad8dba46'; // Estudio Bella Piel (demo)
 const TELEFONO_PRUEBA = '+56900000401';
 
-const REGEX_VOSEO = /\b(vos|tenés|tenes|podés|podes|querés|queres|necesitás|necesitas(?!.{0,3}\?)|sos\b|andá|andate|fijate|escribime|decime|contame|mandame)\b/i;
+// OJO con los pares donde tuteo y voseo se escriben distinto de raíz
+// ("tienes" vs "tenés/tenes", "quieres" vs "querés/queres") -- esos son
+// seguros de detectar CON o SIN tilde, nunca se confunden con tuteo. Pero
+// "necesitas"/"necesitás" comparten la MISMA raíz y solo se distinguen por
+// el acento -- sin tilde, "necesitas" es tuteo 100% correcto (bug real
+// encontrado en la primera corrida de este script: se marcó como voseo por
+// error), así que ese par solo se detecta CON tilde explícita.
+const REGEX_VOSEO = /\b(vos|ten[eé]s|pod[eé]s|quer[eé]s|necesitás|sos\b|and[aá]\b|andate|fijate|escribime|decime|contame|mandame)\b/i;
 
 const TURNOS_CLIENTE = [
   'Hola, ¿vos me podés decir qué servicios tenés disponibles?',
