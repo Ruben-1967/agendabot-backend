@@ -611,6 +611,23 @@ model Conversacion {
 }
 
 // ------------------------------------------------------------
+// IDEMPOTENCIA DE WEBHOOKS (2026-09-15, Fase 2 del fix de "problemas de
+// agenda") -- WhatsApp/Instagram/Messenger entregan "al menos una vez", así
+// que Meta puede reintentar y duplicar la entrega de un mismo mensaje. "id"
+// es el id del mensaje entrante tal cual lo manda la plataforma (wamid de
+// WhatsApp, mid de Instagram/Messenger -- ya único por sí solo, no se
+// genera acá) -- usarlo como @id da la protección real: un segundo intento
+// de crear la misma fila choca con la unicidad y se traduce a "ya
+// procesado" (ver src/lib/idempotenciaWebhook.js). Sin TTL/limpieza
+// automática a propósito -- volumen bajo, y sirve de auditoría.
+// ------------------------------------------------------------
+model MensajeEntranteProcesado {
+  id       String   @id // wamid (WhatsApp) o mid (Instagram/Messenger)
+  canal    String   // "whatsapp" | "instagram" | "facebook" -- solo documental
+  creadoEn DateTime @default(now())
+}
+
+// ------------------------------------------------------------
 // VENTAS (compras del cliente: armazones, sesiones, mantenciones, etc.)
 // ------------------------------------------------------------
 enum EstadoPagoVenta {

@@ -48,6 +48,7 @@ const { CIERRE_ELABORADO_DEMO } = require('./config/remateDemoPanel');
 const authVendedorRouter = require('./routes/authVendedor');
 const demosRouter = require('./routes/demos');
 const { generarHorasSimuladasParaDia } = require('./lib/agendaDemoSimulada');
+const { intentarMarcarProcesado } = require('./lib/idempotenciaWebhook');
 const { renderPanelDemo } = require('./services/panelDemoHtml');
 const { renderSitioNegocio } = require('./services/sitioNegocioHtml');
 const listaEsperaRouter = require('./routes/listaEspera');
@@ -438,6 +439,20 @@ app.post('/webhook/whatsapp', verificarFirmaWebhookWhatsApp, async (req, res) =>
     // confirmaciones de entrega/lectura, cambios de estado de cuenta, etc.).
     if (!mensaje || !['text', 'button', 'interactive'].includes(mensaje.type)) {
       return;
+    }
+
+    // Idempotencia (Fase 2, 2026-09-15): WhatsApp entrega "al menos una
+    // vez" -- Meta puede reintentar el mismo webhook si la respuesta
+    // tardó o hubo un problema de red de su lado. Sin esto, un reintento
+    // se procesaba como un mensaje nuevo de verdad (segunda llamada a
+    // Claude, segunda respuesta enviada al cliente). Ver
+    // src/lib/idempotenciaWebhook.js.
+    if (mensaje.id) {
+      const esNuevo = await intentarMarcarProcesado(mensaje.id, 'whatsapp');
+      if (!esNuevo) {
+        console.log(`[IDEMPOTENCIA] Mensaje ${mensaje.id} ya procesado -- ignorando reintento de WhatsApp.`);
+        return;
+      }
     }
 
     const phoneNumberId = value.metadata?.phone_number_id;
@@ -1297,6 +1312,18 @@ app.post('/webhook/instagram', verificarFirmaWebhookInstagram, async (req, res) 
     const igsidCliente = evento.sender?.id;
     if (!igsidCliente) return;
 
+    // Idempotencia (Fase 2, 2026-09-15) -- mismo mecanismo que WhatsApp,
+    // ver src/lib/idempotenciaWebhook.js. "mid" es el id del mensaje en la
+    // familia Messenger Platform (Instagram/Facebook), equivalente al
+    // wamid de WhatsApp.
+    if (evento.message?.mid) {
+      const esNuevo = await intentarMarcarProcesado(evento.message.mid, 'instagram');
+      if (!esNuevo) {
+        console.log(`[IDEMPOTENCIA] Mensaje ${evento.message.mid} ya procesado -- ignorando reintento de Instagram.`);
+        return;
+      }
+    }
+
     // Echo: un humano respondió manualmente desde la app de Instagram (o
     // desde el panel de Meta Business Suite) — mismo mecanismo de pausa que
     // Coexistence en WhatsApp (ver bloque smb_message_echoes más arriba),
@@ -1407,6 +1434,16 @@ app.post('/webhook/facebook', verificarFirmaWebhookFacebook, async (req, res) =>
 
     const psidCliente = evento.sender?.id;
     if (!psidCliente) return;
+
+    // Idempotencia (Fase 2, 2026-09-15) -- mismo mecanismo que WhatsApp/
+    // Instagram, ver src/lib/idempotenciaWebhook.js.
+    if (evento.message?.mid) {
+      const esNuevo = await intentarMarcarProcesado(evento.message.mid, 'facebook');
+      if (!esNuevo) {
+        console.log(`[IDEMPOTENCIA] Mensaje ${evento.message.mid} ya procesado -- ignorando reintento de Messenger.`);
+        return;
+      }
+    }
 
     // Echo: un humano respondió manualmente desde la Bandeja de entrada de
     // Meta Business Suite o la app de Messenger — mismo mecanismo de pausa

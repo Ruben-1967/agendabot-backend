@@ -1,5 +1,6 @@
 const prisma = require('../lib/prisma');
 const { generarRespuestaChatbot } = require('./claude');
+const { conLockDeConversacion } = require('../lib/conversacionLock');
 
 // Frases genéricas que preguntan por la lista de servicios, normalizadas
 // (sin tildes, minúsculas, sin signos de puntuación). Si el mensaje del
@@ -48,6 +49,18 @@ function normalizarTexto(texto) {
  * @returns {Promise<{respuestaTexto: string, interactivo: Object|null, cliente: Object}>}
  */
 async function procesarMensajeEntrante({ empresa, telefonoCliente, textoEntrante, nombreContacto, canal = 'whatsapp' }) {
+  // Mutex por conversación (ver src/lib/conversacionLock.js): sin esto, 2
+  // mensajes del mismo cliente llegando casi al mismo tiempo (ráfaga, no
+  // reintento de Meta -- eso lo filtra la idempotencia de webhook ANTES de
+  // llegar acá) leerían el mismo historial "stale" y el que termine último
+  // pisaría el turno del otro en Conversacion.mensajes.
+  const claveLock = `${empresa.id}:${telefonoCliente}:${canal}`;
+  return conLockDeConversacion(claveLock, () =>
+    procesarMensajeEntranteSinLock({ empresa, telefonoCliente, textoEntrante, nombreContacto, canal })
+  );
+}
+
+async function procesarMensajeEntranteSinLock({ empresa, telefonoCliente, textoEntrante, nombreContacto, canal }) {
   // 1. Buscar o crear el Cliente por teléfono dentro de esa empresa. Cliente
   // no tiene campo canal propio -- para Instagram este "telefono" guarda el
   // IGSID (ver Conversacion.canal más abajo, donde sí importa distinguir).
