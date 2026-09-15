@@ -679,7 +679,16 @@ ${empresa.requiereRut ? '- Este negocio además EXIGE RUT y teléfono de contact
   for (let intentos = 0; intentos < 5; intentos++) {
     const response = await anthropic.messages.create({
       model: MODEL,
-      max_tokens: 500,
+      // 500 alcanzaba de sobra con Haiku (no piensa). Con Sonnet 5, que
+      // corre "thinking" adaptativo por defecto sin necesidad de pedirlo
+      // (a diferencia de modelos anteriores), los tokens de thinking
+      // también cuentan contra max_tokens -- un system prompt tan largo
+      // como el de acá (cientos de líneas de instrucciones + tools reales)
+      // puede hacer pensar bastante más que el caso simple de prueba
+      // (25 tokens de thinking). Encontrado real (2026-09-16): con 500,
+      // algunos turnos cortaban a mitad de camino y volvían sin texto,
+      // cayendo en el mensaje genérico de abajo.
+      max_tokens: 1500,
       system: systemPrompt,
       tools,
       ...(forzarHerramienta ? { tool_choice: { type: 'tool', name: forzarHerramienta } } : {}),
@@ -690,6 +699,19 @@ ${empresa.requiereRut ? '- Este negocio además EXIGE RUT y teléfono de contact
     if (response.stop_reason !== 'tool_use') {
       const textBlock = response.content.find((b) => b.type === 'text');
       const texto = textBlock ? textBlock.text : '';
+
+      // Visibilidad permanente para el caso de arriba: si de verdad no
+      // hubo texto (ni tool_use), esto es siempre una señal de que algo
+      // salió mal -- nunca debería pasar en un turno normal. Se loguea
+      // para poder diagnosticar sin tener que reproducirlo a mano de
+      // nuevo si vuelve a ocurrir.
+      if (!texto) {
+        console.error(
+          '[claude.js] Turno sin texto ni tool_use -- stop_reason:', response.stop_reason,
+          '| bloques:', response.content.map((b) => b.type).join(','),
+          '| usage:', JSON.stringify(response.usage)
+        );
+      }
 
       // Bug real encontrado (Ahorróptica, cliente "yaye", 2026-09-01): en
       // el turno de confirmación final, el modelo a veces responde con
