@@ -25,6 +25,7 @@ async function turno(historial, empresa, cliente, mensaje) {
   if (resultado.interactivo) console.log('<<< BOT (interactivo):', JSON.stringify(resultado.interactivo));
   historial.push({ rol: 'usuario', contenido: mensaje, timestamp: new Date().toISOString() });
   historial.push({ rol: 'asistente', contenido: resultado.texto, timestamp: new Date().toISOString() });
+  return resultado.texto;
 }
 
 async function main() {
@@ -42,13 +43,18 @@ async function main() {
   const historial = [];
   await turno(historial, empresa, cliente, 'Hola');
   await turno(historial, empresa, cliente, 'Quiero agendar el servicio Evaluación examen visual');
-  await turno(historial, empresa, cliente, '¿Tienen disponibilidad el domingo?');
+  const textoDomingo = await turno(historial, empresa, cliente, '¿Tienen disponibilidad el domingo?');
   await turno(historial, empresa, cliente, 'Y si no, ¿qué día es el próximo disponible?');
 
   // Limpieza
   await prisma.conversacion.deleteMany({ where: { empresaId: EMPRESA_ID, telefono: TELEFONO_PRUEBA } });
   await prisma.cliente.delete({ where: { id: cliente.id } });
   console.log('\nLimpieza completa.');
+
+  const aclaroQueNoHayDomingo = /domingo/i.test(textoDomingo || '') && /no (tenemos|atendemos|hay)/i.test(textoDomingo || '');
+  console.log(aclaroQueNoHayDomingo
+    ? '\n✅ El bot aclaró que no atiende los domingos antes de mostrar otra disponibilidad.'
+    : '\n⚠️  El bot no aclaró explícitamente que no atiende los domingos -- revisar el texto de arriba.');
 }
 
 main().catch((e) => console.error('ERROR:', e)).finally(() => prisma.$disconnect());

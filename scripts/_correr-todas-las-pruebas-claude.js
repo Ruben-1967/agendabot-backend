@@ -60,10 +60,15 @@ for (const nombre of scripts) {
 
   const esErrorDeEntornoEquivocado = /foreign key constraint violated|cannot read propert.* of null/i.test(salida);
   const usaEmpresaDemoSoloStaging = fs.readFileSync(ruta, 'utf8').includes(ID_EMPRESA_DEMO_SOLO_STAGING);
+  // Algunos scripts atrapan su propio error (ej. `.catch(e => console.error(...))`
+  // sin volver a lanzar) -- el proceso termina con código 0 igual, así que
+  // "crasheo" queda false aunque el mensaje de error esté en stdout. Por
+  // eso este chequeo no depende de crasheo, solo del contenido de la salida.
+  const esN_A = esErrorDeEntornoEquivocado && usaEmpresaDemoSoloStaging;
 
   let estado;
-  if (crasheo && esErrorDeEntornoEquivocado && usaEmpresaDemoSoloStaging) {
-    estado = 'N/A'; // prueba de demo de Staging corrida en el entorno equivocado -- no es una falla real
+  if (esN_A || /⏭️/.test(salida)) {
+    estado = 'N/A'; // prueba de demo de Staging corrida en el entorno equivocado, o el propio script se saltó a sí mismo (ej. fecha de prueba ya pasada) -- no es una falla real
   } else if (crasheo) {
     estado = 'CRASH';
   } else if (/✅/.test(salida) && !/⚠️/.test(salida)) {

@@ -89,7 +89,7 @@ async function main() {
   console.log('[Chequeo directo] Próximos días con disponibilidad:', JSON.stringify(proximosDias.map((d) => d.fecha)));
 
   if (horasDirecto.length === 0) {
-    console.log('\nNo hay horas disponibles el 2026-09-04 ahora mismo — no se puede probar. Ajusta la fecha en el script.');
+    console.log('\n⏭️  N/A: la fecha 2026-09-04 (del incidente real original) ya pasó, no se puede reproducir el escenario. No es una falla -- este script queda fijo a esa fecha a propósito, para el caso real que motivó su creación.');
     return;
   }
   const primeraHora = horasDirecto[0];
