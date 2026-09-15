@@ -75,7 +75,14 @@ const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY,
 });
 
-const MODEL = 'claude-haiku-4-5-20251001';
+// Sonnet 5 en vez de Haiku 4.5 (2026-09-16) -- decisión tomada con el
+// usuario tras varias sesiones corrigiendo la misma clase de falla de
+// confiabilidad del modelo (menús inventados, confirmaciones sin agendar,
+// voseo pese a instrucción estricta, servicio exacto no reconocido, etc.).
+// Las heurísticas/redes de seguridad de este archivo se quedan igual --
+// un modelo mejor reduce cuánto disparan, no reemplaza la necesidad de
+// tenerlas.
+const MODEL = 'claude-sonnet-5';
 
 // Texto fijo de la pregunta de servicios (nunca lo redacta el modelo, ver
 // mostrar_lista_servicios más abajo) y su variante para cuando ya se
@@ -408,7 +415,7 @@ async function ejecutarHerramienta(nombre, input, contexto) {
  * @param {string} params.mensajeEntrante - Texto del cliente.
  * @returns {Promise<{texto: string, interactivo: Object|null}>}
  */
-async function generarRespuestaChatbot({ empresa, cliente, historial, mensajeEntrante }) {
+async function generarRespuestaChatbotSinCorregirVoseo({ empresa, cliente, historial, mensajeEntrante }) {
   const nombreEmpresa = empresa.sucursal ? `${empresa.nombre} (${empresa.sucursal})` : empresa.nombre;
 
   // Preferimos los Servicio reales que la empresa cargó en el panel de
@@ -654,9 +661,14 @@ ${empresa.requiereRut ? '- Este negocio además EXIGE RUT y teléfono de contact
   // pinta de menú numerado (2+ opciones con marcador tipo "1️⃣"/"1)"/"1.")
   // y el negocio sí tiene la herramienta real disponible, se descarta y se
   // reintenta forzando la llamada.
+  // Ampliado 2026-09-16 (reporte real de Ahorróptica): el modelo redactó el
+  // mismo tipo de menú inventado en el saludo inicial ("Hola") pero con
+  // viñetas ("· Agendar una evaluación visual") en vez de marcadores
+  // numerados -- la regex original solo buscaba "1️⃣"/"1)"/"1.", así que
+  // esta variante se coló sin ser detectada.
   const pareceMenuDeOpcionesSinHerramienta = (texto) => {
     if (!tieneServiciosReales) return false;
-    const marcadores = (texto || '').match(/(?:^|\n)\s*(?:[1-9]️⃣|[1-9][.)])\s*\S/gm) || [];
+    const marcadores = (texto || '').match(/(?:^|\n)\s*(?:[1-9]️⃣|[1-9][.)]|[·•])\s*\S/gm) || [];
     return marcadores.length >= 2;
   };
 
@@ -916,6 +928,68 @@ ${empresa.requiereRut ? '- Este negocio además EXIGE RUT y teléfono de contact
   }
 
   return { texto: 'Disculpa, tuve un problema procesando tu solicitud. ¿Puedes intentar de nuevo?', interactivo: null };
+}
+
+// Red de seguridad determinística contra voseo. Confirmado en producción
+// (2026-09-16, un día después de agregar una regla "ESTRICTA E
+// INQUEBRANTABLE" al system prompt de arriba) que el modelo puede violarla
+// igual -- no es un problema de redacción del prompt, es la misma
+// limitación de confiabilidad ya documentada para tool_choice (ver
+// memoria del proyecto). Mismo principio que el resto de las protecciones
+// de este archivo: nunca confiar en que el modelo se corrija solo,
+// corregir el texto final antes de mandarlo.
+//
+// Cada patrón cubre la forma CON y SIN tilde donde eso no genera
+// ambigüedad con el tuteo real (ej. "tenés"/"tenes" nunca se confunde con
+// "tienes", que es una palabra distinta) -- excepto los pares que
+// comparten la misma raíz y solo se distinguen por el acento (ej.
+// "necesitás" vs. "necesitas"), donde SOLO se corrige la forma con tilde
+// explícita, para no tocar tuteo ya correcto (mismo cuidado que
+// REGEX_VOSEO en scripts/_probar-nunca-vosea.js, que tuvo este error una
+// vez).
+const REEMPLAZOS_VOSEO = [
+  [/\bvos\b/gi, 'tú'],
+  [/\bten[eé]s\b/gi, 'tienes'],
+  [/\bpod[eé]s\b/gi, 'puedes'],
+  [/\bquer[eé]s\b/gi, 'quieres'],
+  [/\bnecesitás\b/gi, 'necesitas'],
+  [/\bsabés\b/gi, 'sabes'],
+  [/\bven[ií]s\b/gi, 'vienes'],
+  [/\bdec[ií]s\b/gi, 'dices'],
+  [/\bsos\b/gi, 'eres'],
+  [/\band[aá]s?\b/gi, (m) => (/s$/i.test(m) ? 'andas' : 'anda')],
+  [/\bfijate\b/gi, 'fíjate'],
+  [/\bescribime\b/gi, 'escríbeme'],
+  [/\bdecime\b/gi, 'dime'],
+  [/\bcontame\b/gi, 'cuéntame'],
+  [/\bmandame\b/gi, 'mándame'],
+  [/\bavisame\b/gi, 'avísame'],
+  [/\bllamame\b/gi, 'llámame'],
+  [/\besperame\b/gi, 'espérame'],
+  [/\bmirá\b/gi, 'mira'],
+];
+
+function preservarMayuscula(original, reemplazo) {
+  if (original[0] === original[0].toUpperCase() && original[0] !== original[0].toLowerCase()) {
+    return reemplazo.charAt(0).toUpperCase() + reemplazo.slice(1);
+  }
+  return reemplazo;
+}
+
+function corregirVoseo(texto) {
+  if (!texto) return texto;
+  let resultado = texto;
+  for (const [patron, reemplazo] of REEMPLAZOS_VOSEO) {
+    resultado = resultado.replace(patron, (match) =>
+      preservarMayuscula(match, typeof reemplazo === 'function' ? reemplazo(match) : reemplazo)
+    );
+  }
+  return resultado;
+}
+
+async function generarRespuestaChatbot(params) {
+  const resultado = await generarRespuestaChatbotSinCorregirVoseo(params);
+  return { ...resultado, texto: corregirVoseo(resultado.texto) };
 }
 
 module.exports = { generarRespuestaChatbot };
