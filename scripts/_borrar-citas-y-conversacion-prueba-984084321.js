@@ -13,6 +13,15 @@
 // actualización real durante la prueba); si se quiere limpiar eso
 // también, hacerlo aparte.
 //
+// IMPORTANTE: se busca por la Conversacion, no por el Cliente -- Ahorróptica
+// exige RUT+teléfono para agendar, y crearCitaValidada sobrescribe
+// Cliente.telefono con el teléfono de CONTACTO que el cliente confirma en
+// cada agendamiento (comportamiento heredado, no nuevo -- ver
+// disponibilidad.js#crearCitaValidada). Como esta prueba agendó 2 veces con
+// 2 teléfonos de contacto distintos, Cliente.telefono ya NO es
+// "56984084321" -- pero Conversacion.telefono nunca se toca, así que sigue
+// siendo la forma confiable de encontrar todo lo de esta prueba.
+//
 // Por defecto corre en modo DRY RUN (solo imprime qué borraría). Recién
 // borra de verdad con APLICAR=1.
 //
@@ -28,29 +37,34 @@ const TELEFONO = '56984084321';
 const APLICAR = process.env.APLICAR === '1';
 
 async function main() {
-  const cliente = await prisma.cliente.findFirst({
-    where: { empresaId: EMPRESA_ID, telefono: TELEFONO },
-  });
-
-  if (!cliente) {
-    console.log(`No se encontró ningún Cliente para ${TELEFONO} en Ahorróptica.`);
-    return;
-  }
-
-  console.log(`Cliente ${cliente.id} -- nombre actual: "${cliente.nombre}" (no se toca, solo informativo).\n`);
-
-  const citas = await prisma.cita.findMany({ where: { clienteId: cliente.id } });
-  console.log(`Cita(s) encontradas: ${citas.length}`);
-  for (const c of citas) {
-    console.log(`  - ${c.id} -- ${c.fechaHoraInicio.toISOString()} -- estado: ${c.estado}`);
-  }
-
   const conversaciones = await prisma.conversacion.findMany({
     where: { empresaId: EMPRESA_ID, telefono: TELEFONO },
   });
-  console.log(`\nConversacion(es) encontradas: ${conversaciones.length}`);
+
+  if (conversaciones.length === 0) {
+    console.log(`No se encontró ninguna Conversacion para ${TELEFONO} en Ahorróptica.`);
+    return;
+  }
+
+  console.log(`Conversacion(es) encontradas: ${conversaciones.length}`);
+  const clienteIds = new Set();
   for (const conv of conversaciones) {
-    console.log(`  - ${conv.id} -- ${Array.isArray(conv.mensajes) ? conv.mensajes.length : 0} turnos guardados`);
+    console.log(`  - ${conv.id} -- ${Array.isArray(conv.mensajes) ? conv.mensajes.length : 0} turnos guardados -- clienteId: ${conv.clienteId}`);
+    if (conv.clienteId) clienteIds.add(conv.clienteId);
+  }
+
+  console.log(`\nCliente(s) vinculado(s): ${clienteIds.size}`);
+  let citasTotales = [];
+  for (const clienteId of clienteIds) {
+    const cliente = await prisma.cliente.findUnique({ where: { id: clienteId } });
+    console.log(`  - ${clienteId} -- nombre actual: "${cliente?.nombre}", telefono actual: "${cliente?.telefono}" (Cliente NO se toca, solo informativo).`);
+    const citas = await prisma.cita.findMany({ where: { clienteId } });
+    citasTotales = citasTotales.concat(citas);
+  }
+
+  console.log(`\nCita(s) encontradas: ${citasTotales.length}`);
+  for (const c of citasTotales) {
+    console.log(`  - ${c.id} -- ${c.fechaHoraInicio.toISOString()} -- estado: ${c.estado}`);
   }
 
   if (!APLICAR) {
@@ -58,12 +72,16 @@ async function main() {
     return;
   }
 
-  const resultadoCitas = await prisma.cita.deleteMany({ where: { clienteId: cliente.id } });
+  let totalCitasBorradas = 0;
+  for (const clienteId of clienteIds) {
+    const r = await prisma.cita.deleteMany({ where: { clienteId } });
+    totalCitasBorradas += r.count;
+  }
   const resultadoConv = await prisma.conversacion.deleteMany({ where: { empresaId: EMPRESA_ID, telefono: TELEFONO } });
 
-  console.log(`\n✅ ${resultadoCitas.count} cita(s) borrada(s).`);
+  console.log(`\n✅ ${totalCitasBorradas} cita(s) borrada(s).`);
   console.log(`✅ ${resultadoConv.count} conversación(es) borrada(s).`);
-  console.log('El Cliente NO se tocó (queda con nombre "' + cliente.nombre + '") -- avisar si también se quiere limpiar eso.');
+  console.log('Los Cliente(s) NO se tocaron -- avisar si también se quiere limpiar eso.');
 }
 
 main()
