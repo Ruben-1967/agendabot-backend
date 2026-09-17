@@ -591,6 +591,22 @@ model Conversacion {
   mensajes  Json      // arreglo de {rol, contenido, timestamp}
   escaladoAHumano Boolean @default(false)
 
+  // Estado CIERTO de la reserva en curso (2026-09-17, fix estructural
+  // "el bot pierde certeza al convertir taps en texto libre" — ver
+  // src/services/flujoReserva.js). Se escribe SOLO desde el backend, en el
+  // momento exacto en que un dato se vuelve cierto (decodificación de un
+  // tap, o resultado exitoso de una consulta de disponibilidad) — nunca
+  // por interpretación de Claude. Forma:
+  // {servicioId, servicioNombre, fecha, hora, nombre, rut, telefonoContacto,
+  //  opcionesMostradas: [{valor, etiquetas: string[]}]}.
+  // opcionesMostradas guarda el último set cerrado de opciones ofrecidas
+  // (ej. las horas exactas del último listado) para permitir que un texto
+  // libre que calce EXACTO con una opción ya mostrada se trate con la misma
+  // certeza que un tap (ver coincideConOpcionMostrada). null = sin ninguna
+  // reserva en curso todavía (recién empezó a escribir, o ya se agendó y no
+  // hay una nueva en progreso).
+  reservaEnCurso Json?
+
   // Pausa del bot en Coexistence (WhatsApp Business App + Cloud API en
   // paralelo) — conceptualmente distinto de escaladoAHumano (que es una nota
   // interna de admin desde el panel, no una intervención real por WhatsApp).
