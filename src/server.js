@@ -1162,36 +1162,57 @@ app.post('/webhook/whatsapp', verificarFirmaWebhookWhatsApp, async (req, res) =>
         return;
       }
 
-      // NUEVO: el cliente tocó un SERVICIO de la lista, o "Otro / no lo
-      // encuentro". En ambos casos convertimos a texto y seguimos el flujo
-      // normal de Claude — para "otro", el mensaje queda como una consulta
-      // libre, sin forzarlo de vuelta a la lista.
+      // El cliente tocó un SERVICIO de la lista, "Otro / no lo encuentro",
+      // o un HORARIO -- mismo camino de tap determinístico que el tap de
+      // día (paso 7 del fix estructural, extiende el paso 6). Cada caso
+      // llama a procesarSeleccionInteractiva y envía la respuesta directo,
+      // sin pasar por el pipeline agéntico de Claude para decidir el
+      // flujo.
       if (listReplyId === ID_FILA_SERVICIO_OTRO) {
-        textoEntrante = 'No encuentro el servicio que necesito en la lista, tengo otra consulta.';
-      } else {
-        const servicioIdElegido = decodificarFilaServicio(listReplyId);
-        if (servicioIdElegido) {
-          const servicioElegido = await prisma.servicio.findUnique({ where: { id: servicioIdElegido } });
-          textoEntrante = servicioElegido
-            ? `Quiero agendar el servicio "${servicioElegido.nombre}".`
-            : 'Ese servicio ya no está disponible, ¿me puedes decir cuál necesitas?';
-        } else {
-          // Único otro tipo interactivo que este flujo entiende: el cliente
-          // tocó un horario de la lista que le mostramos (ver claude.js).
-          // Cualquier otro id (ej. de una lista de otro flujo) se ignora
-          // silenciosamente.
-          const horarioElegido = decodificarFilaHorario(listReplyId);
-          if (!horarioElegido) {
-            return;
-          }
-          // Se incluye la fecha ya en español (no solo el ISO crudo) para
-          // que el modelo, al redactar la confirmación final, no tenga que
-          // calcular él mismo qué día de la semana es esa fecha — eso puede
-          // salir mal (Ahorróptica reportó una confirmación real que decía
-          // "sábado 12 de septiembre" para una cita agendada un viernes).
-          textoEntrante = `Confirmo que quiero agendar para el ${fechaLegibleDesdeISO(horarioElegido.fecha)} (${horarioElegido.fecha}) a las ${horarioElegido.hora}.`;
-        }
+        const { respuestaTexto: respuestaOtro, interactivo: interactivoOtro } = await procesarSeleccionInteractiva({
+          empresa, telefonoCliente, nombreContacto, canal: 'whatsapp',
+          tipoSeleccion: 'servicio_otro', valorDecodificado: {},
+        });
+        await enviarRespuestaAgendamiento({ phoneNumberId, telefonoCliente, empresa, respuestaTexto: respuestaOtro, interactivo: interactivoOtro });
+        return;
       }
+
+      const servicioIdElegido = decodificarFilaServicio(listReplyId);
+      if (servicioIdElegido) {
+        const servicioElegido = await prisma.servicio.findUnique({ where: { id: servicioIdElegido } });
+        if (!servicioElegido) {
+          // Caso borde raro (el servicio se borró entre que se mostró la
+          // lista y el cliente tocó una fila) -- se le avisa directo, sin
+          // tocar reservaEnCurso; el siguiente mensaje del cliente retoma
+          // el flujo normal.
+          await enviarRespuestaAgendamiento({
+            phoneNumberId, telefonoCliente, empresa,
+            respuestaTexto: 'Ese servicio ya no está disponible, ¿me puedes decir cuál necesitas?',
+            interactivo: null,
+          });
+          return;
+        }
+        const { respuestaTexto: respuestaServicio, interactivo: interactivoServicio } = await procesarSeleccionInteractiva({
+          empresa, telefonoCliente, nombreContacto, canal: 'whatsapp',
+          tipoSeleccion: 'servicio', valorDecodificado: { servicioId: servicioIdElegido, servicioNombre: servicioElegido.nombre },
+        });
+        await enviarRespuestaAgendamiento({ phoneNumberId, telefonoCliente, empresa, respuestaTexto: respuestaServicio, interactivo: interactivoServicio });
+        return;
+      }
+
+      // Único otro tipo interactivo que este flujo entiende: el cliente
+      // tocó un horario de la lista que le mostramos. Cualquier otro id
+      // (ej. de una lista de otro flujo) se ignora silenciosamente.
+      const horarioElegido = decodificarFilaHorario(listReplyId);
+      if (!horarioElegido) {
+        return;
+      }
+      const { respuestaTexto: respuestaHora, interactivo: interactivoHora } = await procesarSeleccionInteractiva({
+        empresa, telefonoCliente, nombreContacto, canal: 'whatsapp',
+        tipoSeleccion: 'hora', valorDecodificado: { fecha: horarioElegido.fecha, hora: horarioElegido.hora },
+      });
+      await enviarRespuestaAgendamiento({ phoneNumberId, telefonoCliente, empresa, respuestaTexto: respuestaHora, interactivo: interactivoHora });
+      return;
     } else {
       textoEntrante = mensaje.type === 'button'
         ? (mensaje.button?.text || '')
