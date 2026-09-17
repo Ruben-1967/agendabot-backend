@@ -7,6 +7,7 @@ const {
   obtenerProximosDiasParaServicio,
   resolverServicioParaHerramienta,
   crearCitaValidada,
+  normalizarYValidarRut,
 } = require('./disponibilidad');
 
 // El texto que acompaña la lista de "próximos días" es fijo (ver más abajo,
@@ -524,6 +525,84 @@ ${bloqueEstado}`;
   }
 
   return corregirVoseo(texto);
+}
+
+/**
+ * Extracción ACOTADA de RUT y/o teléfono de contacto desde texto libre --
+ * paso 9 del fix estructural (decisión 2026-09-17, ver
+ * C:\Users\ruben\.claude\plans\clever-yawning-stearns.md): PEDIR_RUT
+ * deliberadamente no tiene fast-path por regex (paso 8, un mensaje corto
+ * rara vez trae ambos datos de forma inequívoca), pero una vez que
+ * agendar_cita deja de ser una tool de Claude, el pipeline completo ya no
+ * tiene forma de agendar -- así que hace falta ALGO que capture estos 2
+ * campos sin volver a caer en el patrón que motivó todo este refactor
+ * (Claude decidiendo el flujo completo). Esta función usa Claude con UNA
+ * SOLA herramienta, que SOLO puede registrar los 2 campos puntuales que
+ * el cliente haya mencionado explícitamente -- nunca decide el siguiente
+ * paso, nunca agenda, nunca ofrece ninguna otra acción. El backend valida
+ * el RUT extraído (normalizarYValidarRut) antes de confiar en él.
+ *
+ * @param {Object} params
+ * @param {Object} params.empresa
+ * @param {Object|null} params.reservaEnCurso
+ * @param {string} params.mensajeEntrante
+ * @returns {Promise<{rut: string|null, rutInvalido: string|null, telefono: string|null, texto: string|null}>} texto viene lleno SOLO cuando Claude no encontró ninguno de los 2 datos y respondió en texto en su lugar (ej. resolvió una duda puntual) -- en ese caso rut/telefono son null y el caller usa ese texto tal cual. rutInvalido viene lleno (tal cual lo escribió el cliente) cuando SÍ mencionó un RUT pero no tiene formato válido -- distinto de "no lo mencionó" (rut y rutInvalido ambos null), para poder darle feedback específico.
+ */
+async function extraerRutYTelefono({ empresa, reservaEnCurso, mensajeEntrante }) {
+  const systemPrompt = `${construirBloqueIdentidad(empresa)}
+
+MODO: EXTRAER UN DATO PUNTUAL. No tienes ninguna otra herramienta disponible en este turno -- tu única tarea es revisar el mensaje del cliente y, SOLO si menciona explícitamente su RUT y/o su teléfono de contacto, llamar a extraer_rut_y_telefono con lo que hayas encontrado (puedes dejar un campo vacío si no lo mencionó). Nunca inventes ni asumas ninguno de los 2 datos, y nunca uses el número desde el que te escribe como si fuera el teléfono de contacto -- solo cuenta si el cliente lo dice explícitamente en el mensaje. Si el mensaje no trae ninguno de los 2 datos (ej. hace una pregunta, pide una aclaración, o dice que no lo tiene a mano), NO llames a la herramienta -- responde en texto, breve, resolviendo eso puntualmente y recordando qué dato sigue faltando. Nunca decidas agendar la cita ni ofrezcas ninguna otra acción -- tu única función en este turno es este dato puntual.
+
+ESTADO ACTUAL DE LA RESERVA (ya confirmado con certeza -- nunca vuelvas a pedir un dato que ya está acá):
+${JSON.stringify(reservaEnCurso || {}, null, 2)}`;
+
+  const tools = [{
+    name: 'extraer_rut_y_telefono',
+    description: 'Registra el RUT y/o el teléfono de contacto que el cliente mencionó explícitamente en su mensaje. Llamar solo con los campos que el cliente realmente haya dicho en ESTE mensaje.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        rut: { type: 'string', description: "RUT tal como lo escribió el cliente (ej. '12345678-9'). Omitir si no lo mencionó en este mensaje." },
+        telefono: { type: 'string', description: 'Teléfono de contacto tal como lo escribió el cliente. Omitir si no lo mencionó en este mensaje.' },
+      },
+    },
+  }];
+
+  const response = await anthropic.messages.create({
+    model: MODEL,
+    max_tokens: 600,
+    system: systemPrompt,
+    tools,
+    messages: [{ role: 'user', content: mensajeEntrante || '' }],
+  });
+
+  const toolUse = response.content.find((b) => b.type === 'tool_use' && b.name === 'extraer_rut_y_telefono');
+
+  if (!toolUse) {
+    const textBlock = response.content.find((b) => b.type === 'text');
+    const texto = textBlock ? textBlock.text : '';
+    if (!texto) {
+      console.error(
+        '[claude.js] extraerRutYTelefono sin texto ni tool_use -- stop_reason:', response.stop_reason,
+        '| usage:', JSON.stringify(response.usage)
+      );
+    }
+    return { rut: null, rutInvalido: null, telefono: null, texto: texto ? corregirVoseo(texto) : null };
+  }
+
+  // rutInvalido distingue "no lo mencionó" (null) de "lo mencionó pero no
+  // es un RUT chileno válido" -- para poder darle feedback específico al
+  // cliente (ej. "12.345 no parece un RUT válido") en vez del genérico
+  // "pídelo de nuevo", mismo cuidado que ya tenía el bloque original de
+  // agendar_cita en claude.js antes de este refactor.
+  const rutMencionado = toolUse.input.rut || null;
+  const rutValidado = rutMencionado ? normalizarYValidarRut(rutMencionado) : null;
+  return {
+    rut: rutValidado,
+    rutInvalido: rutMencionado && !rutValidado ? rutMencionado : null,
+    telefono: toolUse.input.telefono || null,
+    texto: null,
+  };
 }
 
 /**
@@ -1097,4 +1176,5 @@ module.exports = {
   formatearConfirmacionCita,
   armarRespuestaHorarios,
   armarRespuestaProximosDias,
+  extraerRutYTelefono,
 };

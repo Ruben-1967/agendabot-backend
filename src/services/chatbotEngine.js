@@ -5,6 +5,7 @@ const {
   formatearConfirmacionCita,
   armarRespuestaHorarios,
   armarRespuestaProximosDias,
+  extraerRutYTelefono,
 } = require('./claude');
 const {
   resolverServicioParaHerramientaPorId,
@@ -260,6 +261,7 @@ function descripcionDeTap(tipoSeleccion, valorDecodificado) {
   if (tipoSeleccion === 'servicio_otro') return 'Tocó "Otro / no lo encuentro" en la lista de servicios.';
   if (tipoSeleccion === 'nombre') return `Escribió su nombre: "${valorDecodificado.nombre}".`;
   if (tipoSeleccion === 'confirmar') return 'Confirmó los datos de la reserva.';
+  if (tipoSeleccion === 'rut') return '(escribió datos de RUT/teléfono en texto libre).';
   return '(tocó una opción de una lista).';
 }
 
@@ -352,17 +354,57 @@ async function procesarSeleccionInteractivaSinLock({ empresa, telefonoCliente, n
     if (reservaEnCurso.nombre !== valorDecodificado.nombre) {
       reservaEnCurso = { ...reservaEnCurso, nombre: valorDecodificado.nombre };
     }
-  } else if (tipoSeleccion === 'confirmar') {
-    // Igual que 'nombre': viene del fast-path de texto -- no cambia ningún
-    // campo, solo dispara la evaluación de siguientePaso de más abajo (que
-    // en este punto ya debería ser CONFIRMAR, dado que intentarFastPathTexto
-    // solo lo dispara en ese paso).
+  } else if (tipoSeleccion === 'confirmar' || tipoSeleccion === 'rut') {
+    // Ambos vienen de texto libre, no de un tap real -- no cambian ningún
+    // campo acá mismo, solo disparan la evaluación de siguientePaso de más
+    // abajo. 'confirmar' solo se dispara en paso CONFIRMAR (ver
+    // intentarFastPathTexto); 'rut' entra siempre que el paso sea
+    // PEDIR_RUT, y es la rama de abajo (paso === PASOS.PEDIR_RUT &&
+    // textoOriginalCliente) la que hace la extracción real vía Claude.
   } else {
     throw new Error(`procesarSeleccionInteractiva: tipoSeleccion desconocido "${tipoSeleccion}"`);
   }
 
   if (!escaladoAHumano) {
     const recurso = await prisma.recursoAgendable.findFirst({ where: { empresaId: empresa.id } });
+
+    // Compartido entre el paso CONFIRMAR normal y el paso PEDIR_RUT cuando
+    // la extracción de RUT+teléfono completa la reserva en el mismo turno
+    // -- una sola implementación de "crear la cita real y redactar la
+    // confirmación", nunca 2 copias que se puedan desincronizar. Devuelve
+    // el texto de confirmación si tuvo éxito (y deja reservaEnCurso en
+    // null), o null si falló (el caller decide cómo seguir).
+    const confirmarYCrearCita = async () => {
+      const nombreParaConfirmacion = reservaEnCurso.nombre;
+      const servicioNombreParaConfirmacion = reservaEnCurso.servicioNombre;
+      const resultado = await crearCitaValidada(
+        {
+          servicioId: reservaEnCurso.servicioId || null,
+          servicioNombre: reservaEnCurso.servicioNombre || null,
+          fecha: reservaEnCurso.fecha,
+          hora: reservaEnCurso.hora,
+          nombre: reservaEnCurso.nombre,
+          rut: reservaEnCurso.rut,
+          telefono: reservaEnCurso.telefonoContacto,
+        },
+        { empresa, cliente, recurso }
+      );
+
+      if (!resultado.exito) return { texto: null, error: resultado.error };
+
+      reservaEnCurso = null; // ya se agendó -- no queda ninguna reserva en curso
+      return {
+        texto: formatearConfirmacionCita({
+          nombre: nombreParaConfirmacion,
+          servicioNombre: resultado.servicioNombre || servicioNombreParaConfirmacion,
+          fechaLegible: resultado.fechaLegible,
+          hora: resultado.hora,
+          empresa,
+        }),
+        error: null,
+      };
+    };
+
     const paso = siguientePaso(reservaEnCurso, contexto);
 
     if (paso === PASOS.PEDIR_DIA) {
@@ -431,42 +473,71 @@ async function procesarSeleccionInteractivaSinLock({ empresa, telefonoCliente, n
         }
       }
     } else if (paso === PASOS.CONFIRMAR) {
-      const resultado = await crearCitaValidada(
-        {
-          servicioId: reservaEnCurso.servicioId || null,
-          servicioNombre: reservaEnCurso.servicioNombre || null,
-          fecha: reservaEnCurso.fecha,
-          hora: reservaEnCurso.hora,
-          nombre: reservaEnCurso.nombre,
-          rut: reservaEnCurso.rut,
-          telefono: reservaEnCurso.telefonoContacto,
-        },
-        { empresa, cliente, recurso }
-      );
-
-      if (resultado.exito) {
-        respuestaTexto = formatearConfirmacionCita({
-          nombre: reservaEnCurso.nombre,
-          servicioNombre: resultado.servicioNombre || reservaEnCurso.servicioNombre,
-          fechaLegible: resultado.fechaLegible,
-          hora: resultado.hora,
-          empresa,
-        });
-        reservaEnCurso = null; // ya se agendó -- no queda ninguna reserva en curso
+      const resultadoConfirmar = await confirmarYCrearCita();
+      if (resultadoConfirmar.texto) {
+        respuestaTexto = resultadoConfirmar.texto;
       } else {
         // Ej. HORARIO_YA_NO_DISPONIBLE (condición de carrera real: alguien
         // más tomó esa hora justo antes) -- se limpia la hora y se vuelve a
         // pedir, nunca se expone el error crudo de la API al cliente.
         reservaEnCurso = { ...reservaEnCurso, hora: null, opcionesMostradas: null };
         const pasoTrasFalla = siguientePaso(reservaEnCurso, contexto);
-        respuestaTexto = (await redactarMensajePaso({ empresa, reservaEnCurso, paso: pasoTrasFalla, mensajeEntrante: resultado.error }))
+        respuestaTexto = (await redactarMensajePaso({ empresa, reservaEnCurso, paso: pasoTrasFalla, mensajeEntrante: resultadoConfirmar.error }))
           || PLANTILLAS_DETERMINISTAS[pasoTrasFalla];
+      }
+    } else if (paso === PASOS.PEDIR_RUT && textoOriginalCliente) {
+      // RUT/teléfono deliberadamente NO tienen fast-path por regex (paso
+      // 8): un mensaje corto rara vez trae ambos datos de forma
+      // inequívoca. En vez de eso, se usa Claude con UNA sola herramienta
+      // acotada (extraerRutYTelefono, claude.js) que SOLO puede extraer
+      // esos 2 campos del texto -- nunca decide el flujo, nunca agenda,
+      // nunca llama a ninguna otra herramienta. Si el negocio no exige
+      // RUT, este paso nunca se alcanza (siguientePaso lo salta).
+      const extraido = await extraerRutYTelefono({ empresa, reservaEnCurso, mensajeEntrante: textoOriginalCliente });
+
+      if (extraido.texto) {
+        // Claude no encontró ninguno de los 2 datos en este mensaje (ej.
+        // el cliente preguntó algo, o dijo que no tiene el RUT a mano) --
+        // se usa su respuesta puntual tal cual, sin avanzar nada.
+        respuestaTexto = extraido.texto;
+      } else {
+        if (extraido.rut && reservaEnCurso.rut !== extraido.rut) {
+          reservaEnCurso = { ...reservaEnCurso, rut: extraido.rut };
+        }
+        if (extraido.telefono && reservaEnCurso.telefonoContacto !== extraido.telefono) {
+          reservaEnCurso = { ...reservaEnCurso, telefonoContacto: extraido.telefono };
+        }
+        const pasoTrasExtraccion = siguientePaso(reservaEnCurso, contexto);
+        if (pasoTrasExtraccion === PASOS.CONFIRMAR) {
+          const resultadoConfirmar = await confirmarYCrearCita();
+          if (resultadoConfirmar.texto) {
+            respuestaTexto = resultadoConfirmar.texto;
+          } else {
+            reservaEnCurso = { ...reservaEnCurso, hora: null, opcionesMostradas: null };
+            const pasoTrasFalla = siguientePaso(reservaEnCurso, contexto);
+            respuestaTexto = (await redactarMensajePaso({ empresa, reservaEnCurso, paso: pasoTrasFalla, mensajeEntrante: resultadoConfirmar.error }))
+              || PLANTILLAS_DETERMINISTAS[pasoTrasFalla];
+          }
+        } else {
+          // Faltó uno de los 2 datos (ej. dio el RUT pero no el teléfono),
+          // o el RUT que mencionó no es válido -- en ese segundo caso se le
+          // pasa el detalle a redactarMensajePaso para que dé feedback
+          // específico (ej. "12.345 no parece un RUT chileno válido"), en
+          // vez del genérico "pídelo de nuevo" -- mismo cuidado que tenía
+          // el bloque original de agendar_cita antes de este refactor.
+          const pistaError = extraido.rutInvalido
+            ? `El cliente escribió "${extraido.rutInvalido}" como RUT, pero no tiene formato de RUT chileno válido (ej. 12345678-9). Pídeselo de nuevo.`
+            : null;
+          respuestaTexto = (await redactarMensajePaso({ empresa, reservaEnCurso, paso: pasoTrasExtraccion, mensajeEntrante: pistaError }))
+            || PLANTILLAS_DETERMINISTAS[pasoTrasExtraccion];
+        }
       }
     } else {
       // PEDIR_SERVICIO (no debería ocurrir viniendo de un tap de
       // día/hora/servicio, salvo que se haya reseteado el servicio a mitad
-      // de flujo), PEDIR_NOMBRE, PEDIR_RUT -- ninguno tiene una lista
-      // interactiva propia acá, solo hace falta redactar la pregunta.
+      // de flujo), PEDIR_NOMBRE, o PEDIR_RUT llegado por un TAP (sin texto
+      // que extraer) -- ninguno tiene una lista interactiva propia acá,
+      // solo hace falta redactar la pregunta.
       respuestaTexto = (await redactarMensajePaso({ empresa, reservaEnCurso, paso, mensajeEntrante: null }))
         || PLANTILLAS_DETERMINISTAS[paso];
     }
@@ -580,12 +651,15 @@ const REGEX_AFIRMACION_RESERVA = /^\s*(s[ií]|confirmo|confirmar|dale|ok|listo|c
  * pudo resolverlo, o null si no hay ninguna certeza clara -- en ese caso el
  * caller (procesarMensajeEntranteSinLock) sigue al flujo de siempre.
  *
- * Deliberadamente NO cubre PEDIR_RUT ni PEDIR_SERVICIO por texto libre: el
- * primero mezcla 2 campos (RUT + teléfono) que un mensaje corto rara vez
- * trae de forma inequívoca, y el segundo ya tiene su propia red de
- * seguridad determinística en claude.js
- * (mensajeNombraServicioExactoSinDia). Ambos quedan en el pipeline
- * completo -- mismo criterio de "ante la duda, el camino de siempre".
+ * Deliberadamente NO cubre PEDIR_SERVICIO por texto libre -- ya tiene su
+ * propia red de seguridad determinística en claude.js
+ * (mensajeNombraServicioExactoSinDia), y sigue al pipeline completo.
+ * PEDIR_RUT tampoco tiene un clasificador de FORMA acá (un mensaje corto
+ * rara vez trae RUT + teléfono de forma inequívoca por regex), pero SÍ se
+ * cubre más abajo -- delegado a extraerRutYTelefono (claude.js), una
+ * extracción acotada con Claude que nunca decide el flujo, solo esos 2
+ * campos puntuales (necesario desde que agendar_cita deja de ser una tool
+ * de Claude, ver paso 9 del fix estructural).
  */
 async function intentarFastPathTexto({ empresa, telefonoCliente, nombreContacto, canal, conversacion, textoEntrante }) {
   if (esComandoGlobalOPregunta(textoEntrante)) return null;
@@ -630,6 +704,15 @@ async function intentarFastPathTexto({ empresa, telefonoCliente, nombreContacto,
   if (paso === PASOS.CONFIRMAR) {
     if (!REGEX_AFIRMACION_RESERVA.test(textoEntrante || '')) return null;
     return procesarSeleccionInteractivaSinLock({ ...base, tipoSeleccion: 'confirmar', valorDecodificado: {} });
+  }
+
+  if (paso === PASOS.PEDIR_RUT) {
+    // Sin clasificador de forma acá (RUT+teléfono rara vez llegan
+    // inequívocos en un mensaje corto) -- se delega la extracción a Claude
+    // con una sola herramienta acotada (extraerRutYTelefono, claude.js),
+    // nunca a una decisión de flujo. Incondicional: es la propia
+    // herramienta la que decide si encontró algo o no.
+    return procesarSeleccionInteractivaSinLock({ ...base, tipoSeleccion: 'rut', valorDecodificado: {} });
   }
 
   return null;

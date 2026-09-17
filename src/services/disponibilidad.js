@@ -667,4 +667,5 @@ module.exports = {
   resolverServicioParaHerramienta,
   resolverServicioParaHerramientaPorId,
   crearCitaValidada,
+  normalizarYValidarRut,
 };
