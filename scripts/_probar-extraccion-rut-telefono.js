@@ -21,7 +21,8 @@ const { procesarSeleccionInteractiva, procesarMensajeEntrante } = require('../sr
 const { obtenerProximosDiasConDisponibilidad } = require('../src/services/disponibilidad');
 
 const EMPRESA_ID = '007a8c7b-c348-4d9e-a0b8-35e1ad8dba46'; // Estudio Bella Piel (demo, solo Staging)
-const TELEFONO = '569000011144'; // fijo, rango de prueba -- nunca generado
+const TELEFONO = '569000011144'; // fijo, rango de prueba -- nunca generado (WhatsApp)
+const TELEFONO_CONTACTO = '987654321'; // fijo, rango de prueba -- el "teléfono de contacto" que el script confirma en el paso RUT
 
 let requiereRutOriginal = null;
 let fallos = 0;
@@ -31,12 +32,18 @@ function assert(descripcion, condicion) {
 }
 
 async function limpiarConversacion() {
-  const cliente = await prisma.cliente.findFirst({ where: { empresaId: EMPRESA_ID, telefono: TELEFONO } });
-  if (cliente) {
+  // Busca por AMBOS teléfonos posibles -- crearCitaValidada sobrescribe
+  // Cliente.telefono con el teléfono de CONTACTO confirmado (comportamiento
+  // heredado, no nuevo), así que tras un run exitoso el Cliente ya no
+  // aparece por el teléfono de WhatsApp original.
+  const clientes = await prisma.cliente.findMany({
+    where: { empresaId: EMPRESA_ID, telefono: { in: [TELEFONO, TELEFONO_CONTACTO] } },
+  });
+  for (const cliente of clientes) {
     await prisma.cita.deleteMany({ where: { clienteId: cliente.id } });
   }
   await prisma.conversacion.deleteMany({ where: { empresaId: EMPRESA_ID, telefono: TELEFONO } });
-  if (cliente) {
+  for (const cliente of clientes) {
     await prisma.cliente.delete({ where: { id: cliente.id } }).catch(() => {});
   }
 }
@@ -98,7 +105,11 @@ async function main() {
   const citaCreada = await prisma.cita.findFirst({ where: { clienteId: r3.cliente.id }, orderBy: { creadoEn: 'desc' } });
   assert('se creó una Cita real en la base', !!citaCreada);
 
-  const clienteFinal = await prisma.cliente.findFirst({ where: { empresaId: EMPRESA_ID, telefono: TELEFONO } });
+  // Búsqueda por id, no por telefono: crearCitaValidada sobrescribe
+  // Cliente.telefono con el teléfono de CONTACTO confirmado (comportamiento
+  // heredado del bloque agendar_cita original, no nuevo de este refactor)
+  // -- buscar por el TELEFONO de WhatsApp original ya no lo encuentra.
+  const clienteFinal = await prisma.cliente.findUnique({ where: { id: r3.cliente.id } });
   assert('Cliente.rut quedó guardado', clienteFinal?.rut === '12345678-5');
   assert('Cliente.telefono quedó guardado (el de contacto, no el de WhatsApp)', clienteFinal?.telefono === '987654321');
 
