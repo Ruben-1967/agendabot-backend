@@ -1,5 +1,20 @@
 const prisma = require('../lib/prisma');
-const { generarRespuestaChatbot } = require('./claude');
+const {
+  generarRespuestaChatbot,
+  redactarMensajePaso,
+  formatearConfirmacionCita,
+  armarRespuestaHorarios,
+  armarRespuestaProximosDias,
+} = require('./claude');
+const {
+  resolverServicioParaHerramientaPorId,
+  crearCitaValidada,
+  obtenerProximosDiasConDisponibilidad,
+  obtenerProximosDiasParaServicio,
+  obtenerHorariosDisponiblesPorBloque,
+  obtenerHorasDisponiblesPorBloqueParaServicio,
+} = require('./disponibilidad');
+const { siguientePaso, coincideConOpcionMostrada, PLANTILLAS_DETERMINISTAS, PASOS } = require('./flujoReserva');
 const { conLockDeConversacion } = require('../lib/conversacionLock');
 
 // Frases genéricas que preguntan por la lista de servicios, normalizadas
@@ -179,4 +194,272 @@ async function procesarMensajeEntranteSinLock({ empresa, telefonoCliente, textoE
   return { respuestaTexto, interactivo, cliente };
 }
 
-module.exports = { procesarMensajeEntrante };
+// ============================================================
+// TAP DETERMINÍSTICO (fix estructural 2026-09-17, ver
+// C:\Users\ruben\.claude\plans\clever-yawning-stearns.md) -- cuando el
+// cliente toca un botón de día/hora/servicio en una lista interactiva de
+// WhatsApp, el backend YA sabe con certeza matemática qué eligió (lo
+// decodificó del id del botón, sin ninguna interpretación de lenguaje
+// natural de por medio). Antes, esa certeza se descartaba al convertir el
+// tap en texto sintético y pasarlo por el mismo pipeline agéntico que
+// cualquier mensaje libre -- causa confirmada de 4 variantes de bug en
+// producción (el bot re-pregunta/re-muestra algo que el cliente ya dejó
+// resuelto). Acá el tap nunca toca el pipeline agéntico: escribe
+// Conversacion.reservaEnCurso directo, y Claude (si hace falta) solo se usa
+// en modo "solo redactar" (ver redactarMensajePaso, claude.js).
+// ============================================================
+
+/**
+ * @param {Object} empresa
+ * @returns {Promise<{serviciosReales: Object[], hayAmbiguedadDeServicio: boolean, requiereRut: boolean}>}
+ */
+async function contextoFlujoReserva(empresa) {
+  const serviciosReales = await prisma.servicio.findMany({
+    where: { empresaId: empresa.id, activo: true },
+    orderBy: { nombre: 'asc' },
+  });
+  return {
+    serviciosReales,
+    hayAmbiguedadDeServicio: serviciosReales.length > 1,
+    requiereRut: !!empresa.requiereRut,
+  };
+}
+
+/**
+ * Con 0 o 1 Servicio real no hay ninguna ambigüedad que resolver (mismo
+ * criterio que claude.js#hayAmbiguedadDeServicio) -- se siembra
+ * servicioId/servicioNombre automáticamente la primera vez, para que
+ * siguientePaso() nunca pida un servicio que no hace falta confirmar.
+ */
+function conServicioUnicoSembrado(reservaEnCurso, contexto) {
+  if (contexto.hayAmbiguedadDeServicio || reservaEnCurso.servicioId || contexto.serviciosReales.length !== 1) {
+    return reservaEnCurso;
+  }
+  const unico = contexto.serviciosReales[0];
+  return { ...reservaEnCurso, servicioId: unico.id, servicioNombre: unico.nombre };
+}
+
+function descripcionDeTap(tipoSeleccion, valorDecodificado) {
+  if (tipoSeleccion === 'dia') return `Eligió el día ${valorDecodificado.fecha} de la lista.`;
+  if (tipoSeleccion === 'hora') return `Eligió la hora ${valorDecodificado.hora} del ${valorDecodificado.fecha} de la lista.`;
+  if (tipoSeleccion === 'servicio') return `Eligió el servicio "${valorDecodificado.servicioNombre}" de la lista.`;
+  if (tipoSeleccion === 'servicio_otro') return 'Tocó "Otro / no lo encuentro" en la lista de servicios.';
+  return '(tocó una opción de una lista).';
+}
+
+/**
+ * Procesa un tap determinístico (día, hora, servicio, o "Otro / no lo
+ * encuentro" en la lista de servicios) -- mismo contrato de retorno que
+ * procesarMensajeEntrante ({respuestaTexto, interactivo, cliente}), mismo
+ * mutex por conversación.
+ *
+ * @param {Object} params
+ * @param {Object} params.empresa
+ * @param {string} params.telefonoCliente
+ * @param {string|null} params.nombreContacto
+ * @param {string} [params.canal]
+ * @param {'dia'|'hora'|'servicio'|'servicio_otro'} params.tipoSeleccion
+ * @param {Object} params.valorDecodificado - 'dia': {fecha}. 'hora': {fecha, hora}. 'servicio': {servicioId, servicioNombre}. 'servicio_otro': {}.
+ */
+async function procesarSeleccionInteractiva({ empresa, telefonoCliente, nombreContacto, canal = 'whatsapp', tipoSeleccion, valorDecodificado }) {
+  const claveLock = `${empresa.id}:${telefonoCliente}:${canal}`;
+  return conLockDeConversacion(claveLock, () =>
+    procesarSeleccionInteractivaSinLock({ empresa, telefonoCliente, nombreContacto, canal, tipoSeleccion, valorDecodificado })
+  );
+}
+
+async function procesarSeleccionInteractivaSinLock({ empresa, telefonoCliente, nombreContacto, canal, tipoSeleccion, valorDecodificado }) {
+  let cliente = await prisma.cliente.findFirst({
+    where: { empresaId: empresa.id, telefono: telefonoCliente },
+  });
+  if (!cliente) {
+    cliente = await prisma.cliente.create({
+      data: { empresaId: empresa.id, telefono: telefonoCliente, nombre: nombreContacto || 'Sin nombre' },
+    });
+  }
+
+  const conversacion = await prisma.conversacion.findFirst({
+    where: { empresaId: empresa.id, telefono: telefonoCliente, canal },
+  });
+  const historialPrevio = Array.isArray(conversacion?.mensajes) ? conversacion.mensajes : [];
+  const descripcionTap = descripcionDeTap(tipoSeleccion, valorDecodificado);
+
+  // Coexistence: igual que procesarMensajeEntranteSinLock, si hay un
+  // humano interviniendo, el tap solo se registra en el historial (para
+  // contexto) y no se responde nada.
+  if (conversacion?.pausadaPorHumanoEn) {
+    await prisma.conversacion.update({
+      where: { id: conversacion.id },
+      data: {
+        mensajes: [...historialPrevio, { rol: 'usuario', contenido: descripcionTap, timestamp: new Date().toISOString() }],
+        clienteId: cliente.id,
+      },
+    });
+    return { respuestaTexto: null, interactivo: null, cliente };
+  }
+
+  const contexto = await contextoFlujoReserva(empresa);
+  let reservaEnCurso = conServicioUnicoSembrado({ ...(conversacion?.reservaEnCurso || {}) }, contexto);
+  let interactivo = null;
+  let respuestaTexto;
+  let escaladoAHumano = false;
+
+  if (tipoSeleccion === 'servicio_otro') {
+    escaladoAHumano = true;
+    respuestaTexto = '¡Dale! En un momento te contactamos directamente 🙌';
+  } else if (tipoSeleccion === 'servicio') {
+    // Tap duplicado (mismo servicio ya elegido): idempotente, no se
+    // reescribe nada ni se vuelve a mostrar la lista de días.
+    if (reservaEnCurso.servicioId !== valorDecodificado.servicioId) {
+      reservaEnCurso = {
+        ...reservaEnCurso,
+        servicioId: valorDecodificado.servicioId,
+        servicioNombre: valorDecodificado.servicioNombre,
+        opcionesMostradas: null,
+      };
+    }
+  } else if (tipoSeleccion === 'dia') {
+    if (reservaEnCurso.fecha !== valorDecodificado.fecha) {
+      reservaEnCurso = { ...reservaEnCurso, fecha: valorDecodificado.fecha, hora: null, opcionesMostradas: null };
+    }
+  } else if (tipoSeleccion === 'hora') {
+    if (reservaEnCurso.fecha !== valorDecodificado.fecha || reservaEnCurso.hora !== valorDecodificado.hora) {
+      reservaEnCurso = { ...reservaEnCurso, fecha: valorDecodificado.fecha, hora: valorDecodificado.hora, opcionesMostradas: null };
+    }
+  } else {
+    throw new Error(`procesarSeleccionInteractiva: tipoSeleccion desconocido "${tipoSeleccion}"`);
+  }
+
+  if (!escaladoAHumano) {
+    const recurso = await prisma.recursoAgendable.findFirst({ where: { empresaId: empresa.id } });
+    const paso = siguientePaso(reservaEnCurso, contexto);
+
+    if (paso === PASOS.PEDIR_DIA) {
+      // El cliente ya sabe el servicio (tap de servicio, o negocio sin
+      // ambigüedad) -- mostrar los próximos días con cupo real, igual que
+      // hacía consultar_proximos_dias_disponibles.
+      const resuelto = reservaEnCurso.servicioId
+        ? await resolverServicioParaHerramientaPorId(empresa, recurso, reservaEnCurso.servicioId)
+        : { usaProfesionalFijo: true, recursoId: recurso?.id || null, servicioDb: null };
+
+      if (resuelto.usaProfesionalFijo && !resuelto.recursoId) {
+        respuestaTexto = 'Todavía no tenemos un profesional configurado para agendar -- te contactamos directamente.';
+        escaladoAHumano = true;
+      } else {
+        const dias = resuelto.usaProfesionalFijo
+          ? await obtenerProximosDiasConDisponibilidad(resuelto.recursoId, 7)
+          : await obtenerProximosDiasParaServicio(resuelto.servicioDb.id, 7);
+
+        if (dias.length === 0) {
+          respuestaTexto = 'No encontramos cupo disponible en los próximos días -- te contactamos directamente para coordinar.';
+          escaladoAHumano = true;
+        } else {
+          const armada = armarRespuestaProximosDias(dias);
+          respuestaTexto = armada.texto;
+          interactivo = armada.interactivo;
+          reservaEnCurso = {
+            ...reservaEnCurso,
+            opcionesMostradas: dias.map((d) => ({ valor: d.fecha, etiquetas: [d.fecha] })),
+          };
+        }
+      }
+    } else if (paso === PASOS.PEDIR_HORA) {
+      // Día ya elegido (tap, o texto exacto -- paso 8) -- mostrar las horas
+      // reales de ESE día, igual que hacía consultar_disponibilidad.
+      const resuelto = reservaEnCurso.servicioId
+        ? await resolverServicioParaHerramientaPorId(empresa, recurso, reservaEnCurso.servicioId)
+        : { usaProfesionalFijo: true, recursoId: recurso?.id || null, servicioDb: null };
+
+      if (resuelto.usaProfesionalFijo && !resuelto.recursoId) {
+        respuestaTexto = 'Todavía no tenemos un profesional configurado para agendar -- te contactamos directamente.';
+        escaladoAHumano = true;
+      } else {
+        const bloques = resuelto.usaProfesionalFijo
+          ? await obtenerHorariosDisponiblesPorBloque(resuelto.recursoId, reservaEnCurso.fecha)
+          : await obtenerHorasDisponiblesPorBloqueParaServicio(resuelto.servicioDb.id, reservaEnCurso.fecha);
+        const horas = bloques.flatMap((b) => b.horas);
+
+        if (horas.length === 0) {
+          // El día que se acaba de elegir ya no tiene cupo (se llenó justo
+          // ahora) -- se limpia la fecha para no dejar la reserva en un
+          // estado inconsistente, y se vuelve a pedir día.
+          reservaEnCurso = { ...reservaEnCurso, fecha: null, opcionesMostradas: null };
+          respuestaTexto = 'Ese día ya no tiene cupo disponible, ¿quieres que te muestre otro?';
+        } else {
+          const armada = armarRespuestaHorarios(reservaEnCurso.fecha, horas, bloques);
+          respuestaTexto = armada.texto;
+          interactivo = armada.interactivo;
+          reservaEnCurso = {
+            ...reservaEnCurso,
+            opcionesMostradas: horas.map((h) => ({ valor: h, etiquetas: [h] })),
+          };
+        }
+      }
+    } else if (paso === PASOS.CONFIRMAR) {
+      const resultado = await crearCitaValidada(
+        {
+          servicioId: reservaEnCurso.servicioId || null,
+          servicioNombre: reservaEnCurso.servicioNombre || null,
+          fecha: reservaEnCurso.fecha,
+          hora: reservaEnCurso.hora,
+          nombre: reservaEnCurso.nombre,
+          rut: reservaEnCurso.rut,
+          telefono: reservaEnCurso.telefonoContacto,
+        },
+        { empresa, cliente, recurso }
+      );
+
+      if (resultado.exito) {
+        respuestaTexto = formatearConfirmacionCita({
+          nombre: reservaEnCurso.nombre,
+          servicioNombre: resultado.servicioNombre || reservaEnCurso.servicioNombre,
+          fechaLegible: resultado.fechaLegible,
+          hora: resultado.hora,
+          empresa,
+        });
+        reservaEnCurso = null; // ya se agendó -- no queda ninguna reserva en curso
+      } else {
+        // Ej. HORARIO_YA_NO_DISPONIBLE (condición de carrera real: alguien
+        // más tomó esa hora justo antes) -- se limpia la hora y se vuelve a
+        // pedir, nunca se expone el error crudo de la API al cliente.
+        reservaEnCurso = { ...reservaEnCurso, hora: null, opcionesMostradas: null };
+        const pasoTrasFalla = siguientePaso(reservaEnCurso, contexto);
+        respuestaTexto = (await redactarMensajePaso({ empresa, reservaEnCurso, paso: pasoTrasFalla, mensajeEntrante: resultado.error }))
+          || PLANTILLAS_DETERMINISTAS[pasoTrasFalla];
+      }
+    } else {
+      // PEDIR_SERVICIO (no debería ocurrir viniendo de un tap de
+      // día/hora/servicio, salvo que se haya reseteado el servicio a mitad
+      // de flujo), PEDIR_NOMBRE, PEDIR_RUT -- ninguno tiene una lista
+      // interactiva propia acá, solo hace falta redactar la pregunta.
+      respuestaTexto = (await redactarMensajePaso({ empresa, reservaEnCurso, paso, mensajeEntrante: null }))
+        || PLANTILLAS_DETERMINISTAS[paso];
+    }
+  }
+
+  const mensajesActualizados = [
+    ...historialPrevio,
+    { rol: 'usuario', contenido: descripcionTap, timestamp: new Date().toISOString() },
+    { rol: 'asistente', contenido: respuestaTexto, timestamp: new Date().toISOString() },
+  ];
+
+  const datosPausa = escaladoAHumano ? { escaladoAHumano: true, pausadaPorHumanoEn: new Date() } : {};
+
+  await prisma.conversacion.upsert({
+    where: { id: conversacion?.id || '00000000-0000-0000-0000-000000000000' },
+    update: { mensajes: mensajesActualizados, clienteId: cliente.id, reservaEnCurso, ...datosPausa },
+    create: {
+      empresaId: empresa.id,
+      clienteId: cliente.id,
+      telefono: telefonoCliente,
+      canal,
+      mensajes: mensajesActualizados,
+      reservaEnCurso,
+      ...datosPausa,
+    },
+  });
+
+  return { respuestaTexto, interactivo, cliente };
+}
+
+module.exports = { procesarMensajeEntrante, procesarSeleccionInteractiva };

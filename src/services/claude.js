@@ -77,6 +77,71 @@ function armarTextoProximosDias(mensajeEntrante, dias) {
 const { fechaLegibleDesdeISO } = require('../lib/formatoFechas');
 const { MAX_FILAS_LISTA_INTERACTIVA } = require('./whatsapp');
 
+/**
+ * Arma {texto, interactivo} para una lista de horarios disponibles de UN
+ * día -- extraído del bloque `horariosParaMostrar` de
+ * generarRespuestaChatbotSinCorregirVoseo (más abajo) para que el camino de
+ * tap determinístico (chatbotEngine.js#procesarSeleccionInteractiva, fix
+ * estructural 2026-09-17) use exactamente la misma lógica de formato/
+ * truncamiento, sin mantener 2 copias que se puedan desincronizar.
+ *
+ * @param {string} fecha - 'YYYY-MM-DD'
+ * @param {string[]} horas
+ * @param {{horaInicio: string, horaFin: string, horas: string[]}[]} bloques
+ * @returns {{texto: string, interactivo: Object}}
+ */
+function armarRespuestaHorarios(fecha, horas, bloques) {
+  const fechaLegible = fechaLegibleDesdeISO(fecha);
+
+  // Caso de siempre: un solo bloque real (sin break ese día) que cabe
+  // completo en la lista interactiva de WhatsApp — Meta limita esa lista a
+  // MAX_FILAS_LISTA_INTERACTIVA filas (ver whatsapp.js).
+  if (bloques.length <= 1 && horas.length <= MAX_FILAS_LISTA_INTERACTIVA) {
+    return {
+      texto: `Estos son los horarios disponibles para el ${fechaLegible}: ${horas.join(', ')}. Elige el que más te acomode 👇`,
+      interactivo: { tipo: 'lista_horarios', fecha, horas },
+    };
+  }
+
+  // Demasiadas horas para la lista interactiva, o hay más de un bloque real
+  // (ej. mañana y tarde separados por un break en el horario configurado)
+  // — en vez de truncar a 10 y esconder horas reales, se manda el listado
+  // completo en texto plano, un mensaje por bloque, sin lista interactiva.
+  // El corte de bloques sale directo del horario real configurado, no de
+  // un corte fijo a las 12:00. Pedido por Ahorróptica 2026-09-03.
+  const bloquesEtiquetados = bloques.map((b) => ({
+    ...b,
+    etiqueta: Number(b.horaInicio.split(':')[0]) < 12 ? 'la mañana' : 'la tarde',
+  }));
+  const texto = bloquesEtiquetados
+    .map((b) => `Estos son los horarios disponibles en ${b.etiqueta} para el ${fechaLegible}: ${b.horas.join(', ')}.`)
+    .join('\n\n') + '\n\n¿Cuál te acomoda? Escríbeme la hora que prefieras.';
+
+  return {
+    texto,
+    interactivo: { tipo: 'horarios_por_bloque', fecha, bloques: bloquesEtiquetados },
+  };
+}
+
+/**
+ * Arma {texto, interactivo} para una lista de próximos días con
+ * disponibilidad -- extraído del bloque `diasParaMostrar`, mismo motivo que
+ * armarRespuestaHorarios. `mensajeEntrante` es opcional (null desde el
+ * camino de tap, que no tiene un mensaje de texto que revisar) -- solo se
+ * usa para la aclaración de "no atendemos los domingos" (ver
+ * armarTextoProximosDias).
+ *
+ * @param {{fecha: string, horas: string[]}[]} dias
+ * @param {string|null} [mensajeEntrante]
+ * @returns {{texto: string, interactivo: Object}}
+ */
+function armarRespuestaProximosDias(dias, mensajeEntrante = null) {
+  return {
+    texto: armarTextoProximosDias(mensajeEntrante, dias),
+    interactivo: { tipo: 'lista_dias', dias },
+  };
+}
+
 const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY,
 });
@@ -375,6 +440,22 @@ TONO DE COMUNICACIÓN:
 ${instruccionesTono[tono] || instruccionesTono['Neutral']}
 Este tono aplica a TODA tu comunicación, incluida la interpretación de la "información adicional" que pueda estar cargada. Cuando cites información sobre precios, promociones o detalles del servicio, adáptalo al tono especificado sin cambiar su contenido.
 REGLA ESTRICTA E INQUEBRANTABLE, sin excepción para ningún tono (incluido Informal): SIEMPRE tutea ("tú", "tienes", "puedes", "quieres", "necesitas"), NUNCA vosees. Español neutro de Chile, jamás "vos", "tenés", "querés", "necesitás", "podés", "andá", "fijate", ni ninguna otra conjugación de voseo — aunque el cliente mismo te escriba en voseo, tú SIEMPRE respondes en tuteo.`;
+}
+
+/**
+ * Texto fijo de confirmación de una cita YA agendada de verdad -- nunca lo
+ * redacta el modelo (ver comentario en citaAgendadaConExito más abajo, bug
+ * real encontrado con el cliente "yaye" 2026-09-01). Extraído a función
+ * compartida para que el camino de tap determinístico
+ * (chatbotEngine.js#procesarSeleccionInteractiva, paso 5+ del fix
+ * estructural) use exactamente el mismo formato que el camino agéntico, sin
+ * mantener 2 copias que se puedan desincronizar.
+ *
+ * @param {Object} datos - {nombre, servicioNombre, fechaLegible, hora, empresa}
+ * @returns {string}
+ */
+function formatearConfirmacionCita({ nombre, servicioNombre, fechaLegible, hora, empresa }) {
+  return `¡Listo! Tu cita ha sido agendada exitosamente 🎉\n\n*Resumen de tu cita:*\n👤 *Nombre:* ${nombre}\n📋 *Servicio:* ${servicioNombre}\n📅 *Fecha:* ${fechaLegible}\n🕐 *Hora:* ${hora}${empresa.direccion ? `\n📍 *Ubicación:* ${empresa.direccion}` : ''}${empresa.notaAgendamiento ? `\n\n${empresa.notaAgendamiento}` : ''}`;
 }
 
 // Bloque B ("solo redactar") por paso -- qué pedirle a Claude que redacte,
@@ -875,9 +956,14 @@ ${empresa.requiereRut ? '- Este negocio además EXIGE RUT y teléfono de contact
 
     if (citaAgendadaConExito) {
       const { input, resultado } = citaAgendadaConExito;
-      const fechaLegible = resultado.fechaLegible;
       return {
-        texto: `¡Listo! Tu cita ha sido agendada exitosamente 🎉\n\n*Resumen de tu cita:*\n👤 *Nombre:* ${input.nombre}\n📋 *Servicio:* ${input.servicio}\n📅 *Fecha:* ${fechaLegible}\n🕐 *Hora:* ${input.hora}${empresa.direccion ? `\n📍 *Ubicación:* ${empresa.direccion}` : ''}${empresa.notaAgendamiento ? `\n\n${empresa.notaAgendamiento}` : ''}`,
+        texto: formatearConfirmacionCita({
+          nombre: input.nombre,
+          servicioNombre: input.servicio,
+          fechaLegible: resultado.fechaLegible,
+          hora: input.hora,
+          empresa,
+        }),
         interactivo: null,
       };
     }
@@ -922,50 +1008,11 @@ ${empresa.requiereRut ? '- Este negocio además EXIGE RUT y teléfono de contact
     }
 
     if (horariosParaMostrar) {
-      const fechaLegible = fechaLegibleDesdeISO(horariosParaMostrar.fecha);
-      const horas = horariosParaMostrar.horas;
-      const bloques = horariosParaMostrar.bloques;
-
-      // Caso de siempre: un solo bloque real (sin break ese día) que cabe
-      // completo en la lista interactiva de WhatsApp — Meta limita esa
-      // lista a MAX_FILAS_LISTA_INTERACTIVA filas (ver whatsapp.js).
-      if (bloques.length <= 1 && horas.length <= MAX_FILAS_LISTA_INTERACTIVA) {
-        return {
-          texto: `Estos son los horarios disponibles para el ${fechaLegible}: ${horas.join(', ')}. Elige el que más te acomode 👇`,
-          interactivo: { tipo: 'lista_horarios', fecha: horariosParaMostrar.fecha, horas },
-        };
-      }
-
-      // Demasiadas horas para la lista interactiva, o hay más de un bloque
-      // real (ej. mañana y tarde separados por un break en el horario
-      // configurado) — en vez de truncar a 10 y esconder horas reales, se
-      // manda el listado completo en texto plano, un mensaje por bloque,
-      // sin lista interactiva (no puede representar más de 10 opciones de
-      // todas formas). El corte de bloques sale directo del horario real
-      // configurado (HorarioSemanal puede tener varias filas el mismo día),
-      // no de un corte fijo a las 12:00. Pedido por Ahorróptica 2026-09-03
-      // — agenda de citas cada 15 min generaba demasiadas horas para un
-      // solo mensaje. El bot ya reconoce que el cliente responda con la
-      // hora en texto libre, sin necesidad de tocar una lista.
-      const bloquesEtiquetados = bloques.map((b) => ({
-        ...b,
-        etiqueta: Number(b.horaInicio.split(':')[0]) < 12 ? 'la mañana' : 'la tarde',
-      }));
-      const texto = bloquesEtiquetados
-        .map((b) => `Estos son los horarios disponibles en ${b.etiqueta} para el ${fechaLegible}: ${b.horas.join(', ')}.`)
-        .join('\n\n') + '\n\n¿Cuál te acomoda? Escríbeme la hora que prefieras.';
-
-      return {
-        texto,
-        interactivo: { tipo: 'horarios_por_bloque', fecha: horariosParaMostrar.fecha, bloques: bloquesEtiquetados },
-      };
+      return armarRespuestaHorarios(horariosParaMostrar.fecha, horariosParaMostrar.horas, horariosParaMostrar.bloques);
     }
 
     if (diasParaMostrar) {
-      return {
-        texto: armarTextoProximosDias(mensajeEntrante, diasParaMostrar),
-        interactivo: { tipo: 'lista_dias', dias: diasParaMostrar },
-      };
+      return armarRespuestaProximosDias(diasParaMostrar, mensajeEntrante);
     }
 
     if (catalogoParaMostrar) {
@@ -1044,4 +1091,10 @@ async function generarRespuestaChatbot(params) {
   return { ...resultado, texto: corregirVoseo(resultado.texto) };
 }
 
-module.exports = { generarRespuestaChatbot, redactarMensajePaso };
+module.exports = {
+  generarRespuestaChatbot,
+  redactarMensajePaso,
+  formatearConfirmacionCita,
+  armarRespuestaHorarios,
+  armarRespuestaProximosDias,
+};
