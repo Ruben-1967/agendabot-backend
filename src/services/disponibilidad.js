@@ -570,13 +570,13 @@ function _resolverDesdeServicioDb(servicioDb, recurso) {
 
 /**
  * Valida los datos reunidos de una reserva y crea la Cita real -- extraído
- * del bloque `agendar_cita` de claude.js (2026-09-17, fix estructural) para
- * que tanto el camino agéntico (Claude llamando a la tool, mientras siga
- * existiendo) como el camino determinístico de tap
- * (chatbotEngine.js#procesarSeleccionInteractiva) compartan exactamente la
- * misma validación -- nunca dos copias que puedan desincronizarse. Mutea
- * Cliente.nombre/rut/telefono si cambiaron, igual que hacía el bloque
- * original.
+ * del bloque `agendar_cita` de claude.js (2026-09-17, fix estructural).
+ * agendar_cita ya no existe como tool de Claude (paso 9) -- esta es ahora
+ * la ÚNICA vía de creación real, disparada de forma determinística desde
+ * chatbotEngine.js#procesarSeleccionInteractivaSinLock (tap, fast-path de
+ * texto exacto, o extracción de RUT/teléfono) en el momento exacto en que
+ * la reserva queda completa. Mutea Cliente.nombre/rut/telefono si
+ * cambiaron, igual que hacía el bloque original.
  *
  * @param {Object} datos - {servicioNombre?, servicioId?, fecha, hora, nombre, rut?, telefono?} -- pasar servicioId cuando ya se conoce con certeza (tap), servicioNombre cuando viene de un tool call de Claude.
  * @param {Object} contexto - {empresa, cliente, recurso}

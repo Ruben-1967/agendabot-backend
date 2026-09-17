@@ -6,7 +6,6 @@ const {
   obtenerHorasDisponiblesPorBloqueParaServicio,
   obtenerProximosDiasParaServicio,
   resolverServicioParaHerramienta,
-  crearCitaValidada,
   normalizarYValidarRut,
 } = require('./disponibilidad');
 
@@ -180,7 +179,15 @@ const esPreguntaDeServiciosRepetida = (texto) => (texto || '').endsWith(SUFIJO_P
 
 /**
  * Arma la lista de herramientas para una empresa específica.
- * - agendar_cita exige el campo "rut" cuando empresa.requiereRut está activo.
+ * - agendar_cita NO está acá -- desde el paso 9 del fix estructural
+ *   (2026-09-17), Claude ya no tiene ninguna forma de crear una cita
+ *   directamente. La creación real siempre pasa por crearCitaValidada
+ *   (disponibilidad.js), disparada de forma determinística en el backend
+ *   (tap, fast-path de texto exacto, o extracción acotada de RUT/teléfono
+ *   -- ver chatbotEngine.js) en el momento exacto en que reservaEnCurso
+ *   queda completa. Estas herramientas de acá solo ayudan a MOSTRAR
+ *   disponibilidad/servicios/catálogo -- nunca a decidir ni confirmar un
+ *   agendamiento.
  * - mostrar_lista_servicios solo se incluye si la empresa tiene Servicio
  *   reales cargados (con id de base de datos) — si solo tiene la lista
  *   genérica sugerida por el rubro (sin ids reales), no se puede armar una
@@ -191,34 +198,6 @@ const esPreguntaDeServiciosRepetida = (texto) => (texto || '').endsWith(SUFIJO_P
  *   (nunca se le asume al modelo, ver generarRespuestaChatbot).
  */
 function construirTools(empresa, incluirMostrarServicios, incluirCatalogo) {
-  const agendarCitaProperties = {
-    fecha: { type: 'string', description: 'Fecha de la cita, formato YYYY-MM-DD.' },
-    hora: { type: 'string', description: "Hora de inicio, formato HH:MM (ej. '10:30')." },
-    servicio: { type: 'string', description: 'Nombre del servicio solicitado, ej. "Examen de la vista".' },
-    // Siempre se pide, sin importar requiereRut (decisión 2026-09-04): quien
-    // escribe por WhatsApp no siempre es quien se atiende (ej. agenda para
-    // un familiar), y el nombre de perfil de WhatsApp no es confiable —
-    // reportado como falla real por el usuario.
-    nombre: {
-      type: 'string',
-      description: "Nombre completo de la persona que se va a atender, tal como el cliente lo dice explícitamente en la conversación — NUNCA asumas el nombre de perfil de WhatsApp del contacto, siempre pregúntalo directamente (puede ser distinto de quien escribe, ej. agendando para un familiar).",
-    },
-  };
-  const agendarCitaRequired = ['fecha', 'hora', 'servicio', 'nombre'];
-
-  if (empresa.requiereRut) {
-    agendarCitaProperties.rut = {
-      type: 'string',
-      description: "RUT del cliente (con guión, ej. '12345678-9'). Este negocio exige RUT para agendar.",
-    };
-    agendarCitaRequired.push('rut');
-    agendarCitaProperties.telefono = {
-      type: 'string',
-      description: "Teléfono de contacto del cliente, tal como él lo dice explícitamente en la conversación — pregúntalo siempre, aunque le estés escribiendo desde el mismo número de WhatsApp (puede ser distinto, ej. alguien agendando por otra persona). Formato libre, tal como el cliente lo entregue.",
-    };
-    agendarCitaRequired.push('telefono');
-  }
-
   return [
   {
       name: 'consultar_disponibilidad',
@@ -284,17 +263,6 @@ function construirTools(empresa, incluirMostrarServicios, incluirCatalogo) {
       },
     }] : []),
     {
-      name: 'agendar_cita',
-      description: empresa.requiereRut
-        ? 'Crea una cita real en el sistema para el cliente actual, en una fecha y hora específicas que ya se confirmó que están disponibles. Solo usar después de que el cliente haya confirmado explícitamente fecha, hora, servicio, nombre completo de quien se atiende Y RUT — este negocio exige nombre y RUT para agendar (nunca asumas el nombre del perfil de WhatsApp).'
-        : 'Crea una cita real en el sistema para el cliente actual, en una fecha y hora específicas que ya se confirmó que están disponibles. Solo usar después de que el cliente haya confirmado explícitamente fecha, hora, servicio y el nombre completo de quien se va a atender (nunca asumas el nombre del perfil de WhatsApp).',
-      input_schema: {
-        type: 'object',
-        properties: agendarCitaProperties,
-        required: agendarCitaRequired,
-      },
-    },
-    {
       name: 'escalar_a_humano',
       description: 'Úsala cuando el cliente pide explícitamente hablar con una persona real, un ejecutivo, un humano, o dice que no quiere seguir hablando con un bot/asistente automático. Pausa las respuestas automáticas para que alguien del negocio le responda directamente. NO la uses para preguntas normales que tú mismo puedes responder — solo cuando el cliente pide explícitamente ser atendido por una persona.',
       input_schema: { type: 'object', properties: {} },
@@ -310,19 +278,31 @@ async function ejecutarHerramienta(nombre, input, contexto) {
 
   if (nombre === 'consultar_disponibilidad') {
     const resuelto = await resolverServicioParaHerramienta(empresa, recurso, input.servicio);
+    // servicioId/servicioNombre viajan en el resultado (no solo se usan acá
+    // y se descartan) -- bug real encontrado en review 2026-09-17: cuando
+    // Claude nombra el servicio y llama directo a esta tool (sin pasar por
+    // mostrar_lista_servicios, que es justo lo que el prompt le pide hacer
+    // en ese caso), el backend necesita poder sembrar
+    // reservaEnCurso.servicioId igual que si el cliente lo hubiera tocado
+    // (ver conOpcionesDelPipelineAgentico, chatbotEngine.js) -- si no, un
+    // negocio con 2+ servicios reales queda con PEDIR_SERVICIO pendiente y
+    // la siguiente hora/día que el cliente escriba se malinterpreta como
+    // si fuera el nombre del servicio.
+    const servicioResuelto = { servicioId: resuelto.servicioDb?.id || null, servicioNombre: resuelto.servicioDb?.nombre || input.servicio || null };
     if (resuelto.usaProfesionalFijo) {
       if (!resuelto.recursoId) {
         return { error: 'Esta empresa no tiene un recurso agendable configurado todavía.' };
       }
       const bloques = await obtenerHorariosDisponiblesPorBloque(resuelto.recursoId, input.fecha);
-      return { fecha: input.fecha, horasDisponibles: bloques.flatMap((b) => b.horas), bloques };
+      return { fecha: input.fecha, horasDisponibles: bloques.flatMap((b) => b.horas), bloques, ...servicioResuelto };
     }
     const bloques = await obtenerHorasDisponiblesPorBloqueParaServicio(resuelto.servicioDb.id, input.fecha);
-    return { fecha: input.fecha, horasDisponibles: bloques.flatMap((b) => b.horas), bloques };
+    return { fecha: input.fecha, horasDisponibles: bloques.flatMap((b) => b.horas), bloques, ...servicioResuelto };
   }
 
   if (nombre === 'consultar_proximos_dias_disponibles') {
     const resuelto = await resolverServicioParaHerramienta(empresa, recurso, input.servicio);
+    const servicioResuelto = { servicioId: resuelto.servicioDb?.id || null, servicioNombre: resuelto.servicioDb?.nombre || input.servicio || null };
     let dias;
     if (resuelto.usaProfesionalFijo) {
       if (!resuelto.recursoId) {
@@ -332,7 +312,7 @@ async function ejecutarHerramienta(nombre, input, contexto) {
     } else {
       dias = await obtenerProximosDiasParaServicio(resuelto.servicioDb.id, 7);
     }
-    return { dias: dias.map((d) => ({ fecha: d.fecha, primeraHora: d.horas[0] })) };
+    return { dias: dias.map((d) => ({ fecha: d.fecha, primeraHora: d.horas[0] })), ...servicioResuelto };
   }
 
   if (nombre === 'mostrar_lista_servicios') {
@@ -364,19 +344,6 @@ async function ejecutarHerramienta(nombre, input, contexto) {
       totalActivos: itemsActivos.length,
       mostrados: inicio + itemsPagina.length,
     };
-  }
-
-  if (nombre === 'agendar_cita') {
-    // Validación y creación real delegadas a crearCitaValidada
-    // (disponibilidad.js) -- mismo código que usa el camino de tap
-    // determinístico (chatbotEngine.js), para que nunca haya 2 copias de
-    // esta lógica que se puedan desincronizar. agendar_cita como tool de
-    // Claude se retira del catálogo una vez que el camino de tap/reserva
-    // determinística cubra todo el flujo (ver plan de refactor).
-    return crearCitaValidada(
-      { servicioNombre: input.servicio, fecha: input.fecha, hora: input.hora, nombre: input.nombre, rut: input.rut, telefono: input.telefono },
-      { empresa, cliente, recurso }
-    );
   }
 
   if (nombre === 'escalar_a_humano') {
@@ -445,12 +412,14 @@ REGLA ESTRICTA E INQUEBRANTABLE, sin excepción para ningún tono (incluido Info
 
 /**
  * Texto fijo de confirmación de una cita YA agendada de verdad -- nunca lo
- * redacta el modelo (ver comentario en citaAgendadaConExito más abajo, bug
- * real encontrado con el cliente "yaye" 2026-09-01). Extraído a función
- * compartida para que el camino de tap determinístico
- * (chatbotEngine.js#procesarSeleccionInteractiva, paso 5+ del fix
- * estructural) use exactamente el mismo formato que el camino agéntico, sin
- * mantener 2 copias que se puedan desincronizar.
+ * redacta el modelo (bug real encontrado con el cliente "yaye" 2026-09-01,
+ * cuando todavía existía agendar_cita como tool: Claude narraba la
+ * confirmación en texto sin haber agendado nada). Desde el paso 9 del fix
+ * estructural, Claude ya no puede agendar en absoluto -- esta función es
+ * la ÚNICA fuente del texto de confirmación, usada por
+ * chatbotEngine.js#procesarSeleccionInteractivaSinLock (tap, fast-path de
+ * texto, y extracción de RUT/teléfono), para que nunca haya 2 copias que
+ * se puedan desincronizar.
  *
  * @param {Object} datos - {nombre, servicioNombre, fechaLegible, hora, empresa}
  * @returns {string}
@@ -703,7 +672,7 @@ if (empresa.sitioWeb) {
     ? `\nCATEGORÍAS DE CATÁLOGO VISUAL DISPONIBLES (fotos reales que puedes ofrecer — el campo "categoria" de mostrar_catalogo_visual debe ser exactamente uno de estos nombres):\n${categoriasCatalogo.map((c) => `- ${c.nombre}`).join('\n')}\n`
     : '';
   const instruccionesCatalogo = incluirCatalogo
-    ? `- Catálogo visual: si el cliente está en fase de indagación (todavía no llamaste a consultar_disponibilidad, consultar_proximos_dias_disponibles ni agendar_cita) y lo que pregunta calza con una categoría del catálogo, puedes ofrecerle proactivamente ver fotos — en TEXTO PLANO, con una pregunta breve, ej. "¿Quieres ver algunos ejemplos de [categoría]?". NUNCA llames a mostrar_catalogo_visual solo para hacer esa oferta.
+    ? `- Catálogo visual: si el cliente está en fase de indagación (todavía no llamaste a consultar_disponibilidad ni consultar_proximos_dias_disponibles) y lo que pregunta calza con una categoría del catálogo, puedes ofrecerle proactivamente ver fotos — en TEXTO PLANO, con una pregunta breve, ej. "¿Quieres ver algunos ejemplos de [categoría]?". NUNCA llames a mostrar_catalogo_visual solo para hacer esa oferta.
 - Llama a mostrar_catalogo_visual recién cuando el cliente confirme que quiere ver las fotos — sea porque respondió que sí a tu oferta, o porque las pidió directamente él mismo en cualquier momento (incluso con el agendamiento ya iniciado — un pedido explícito de fotos siempre se responde, sin excepción). Esto tiene prioridad sobre la obligación de llamar a una herramienta de agendamiento en ESE turno puntual: respondé primero con las fotos, y retomá el flujo de agendamiento en el mensaje siguiente, sin perder el contexto de lo que el cliente ya había confirmado antes de pedir ver fotos.
 - Apenas el cliente exprese intención de agendar (ej. "quiero una hora", "tienen disponibilidad el sábado", "quiero agendar X") sin haber pedido fotos, deja de ofrecer el catálogo proactivamente y sigue directo con el flujo de agendamiento de abajo.
 - Si tras mostrar el catálogo el cliente pide ver más opciones de esa misma categoría, vuelve a llamar a mostrar_catalogo_visual con la página siguiente (pagina: 2, luego 3, etc.).
@@ -720,7 +689,7 @@ Instrucciones:
 - El historial de este chat puede incluir mensajes de una conversación anterior, a veces de hace semanas o meses. Si el cliente vuelve a saludar ahora (ej. "hola", "buenas", "buenos días"), trátalo como el INICIO de una interacción nueva: preséntate brevemente y pregúntale en qué lo puedes ayudar hoy — nunca asumas que sigue en medio de un trámite de la vez anterior, ni te saltes ese saludo solo porque ya apareció antes en el historial. Esto no afecta sus datos ya guardados (nombre, RUT si corresponde) — solo cómo lo recibes al volver a escribir.
 - Si el cliente usa un término genérico o ambiguo (ej. "atención oftalmológica", "revisión de la vista", "chequeo") preguntando informativamente qué significa o qué incluye ese procedimiento puntual (sin pedir la lista completa de servicios), ayúdalo agregando una explicación MUY breve y en lenguaje simple — basándote en tu conocimiento general del área, no en información específica de este negocio.
 - Esa explicación es solo DEFINICIÓN de un procedimiento puntual — nunca le digas al cliente cuál necesita según sus síntomas ni hagas ninguna sugerencia clínica. Que él elija con la información, tú no decides por él.
-- El campo "servicio" en agendar_cita/consultar_disponibilidad sigue debiendo ser exactamente uno de los nombres de la lista SERVICIOS AGENDABLES, tal cual.
+- El campo "servicio" en consultar_disponibilidad/consultar_proximos_dias_disponibles sigue debiendo ser exactamente uno de los nombres de la lista SERVICIOS AGENDABLES, tal cual.
 - La "información adicional" (si existe) es solo para responder preguntas puntuales que el cliente haga (precios, qué incluye un servicio, etc.) — nunca la uses para construir o ampliar la lista de servicios ofrecidos.
 ${instruccionServicioAgendar}
 ${instruccionesCatalogo}- En cuanto sepas el servicio (aunque sea en el mismo mensaje en que el cliente te lo dice, o porque lo eligió de la lista tocable), tu SIGUIENTE ACCIÓN es obligatoriamente llamar a una herramienta — nunca preguntar en texto si quiere ver los días, nunca ofrecerlo como opción, nunca preguntar "¿qué día te gustaría?". Actúa directo:
@@ -729,12 +698,10 @@ ${instruccionesCatalogo}- En cuanto sepas el servicio (aunque sea en el mismo me
   - Si el cliente pregunta puntualmente por un día de la semana o fecha concreta (ej. "¿tienen el domingo?", "¿atienden los lunes?") y ese día NO aparece entre los resultados que te devuelve la herramienta, tu texto de respuesta tiene que decirlo explícitamente antes de mostrar la lista (ej. "No atendemos los domingos, pero sí tenemos disponible:") — nunca te limites a reenviar la lista de días reales sin aclarar que el día puntual que preguntó no está, un cliente que no revise la lista con atención puede pensar que sí lo ofreciste.
 - Tienes PROHIBIDO escribir frases como "¿qué día te gustaría?", "¿prefieres que te muestre los días disponibles?" o similares — esa decisión la tomas tú llamando a la herramienta correspondiente, nunca preguntándola en texto.
 - NUNCA inventes horas ni días disponibles.
-- Si acabas de mostrarle al cliente una lista de servicios u horarios y su siguiente mensaje es texto libre (no tocó ningún botón) pero de todas formas confirma claramente una de esas opciones ya mostradas (ej. mostraste horas "09:15, 09:45..." y responde "me sirve a las 09:15", "esa hora está bien", "el examen visual" o similar), trátalo exactamente igual que si hubiera tocado esa opción de la lista — nunca vuelvas a mostrar la misma lista ni a preguntar de nuevo lo que ya te confirmó. Solo vuelve a preguntar si su respuesta es realmente ambigua o no calza con ninguna opción mostrada.
-- SIEMPRE pide el nombre completo de la persona que se va a atender antes de llamar a agendar_cita, sin importar el negocio — NUNCA asumas el nombre a partir del perfil de WhatsApp del contacto (quien escribe puede no ser quien se atiende, ej. agendando por un familiar), siempre pregúntalo explícitamente.
-${empresa.requiereRut ? '- Este negocio además EXIGE RUT y teléfono de contacto para agendar. Antes de llamar a agendar_cita, pide estos 2 datos si aún no los tienes en la conversación — NUNCA asumas el teléfono a partir del número desde el que te escribe (puede ser distinto), siempre pregúntalo explícitamente.\n' : ''}- Una vez que el cliente confirme fecha, hora, servicio y nombre${empresa.requiereRut ? ', RUT y teléfono' : ''} específicos, usa agendar_cita para crear la cita de verdad. El campo "servicio" debe ser exactamente uno de los nombres de la lista SERVICIOS AGENDABLES.
-- Si agendar_cita falla porque el horario ya no está disponible, discúlpate y ofrece consultar otra hora.
-- Cuando confirmes una cita agendada, NUNCA muestres el "citaId" (es un identificador interno de la base de datos, sin ningún valor para el cliente) — el resumen debe incluir el nombre de quien se atiende, servicio, fecha, hora, y dirección si corresponde.
-- Para la fecha del resumen, usa TAL CUAL el texto "fechaLegible" que te devuelve agendar_cita (o la fecha en español que ya te haya escrito el cliente al confirmar) — NUNCA calcules tú mismo a qué día de la semana corresponde una fecha ISO (ej. "2026-09-04"), es un cálculo que puedes hacer mal y ya generó una confirmación real con el día de la semana equivocado.
+- Si acabas de mostrarle al cliente una lista de servicios u horarios y su siguiente mensaje es texto libre (no tocó ningún botón) y escribe EXACTAMENTE una de esas opciones tal como se la mostraste (ej. mostraste horas "09:15, 09:45..." y responde "09:15"), no necesitas hacer nada especial -- el sistema ya la captura automáticamente antes de que tú entres a responder. Si en cambio confirma de forma indirecta o parafraseada (ej. "esa hora está bien", "el examen visual", "me sirve la primera"), pídele amablemente que te reescriba el valor EXACTO tal como se lo mostraste (ej. "¿me confirmas escribiendo exactamente 09:15?") -- nunca asumas tú mismo cuál era ni sigas la conversación como si ya estuviera confirmado.
+- NUNCA tienes la capacidad de agendar una cita -- no existe ninguna herramienta para eso, y nunca la vas a tener en esta conversación. El sistema agenda automáticamente, por su cuenta y de forma determinística, en el momento exacto en que ya tiene con certeza fecha, hora, servicio y nombre completo${empresa.requiereRut ? ' (y RUT y teléfono, que este negocio exige)' : ''} -- vos NUNCA le digas al cliente que su cita "quedó agendada", "está lista", ni redactes ningún resumen de confirmación de una cita: ese mensaje lo redacta el sistema aparte, con datos reales, nunca vos.
+- SIEMPRE pide el nombre completo de la persona que se va a atender antes de considerar que ya tienes todos los datos, sin importar el negocio — NUNCA asumas el nombre a partir del perfil de WhatsApp del contacto (quien escribe puede no ser quien se atiende, ej. agendando por un familiar), siempre pregúntalo explícitamente.
+${empresa.requiereRut ? '- Este negocio además EXIGE RUT y teléfono de contacto para agendar. Pide estos 2 datos si aún no los tienes en la conversación — NUNCA asumas el teléfono a partir del número desde el que te escribe (puede ser distinto), siempre pregúntalo explícitamente.\n' : ''}- Si necesitas mencionar una fecha, usa la fecha en español tal como ya te la haya escrito el cliente, o la que te devuelvan las herramientas — NUNCA calcules tú mismo a qué día de la semana corresponde una fecha ISO (ej. "2026-09-04"), es un cálculo que puedes hacer mal.
 - Si el cliente pregunta algo que no está cubierto en la información de este mensaje (precios, condiciones, detalles clínicos), no inventes: dile que lo puede confirmar directamente con el negocio.
 - No des información médica ni de salud como si fueras un profesional — solo agenda.`;
 
@@ -748,14 +715,17 @@ ${empresa.requiereRut ? '- Este negocio además EXIGE RUT y teléfono de contact
 
   const contexto = { empresa, cliente, recurso, serviciosReales };
 
-  // Detecta si un texto suena a que una cita quedó agendada — usado para no
-  // confiar en una confirmación que el modelo redactó SIN haber llamado a
-  // agendar_cita en ese turno (ver forzarAgendarCita más abajo). Solo se
-  // considera si el turno anterior del bot fue la recapitulación pidiendo
-  // confirmación final (ej. "¿Todo correcto?") — así no se dispara ante una
-  // pregunta informativa posterior sobre una cita YA agendada de verdad
-  // (ej. "¿quedó confirmada mi hora?"), que no debe volver a llamar la
-  // herramienta.
+  // Detecta si un texto suena a que una cita quedó agendada — desde el paso
+  // 9 del fix estructural (2026-09-17), Claude YA NO TIENE ninguna forma de
+  // agendar (agendar_cita se quitó del catálogo de tools) — la creación
+  // real solo ocurre por el camino determinístico (chatbotEngine.js). Si el
+  // modelo igual redacta una confirmación así, es SIEMPRE una alucinación
+  // (nunca hay un tool_use real detrás que verificar, a diferencia de antes)
+  // y hay que descartarla sin excepción — ver más abajo. Solo se considera
+  // si el turno anterior del bot fue la recapitulación pidiendo confirmación
+  // final (ej. "¿Todo correcto?") — así no se dispara ante una pregunta
+  // informativa posterior sobre una cita YA agendada de verdad (ej. "¿quedó
+  // confirmada mi hora?").
   // Regex deliberadamente amplio: el modelo redacta esta recapitulación
   // con sus propias palabras cada vez (ej. "¿Todo correcto?", "¿Todo está
   // correcto?", "¿Está todo bien así?") — un patrón rígido calzaba con la
@@ -867,7 +837,7 @@ ${empresa.requiereRut ? '- Este negocio además EXIGE RUT y teléfono de contact
   // Bucle de tool use: Claude puede pedir usar una herramienta varias veces
   // seguidas (ej. consultar disponibilidad y luego agendar) antes de dar
   // la respuesta final en texto.
-  let forzarHerramienta = null; // null | 'agendar_cita' | 'consultar_disponibilidad' | 'consultar_proximos_dias_disponibles' | 'escalar_a_humano' | 'mostrar_lista_servicios'
+  let forzarHerramienta = null; // null | 'consultar_disponibilidad' | 'consultar_proximos_dias_disponibles' | 'escalar_a_humano' | 'mostrar_lista_servicios'
   for (let intentos = 0; intentos < 5; intentos++) {
     const response = await anthropic.messages.create({
       model: MODEL,
@@ -905,18 +875,22 @@ ${empresa.requiereRut ? '- Este negocio además EXIGE RUT y teléfono de contact
         );
       }
 
-      // Bug real encontrado (Ahorróptica, cliente "yaye", 2026-09-01): en
-      // el turno de confirmación final, el modelo a veces responde con
-      // texto plano narrando "¡Listo! Tu cita ha sido agendada..." SIN
-      // haber llamado a agendar_cita — el cliente queda creyendo que tiene
-      // hora, pero no existe ninguna Cita real en la base. Reproducido en
-      // vivo. Si el texto suena a esa confirmación, se descarta y se
-      // reintenta UNA vez forzando la llamada real a la herramienta (con
-      // los mismos datos ya reunidos en la conversación) en vez de confiar
-      // en lo que el modelo redactó.
+      // Bug real encontrado originalmente con agendar_cita como tool
+      // (Ahorróptica, cliente "yaye", 2026-09-01): en el turno de
+      // confirmación final, el modelo a veces responde con texto plano
+      // narrando "¡Listo! Tu cita ha sido agendada..." sin que exista
+      // ninguna cita real. Desde el paso 9, Claude no tiene NINGUNA forma
+      // de agendar -- así que esto ya no se puede "arreglar" reintentando
+      // una tool (no hay ninguna que forzar). Se descarta directo y se le
+      // pide al cliente que confirme por la vía determinística (tocar la
+      // opción, o escribirla tal cual se le mostró) -- nunca se deja pasar
+      // un texto que promete algo que no ocurrió.
       if (pareceConfirmacionDeCita(texto)) {
-        forzarHerramienta = 'agendar_cita';
-        continue;
+        console.warn('[claude.js] Turno pareció confirmar una cita sin ningún camino real para agendarla -- descartado.');
+        return {
+          texto: 'Antes de dejar tu cita lista, confírmamela tocando la opción de la lista que te mostré, o escribiéndomela tal cual apareció ahí 🙌',
+          interactivo: null,
+        };
       }
 
       // Mismo mecanismo para el bug de horarios inventados (ver comentario
@@ -959,7 +933,7 @@ ${empresa.requiereRut ? '- Este negocio además EXIGE RUT y teléfono de contact
     let diasParaMostrar = null;
     let serviciosParaMostrar = null;
     let catalogoParaMostrar = null;
-    let citaAgendadaConExito = null;
+    let servicioResueltoParaMostrar = null;
     let seEscaloAHumano = false;
 
     for (const block of response.content) {
@@ -978,12 +952,14 @@ ${empresa.requiereRut ? '- Este negocio además EXIGE RUT y teléfono de contact
         // ciclo siga normal para que Claude ofrezca otro día en texto.
         if (block.name === 'consultar_disponibilidad' && resultado.horasDisponibles?.length > 0) {
           horariosParaMostrar = { fecha: resultado.fecha, horas: resultado.horasDisponibles, bloques: resultado.bloques || [] };
+          servicioResueltoParaMostrar = { servicioId: resultado.servicioId, servicioNombre: resultado.servicioNombre };
         }
 
         // Mismo mecanismo, pero para la lista de PRÓXIMOS DÍAS (cuando el
         // cliente no especificó fecha).
         if (block.name === 'consultar_proximos_dias_disponibles' && resultado.dias?.length > 0) {
           diasParaMostrar = resultado.dias;
+          servicioResueltoParaMostrar = { servicioId: resultado.servicioId, servicioNombre: resultado.servicioNombre };
         }
 
         // Mismo mecanismo, pero para la lista de SERVICIOS reales.
@@ -997,21 +973,6 @@ ${empresa.requiereRut ? '- Este negocio además EXIGE RUT y teléfono de contact
         // en texto (ej. "no encontré esa categoría").
         if (block.name === 'mostrar_catalogo_visual' && resultado.items?.length > 0) {
           catalogoParaMostrar = resultado;
-        }
-
-        // Si agendar_cita tuvo éxito, cortamos el ciclo igual que los demás
-        // atajos: el backend arma la confirmación con los datos reales que
-        // devolvió la herramienta, en vez de dejar que Claude la redacte.
-        // Encontrado un caso real (Ahorróptica, cliente "yaye", 2026-09-01):
-        // Claude le dijo al cliente "¡Listo! Tu cita ha sido agendada
-        // exitosamente" con un resumen completo, pero agendar_cita nunca se
-        // había ejecutado en ese turno (o su resultado se ignoró) — el
-        // Cliente quedó con 0 citas reales en la base. Reproducido en vivo
-        // con el mismo guion de mensajes. Si en cambio falla (horario ya
-        // no disponible), se deja seguir el ciclo normal para que Claude
-        // pueda ofrecer una alternativa de forma natural.
-        if (block.name === 'agendar_cita' && resultado.exito) {
-          citaAgendadaConExito = { input: block.input, resultado };
         }
 
         // El cliente pidió hablar con una persona real — se corta el ciclo
@@ -1030,20 +991,6 @@ ${empresa.requiereRut ? '- Este negocio además EXIGE RUT y teléfono de contact
         texto: '¡Dale! En un momento te contactamos directamente 🙌',
         interactivo: null,
         escaladoAHumano: true,
-      };
-    }
-
-    if (citaAgendadaConExito) {
-      const { input, resultado } = citaAgendadaConExito;
-      return {
-        texto: formatearConfirmacionCita({
-          nombre: input.nombre,
-          servicioNombre: input.servicio,
-          fechaLegible: resultado.fechaLegible,
-          hora: input.hora,
-          empresa,
-        }),
-        interactivo: null,
       };
     }
 
@@ -1086,12 +1033,21 @@ ${empresa.requiereRut ? '- Este negocio además EXIGE RUT y teléfono de contact
       };
     }
 
+    // servicioId/servicioNombre se agregan directo al interactivo (no
+    // afecta a WhatsApp al enviar -- enviarRespuestaAgendamiento en
+    // server.js solo lee los campos que ya conocía) para que
+    // conOpcionesDelPipelineAgentico (chatbotEngine.js) pueda sembrar
+    // reservaEnCurso.servicioId con la misma certeza que si el cliente
+    // hubiera tocado el servicio -- ver comentario en
+    // ejecutarHerramienta#consultar_disponibilidad.
     if (horariosParaMostrar) {
-      return armarRespuestaHorarios(horariosParaMostrar.fecha, horariosParaMostrar.horas, horariosParaMostrar.bloques);
+      const armada = armarRespuestaHorarios(horariosParaMostrar.fecha, horariosParaMostrar.horas, horariosParaMostrar.bloques);
+      return { texto: armada.texto, interactivo: { ...armada.interactivo, ...servicioResueltoParaMostrar } };
     }
 
     if (diasParaMostrar) {
-      return armarRespuestaProximosDias(diasParaMostrar, mensajeEntrante);
+      const armada = armarRespuestaProximosDias(diasParaMostrar, mensajeEntrante);
+      return { texto: armada.texto, interactivo: { ...armada.interactivo, ...servicioResueltoParaMostrar } };
     }
 
     if (catalogoParaMostrar) {

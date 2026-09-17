@@ -51,6 +51,59 @@ function normalizarTexto(texto) {
 }
 
 /**
+ * A partir de un `interactivo` que se mostró de verdad (un tool_use real
+ * detrás -- consultar_disponibilidad, consultar_proximos_dias_disponibles
+ * o mostrar_lista_servicios, nunca texto libre inventado), guarda las
+ * MISMAS opcionesMostradas/fecha que guardaría el camino de tap
+ * determinístico (ver procesarSeleccionInteractivaSinLock más abajo) --
+ * para que un cliente que sigue conversando en prosa, sin tocar nunca un
+ * botón, igual pueda completar el agendamiento en un turno siguiente con
+ * un match exacto de texto (paso 8, coincideConOpcionMostrada). Necesario
+ * desde que agendar_cita deja de ser una tool de Claude (paso 9 del fix
+ * estructural): sin esto, el pipeline agéntico completo podría mostrar
+ * disponibilidad real pero nunca dejar un rastro que permita agendar.
+ *
+ * No hace nada (devuelve reservaEnCurso tal cual) si interactivo es null o
+ * de un tipo que no representa una lista de agendamiento (ej.
+ * catalogo_imagenes).
+ */
+function conOpcionesDelPipelineAgentico(reservaEnCurso, interactivo) {
+  const base = reservaEnCurso || {};
+  if (!interactivo) return base;
+
+  // Si el resultado trae un servicio ya resuelto (ej. el cliente lo nombró
+  // en el mismo mensaje y Claude llamó directo a consultar_disponibilidad/
+  // consultar_proximos_dias_disponibles, sin pasar por
+  // mostrar_lista_servicios -- justo lo que el system prompt le pide hacer
+  // en ese caso), se siembra también. Bug real encontrado en review
+  // 2026-09-17: sin esto, siguientePaso() seguía pidiendo PEDIR_SERVICIO
+  // aunque ya se hubiera mostrado una lista de horas/días, y el siguiente
+  // match de texto exacto (ej. "10:00") se malinterpretaba como si fuera
+  // el nombre del servicio.
+  const conServicio = interactivo.servicioId
+    ? { ...base, servicioId: interactivo.servicioId, servicioNombre: interactivo.servicioNombre }
+    : base;
+
+  if (interactivo.tipo === 'lista_horarios') {
+    return { ...conServicio, fecha: interactivo.fecha, opcionesMostradas: interactivo.horas.map((h) => ({ valor: h, etiquetas: [h] })) };
+  }
+  if (interactivo.tipo === 'horarios_por_bloque') {
+    const horas = interactivo.bloques.flatMap((b) => b.horas);
+    return { ...conServicio, fecha: interactivo.fecha, opcionesMostradas: horas.map((h) => ({ valor: h, etiquetas: [h] })) };
+  }
+  if (interactivo.tipo === 'lista_dias') {
+    return {
+      ...conServicio,
+      opcionesMostradas: interactivo.dias.map((d) => ({ valor: d.fecha, etiquetas: [d.fecha, fechaLegibleDesdeISO(d.fecha)] })),
+    };
+  }
+  if (interactivo.tipo === 'lista_servicios') {
+    return { ...base, opcionesMostradas: interactivo.servicios.map((s) => ({ valor: s.id, etiquetas: [s.nombre] })) };
+  }
+  return base;
+}
+
+/**
  * Procesa un mensaje entrante de un cliente para una empresa dada:
  * busca/crea el Cliente y la Conversacion, genera la respuesta con Claude
  * (incluyendo posible uso de herramientas de agenda), y guarda el intercambio.
@@ -126,6 +179,17 @@ async function procesarMensajeEntranteSinLock({ empresa, telefonoCliente, textoE
 
   let respuestaTexto;
   let interactivo = null;
+  // Estado de la reserva en curso -- se va enriqueciendo a lo largo de este
+  // turno (interceptor de servicios, o el pipeline agéntico completo más
+  // abajo) con las MISMAS opcionesMostradas/fecha que ya guarda el camino
+  // de tap, para que un cliente que solo conversa en prosa (sin tocar
+  // nunca un botón) igual pueda completar el agendamiento en un turno
+  // siguiente con un match exacto de texto (paso 8) -- necesario desde que
+  // agendar_cita deja de ser una tool de Claude (paso 9 del fix
+  // estructural): el pipeline completo ya no puede agendar por su cuenta,
+  // así que cualquier lista que muestre debe dejar el mismo rastro que
+  // dejaría un tap.
+  let reservaEnCurso = conversacion?.reservaEnCurso || null;
 
   // 3. Interceptor determinístico: si el mensaje es una pregunta genérica
   // por los servicios y la empresa tiene Servicio reales cargados,
@@ -144,6 +208,7 @@ async function procesarMensajeEntranteSinLock({ empresa, telefonoCliente, textoE
         tipo: 'lista_servicios',
         servicios: serviciosReales.map((s) => ({ id: s.id, nombre: s.nombre })),
       };
+      reservaEnCurso = conOpcionesDelPipelineAgentico(reservaEnCurso, interactivo);
     }
   }
 
@@ -173,6 +238,7 @@ async function procesarMensajeEntranteSinLock({ empresa, telefonoCliente, textoE
     respuestaTexto = resultadoClaude.texto;
     interactivo = resultadoClaude.interactivo;
     escaladoAHumano = !!resultadoClaude.escaladoAHumano;
+    reservaEnCurso = conOpcionesDelPipelineAgentico(reservaEnCurso, interactivo);
   }
 
   // 5. Guardar el intercambio en la Conversacion. Guardamos siempre la
@@ -195,13 +261,14 @@ async function procesarMensajeEntranteSinLock({ empresa, telefonoCliente, textoE
 
   await prisma.conversacion.upsert({
     where: { id: conversacion?.id || '00000000-0000-0000-0000-000000000000' },
-    update: { mensajes: mensajesActualizados, clienteId: cliente.id, ...datosPausa },
+    update: { mensajes: mensajesActualizados, clienteId: cliente.id, reservaEnCurso, ...datosPausa },
     create: {
       empresaId: empresa.id,
       clienteId: cliente.id,
       telefono: telefonoCliente,
       canal,
       mensajes: mensajesActualizados,
+      reservaEnCurso,
       ...datosPausa,
     },
   });
@@ -651,15 +718,19 @@ const REGEX_AFIRMACION_RESERVA = /^\s*(s[ií]|confirmo|confirmar|dale|ok|listo|c
  * pudo resolverlo, o null si no hay ninguna certeza clara -- en ese caso el
  * caller (procesarMensajeEntranteSinLock) sigue al flujo de siempre.
  *
- * Deliberadamente NO cubre PEDIR_SERVICIO por texto libre -- ya tiene su
- * propia red de seguridad determinística en claude.js
- * (mensajeNombraServicioExactoSinDia), y sigue al pipeline completo.
- * PEDIR_RUT tampoco tiene un clasificador de FORMA acá (un mensaje corto
- * rara vez trae RUT + teléfono de forma inequívoca por regex), pero SÍ se
- * cubre más abajo -- delegado a extraerRutYTelefono (claude.js), una
- * extracción acotada con Claude que nunca decide el flujo, solo esos 2
- * campos puntuales (necesario desde que agendar_cita deja de ser una tool
- * de Claude, ver paso 9 del fix estructural).
+ * PEDIR_SERVICIO se cubre igual que PEDIR_DIA/PEDIR_HORA (match exacto
+ * contra opcionesMostradas) -- complementa, sin reemplazar, la red de
+ * seguridad ya existente en claude.js (mensajeNombraServicioExactoSinDia)
+ * para el caso en que el pipeline agéntico completo mostró la lista real
+ * (ver conOpcionesDelPipelineAgentico). Si no hay opcionesMostradas
+ * todavía (nunca se mostró ninguna lista), sigue al pipeline completo como
+ * siempre -- nunca se adivina un servicio sin haberlo mostrado antes.
+ * PEDIR_RUT no tiene un clasificador de FORMA acá (un mensaje corto rara
+ * vez trae RUT + teléfono de forma inequívoca por regex), pero SÍ se cubre
+ * más abajo -- delegado a extraerRutYTelefono (claude.js), una extracción
+ * acotada con Claude que nunca decide el flujo, solo esos 2 campos
+ * puntuales (necesario desde que agendar_cita deja de ser una tool de
+ * Claude, ver paso 9 del fix estructural).
  */
 async function intentarFastPathTexto({ empresa, telefonoCliente, nombreContacto, canal, conversacion, textoEntrante }) {
   if (esComandoGlobalOPregunta(textoEntrante)) return null;
@@ -675,7 +746,12 @@ async function intentarFastPathTexto({ empresa, telefonoCliente, nombreContacto,
   // solo los campos que reflejan progreso REAL del cliente.
   const hayRervaEnProgreso = !!(
     reservaCruda.fecha || reservaCruda.hora || reservaCruda.nombre || reservaCruda.rut || reservaCruda.telefonoContacto ||
-    (contexto.hayAmbiguedadDeServicio && reservaCruda.servicioId)
+    (contexto.hayAmbiguedadDeServicio && reservaCruda.servicioId) ||
+    // opcionesMostradas por sí solo también cuenta como "en progreso" --
+    // ej. el pipeline agéntico completo mostró la lista de servicios pero
+    // el cliente todavía no eligió nada más (ver
+    // conOpcionesDelPipelineAgentico, paso 9 del fix estructural).
+    (Array.isArray(reservaCruda.opcionesMostradas) && reservaCruda.opcionesMostradas.length > 0)
   );
   if (!hayRervaEnProgreso) return null; // nada en progreso -- pipeline completo, como siempre
 
@@ -683,6 +759,23 @@ async function intentarFastPathTexto({ empresa, telefonoCliente, nombreContacto,
 
   const paso = siguientePaso(reservaEnCurso, contexto);
   const base = { empresa, telefonoCliente, nombreContacto, canal, textoOriginalCliente: textoEntrante };
+
+  if (paso === PASOS.PEDIR_SERVICIO) {
+    const servicioIdCoincidente = coincideConOpcionMostrada(textoEntrante, reservaEnCurso.opcionesMostradas);
+    if (!servicioIdCoincidente) return null;
+    // Guardia defensiva (agregada en review 2026-09-17): opcionesMostradas
+    // puede, en teoría, venir de una lista que NO era de servicios (ej. un
+    // resto de una lista de horas/días vieja) -- coincideConOpcionMostrada
+    // no sabe distinguir tipos, solo compara texto. Verificar contra los
+    // Servicio reales de la empresa antes de aceptar el match evita
+    // escribir un servicioId inventado en reservaEnCurso.
+    const esServicioReal = contexto.serviciosReales.some((s) => s.id === servicioIdCoincidente);
+    if (!esServicioReal) return null;
+    const opcion = (reservaEnCurso.opcionesMostradas || []).find((o) => o.valor === servicioIdCoincidente);
+    const servicioNombreCoincidente = opcion?.etiquetas?.[0];
+    if (!servicioNombreCoincidente) return null; // defensivo, no debería pasar
+    return procesarSeleccionInteractivaSinLock({ ...base, tipoSeleccion: 'servicio', valorDecodificado: { servicioId: servicioIdCoincidente, servicioNombre: servicioNombreCoincidente } });
+  }
 
   if (paso === PASOS.PEDIR_DIA) {
     const fechaCoincidente = coincideConOpcionMostrada(textoEntrante, reservaEnCurso.opcionesMostradas);
