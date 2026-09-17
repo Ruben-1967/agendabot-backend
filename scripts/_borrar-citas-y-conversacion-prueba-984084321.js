@@ -13,14 +13,20 @@
 // actualización real durante la prueba); si se quiere limpiar eso
 // también, hacerlo aparte.
 //
-// IMPORTANTE: se busca por la Conversacion, no por el Cliente -- Ahorróptica
-// exige RUT+teléfono para agendar, y crearCitaValidada sobrescribe
-// Cliente.telefono con el teléfono de CONTACTO que el cliente confirma en
-// cada agendamiento (comportamiento heredado, no nuevo -- ver
-// disponibilidad.js#crearCitaValidada). Como esta prueba agendó 2 veces con
-// 2 teléfonos de contacto distintos, Cliente.telefono ya NO es
-// "56984084321" -- pero Conversacion.telefono nunca se toca, así que sigue
-// siendo la forma confiable de encontrar todo lo de esta prueba.
+// IMPORTANTE -- ampliado tras encontrar un bug real en vivo (2026-09-17):
+// Ahorróptica exige RUT+teléfono para agendar, y crearCitaValidada
+// sobrescribe Cliente.telefono con el teléfono de CONTACTO que el cliente
+// confirma en cada agendamiento (comportamiento heredado, no nuevo -- ver
+// disponibilidad.js#crearCitaValidada). Como el teléfono de WhatsApp real
+// (telefonoCliente) nunca cambia, pero el chatbotEngine.js busca/crea
+// Cliente por ESE mismo campo telefono, la PRIMERA vez que se sobrescribe
+// deja de encontrar al Cliente original en el turno siguiente -- y crea
+// uno NUEVO. Esta prueba agendó 2 veces con 2 teléfonos de contacto
+// distintos, así que quedaron 2 Cliente distintos (uno huérfano, ya no
+// vinculado a la Conversacion actual). Por eso acá se busca por TODAS las
+// vías posibles: la Conversacion (nunca cambia de teléfono), Y por los
+// nombres/teléfonos de contacto ficticios conocidos de esta prueba en
+// particular, para encontrar también el Cliente huérfano.
 //
 // Por defecto corre en modo DRY RUN (solo imprime qué borraría). Recién
 // borra de verdad con APLICAR=1.
@@ -34,6 +40,12 @@ const prisma = require('../src/lib/prisma');
 
 const EMPRESA_ID = 'ahoroptica-lautaro-seed-id';
 const TELEFONO = '56984084321';
+// Nombres y teléfonos de contacto ficticios usados en esta prueba puntual
+// (de la captura de WhatsApp real que el usuario compartió) -- para
+// encontrar también el Cliente huérfano que quedó desvinculado de la
+// Conversacion actual.
+const NOMBRES_FICTICIOS = ['Pedro Marín', 'Ximena Sánchez'];
+const TELEFONOS_CONTACTO_FICTICIOS = ['912345678', '956756756'];
 const APLICAR = process.env.APLICAR === '1';
 
 async function main() {
@@ -41,19 +53,32 @@ async function main() {
     where: { empresaId: EMPRESA_ID, telefono: TELEFONO },
   });
 
-  if (conversaciones.length === 0) {
-    console.log(`No se encontró ninguna Conversacion para ${TELEFONO} en Ahorróptica.`);
-    return;
-  }
-
-  console.log(`Conversacion(es) encontradas: ${conversaciones.length}`);
   const clienteIds = new Set();
-  for (const conv of conversaciones) {
-    console.log(`  - ${conv.id} -- ${Array.isArray(conv.mensajes) ? conv.mensajes.length : 0} turnos guardados -- clienteId: ${conv.clienteId}`);
-    if (conv.clienteId) clienteIds.add(conv.clienteId);
+
+  if (conversaciones.length > 0) {
+    console.log(`Conversacion(es) encontradas: ${conversaciones.length}`);
+    for (const conv of conversaciones) {
+      console.log(`  - ${conv.id} -- ${Array.isArray(conv.mensajes) ? conv.mensajes.length : 0} turnos guardados -- clienteId: ${conv.clienteId}`);
+      if (conv.clienteId) clienteIds.add(conv.clienteId);
+    }
+  } else {
+    console.log(`No se encontró ninguna Conversacion para ${TELEFONO}.`);
   }
 
-  console.log(`\nCliente(s) vinculado(s): ${clienteIds.size}`);
+  // Cliente(s) huérfano(s) -- ya no vinculados a la Conversacion actual,
+  // pero identificables por el nombre/teléfono ficticio de esta prueba.
+  const clientesPorNombreOTelefono = await prisma.cliente.findMany({
+    where: {
+      empresaId: EMPRESA_ID,
+      OR: [
+        { nombre: { in: NOMBRES_FICTICIOS } },
+        { telefono: { in: TELEFONOS_CONTACTO_FICTICIOS } },
+      ],
+    },
+  });
+  for (const c of clientesPorNombreOTelefono) clienteIds.add(c.id);
+
+  console.log(`\nCliente(s) encontrados en total: ${clienteIds.size}`);
   let citasTotales = [];
   for (const clienteId of clienteIds) {
     const cliente = await prisma.cliente.findUnique({ where: { id: clienteId } });
@@ -81,7 +106,7 @@ async function main() {
 
   console.log(`\n✅ ${totalCitasBorradas} cita(s) borrada(s).`);
   console.log(`✅ ${resultadoConv.count} conversación(es) borrada(s).`);
-  console.log('Los Cliente(s) NO se tocaron -- avisar si también se quiere limpiar eso.');
+  console.log('Los Cliente(s) NO se tocaron (incluido el huérfano) -- avisar si también se quiere limpiar eso.');
 }
 
 main()
