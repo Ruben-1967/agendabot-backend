@@ -377,6 +377,74 @@ Este tono aplica a TODA tu comunicación, incluida la interpretación de la "inf
 REGLA ESTRICTA E INQUEBRANTABLE, sin excepción para ningún tono (incluido Informal): SIEMPRE tutea ("tú", "tienes", "puedes", "quieres", "necesitas"), NUNCA vosees. Español neutro de Chile, jamás "vos", "tenés", "querés", "necesitás", "podés", "andá", "fijate", ni ninguna otra conjugación de voseo — aunque el cliente mismo te escriba en voseo, tú SIEMPRE respondes en tuteo.`;
 }
 
+// Bloque B ("solo redactar") por paso -- qué pedirle a Claude que redacte,
+// nunca qué decidir (eso ya lo decidió el backend con certeza, ver
+// flujoReserva.js#siguientePaso). Usado por redactarMensajePaso más abajo.
+const INSTRUCCIONES_REDACCION_POR_PASO = {
+  PEDIR_SERVICIO: 'Pide amablemente que elija uno de los servicios del menú que ya se le mostró -- NUNCA los enumeres tú en texto, el menú interactivo ya se mostró por separado.',
+  PEDIR_DIA: 'Pregunta brevemente qué día le gustaría agendar.',
+  PEDIR_HORA: 'Pregunta brevemente a qué hora le gustaría agendar, dado el día que ya aparece confirmado en el ESTADO ACTUAL.',
+  PEDIR_NOMBRE: 'Pide el nombre completo de la persona que se va a atender -- nunca asumas el nombre de perfil de WhatsApp, puede ser distinto de quien escribe (ej. agendando para un familiar).',
+  PEDIR_RUT: 'Pide el RUT (con guión, ej. 12345678-9) y un teléfono de contacto -- nunca asumas el teléfono desde el que te escribe.',
+  CONFIRMAR: 'Recapitula fecha, hora, servicio y nombre (y RUT/teléfono si aparecen en el ESTADO ACTUAL) usando TAL CUAL esos valores -- nunca los recalcules, nunca cambies su formato -- y pide una confirmación final antes de agendar.',
+};
+
+/**
+ * Bloque B: llama a Claude SIN herramientas, únicamente para redactar el
+ * próximo mensaje al cliente -- el backend ya decidió con certeza qué paso
+ * sigue (reservaEnCurso + siguientePaso, ver flujoReserva.js), Claude nunca
+ * vuelve a decidir el flujo acá, solo elige las palabras. Parte del fix
+ * estructural 2026-09-17: reemplaza, para las transiciones ya deterministas
+ * (tap decodificado, o texto que calzó exacto con una opción mostrada), el
+ * pipeline agéntico completo que hasta ahora tenía que re-derivar todo el
+ * estado desde el historial en texto plano.
+ *
+ * @param {Object} params
+ * @param {Object} params.empresa
+ * @param {Object|null} params.reservaEnCurso - Conversacion.reservaEnCurso.
+ * @param {string} params.paso - Una de las claves de flujoReserva.PASOS.
+ * @param {string} [params.mensajeEntrante] - Último mensaje del cliente en este turno, si lo hay.
+ * @returns {Promise<string|null>} El texto redactado (con voseo ya corregido), o null si el turno no devolvió texto utilizable -- el caller debe usar PLANTILLAS_DETERMINISTAS[paso] en ese caso, nunca un mensaje genérico de error.
+ */
+async function redactarMensajePaso({ empresa, reservaEnCurso, paso, mensajeEntrante }) {
+  const bloqueEstado = `ESTADO ACTUAL DE LA RESERVA (ya confirmado con certeza por el sistema -- nunca lo vuelvas a preguntar ni a poner en duda, ni inventes ni cambies ninguno de estos valores):
+${JSON.stringify(reservaEnCurso || {}, null, 2)}
+
+PASO ACTUAL: ${paso}`;
+
+  const systemPrompt = `${construirBloqueIdentidad(empresa)}
+
+MODO: SOLO REDACTAR. No tienes herramientas disponibles en este turno -- tu única tarea es escribir el próximo mensaje para el cliente, breve y natural, acorde al PASO ACTUAL de abajo. Nunca inventes datos, nunca vuelvas a preguntar ni a mostrar algo que ya aparece en el ESTADO ACTUAL DE LA RESERVA, nunca ofrezcas ni actúes como si tuvieras herramientas disponibles.
+${INSTRUCCIONES_REDACCION_POR_PASO[paso] || INSTRUCCIONES_REDACCION_POR_PASO.CONFIRMAR}
+
+${bloqueEstado}`;
+
+  const response = await anthropic.messages.create({
+    model: MODEL,
+    // Prompt mucho más corto que el agéntico completo (sin tools, sin
+    // historial) -- 600 deja margen de sobra para el thinking adaptativo de
+    // Sonnet 5 sin repetir el bug real de max_tokens insuficiente que ya
+    // afectó al prompt completo (ver comentario en el ciclo principal, más
+    // abajo).
+    max_tokens: 600,
+    system: systemPrompt,
+    messages: [{ role: 'user', content: mensajeEntrante || '(el cliente no escribió texto en este turno -- ej. recién tocó un botón)' }],
+  });
+
+  const textBlock = response.content.find((b) => b.type === 'text');
+  const texto = textBlock ? textBlock.text : '';
+
+  if (!texto) {
+    console.error(
+      '[claude.js] redactarMensajePaso sin texto -- stop_reason:', response.stop_reason,
+      '| paso:', paso, '| usage:', JSON.stringify(response.usage)
+    );
+    return null;
+  }
+
+  return corregirVoseo(texto);
+}
+
 /**
  * Genera la respuesta del chatbot, permitiéndole usar herramientas reales
  * (consultar disponibilidad, agendar cita) antes de responder en texto.
@@ -976,4 +1044,4 @@ async function generarRespuestaChatbot(params) {
   return { ...resultado, texto: corregirVoseo(resultado.texto) };
 }
 
-module.exports = { generarRespuestaChatbot };
+module.exports = { generarRespuestaChatbot, redactarMensajePaso };
