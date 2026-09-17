@@ -24,9 +24,8 @@ const {
   codificarFilaServicioDemo,
   ID_FILA_SERVICIO_OTRO_DEMO,
 } = require('./services/whatsapp');
-const { obtenerHorariosDisponibles } = require('./services/disponibilidad');
 const { fechaLegibleDesdeISO } = require('./lib/formatoFechas');
-const { procesarMensajeEntrante } = require('./services/chatbotEngine');
+const { procesarMensajeEntrante, procesarSeleccionInteractiva } = require('./services/chatbotEngine');
 const { sendInstagramTextMessage, armarTextoConInteractivo } = require('./services/instagram');
 const { sendFacebookTextMessage, armarTextoConInteractivo: armarTextoConInteractivoFacebook } = require('./services/facebook');
 const { renderFormulario, PLANES } = require('./services/contratoHtml');
@@ -343,6 +342,117 @@ app.get('/webhook/facebook', (req, res) => {
 
   return res.sendStatus(403);
 });
+
+/**
+ * Envía por WhatsApp el {respuestaTexto, interactivo} que devuelve el motor
+ * de agendamiento (procesarMensajeEntrante o procesarSeleccionInteractiva,
+ * ver chatbotEngine.js) -- extraído a función compartida (2026-09-17, fix
+ * estructural) para que el camino de tap determinístico use exactamente el
+ * mismo envío que el camino agéntico, sin mantener 2 copias que se puedan
+ * desincronizar. No hace nada si respuestaTexto es null (conversación
+ * pausada por Coexistence) ni si la empresa no tiene token configurado.
+ */
+async function enviarRespuestaAgendamiento({ phoneNumberId, telefonoCliente, empresa, respuestaTexto, interactivo }) {
+  if (respuestaTexto === null) return;
+
+  const accessToken = empresa.whatsappToken || process.env.WHATSAPP_ACCESS_TOKEN;
+  if (!accessToken) {
+    console.error(`Empresa ${empresa.nombre} no tiene whatsappToken configurado y no hay WHATSAPP_ACCESS_TOKEN de respaldo.`);
+    return;
+  }
+
+  if (interactivo?.tipo === 'lista_dias') {
+    await sendWhatsAppInteractiveList({
+      phoneNumberId,
+      to: telefonoCliente,
+      accessToken,
+      textoCuerpo: respuestaTexto,
+      textoBoton: 'Ver días',
+      textoHeader: empresa.nombre?.slice(0, 60),
+      secciones: [{
+        titulo: 'Próximos días con hora',
+        filas: interactivo.dias.map((d) => ({
+          id: codificarFilaDia(d.fecha),
+          titulo: fechaLegibleDesdeISO(d.fecha),
+        })),
+      }],
+    });
+  } else if (interactivo?.tipo === 'lista_horarios') {
+    await sendWhatsAppInteractiveList({
+      phoneNumberId,
+      to: telefonoCliente,
+      accessToken,
+      textoCuerpo: respuestaTexto,
+      textoBoton: 'Ver horarios',
+      textoHeader: empresa.nombre?.slice(0, 60),
+      filas: interactivo.horas.map((hora) => ({
+        id: codificarFilaHorario(interactivo.fecha, hora),
+        titulo: hora,
+      })),
+    });
+  } else if (interactivo?.tipo === 'horarios_por_bloque') {
+    // Demasiadas horas para una lista interactiva (o hay más de un bloque
+    // real, ej. mañana/tarde separados por un break) — un mensaje de
+    // texto plano por bloque en vez de un solo texto largo o una lista
+    // truncada a 10. Pedido por Ahorróptica 2026-09-03.
+    for (const bloque of interactivo.bloques) {
+      const textoBloque = `Estos son los horarios disponibles en ${bloque.etiqueta} para el ${fechaLegibleDesdeISO(interactivo.fecha)}: ${bloque.horas.join(', ')}.`;
+      await sendWhatsAppTextMessage({
+        phoneNumberId,
+        to: telefonoCliente,
+        text: textoBloque,
+        accessToken,
+      });
+    }
+    await sendWhatsAppTextMessage({
+      phoneNumberId,
+      to: telefonoCliente,
+      text: '¿Cuál te acomoda? Escríbeme la hora que prefieras.',
+      accessToken,
+    });
+  } else if (interactivo?.tipo === 'catalogo_imagenes') {
+    // Máximo 4 imágenes por respuesta (ya viene acotado desde claude.js).
+    // Se manda primero el texto y luego cada imagen por separado — la API
+    // de WhatsApp no soporta un mensaje con múltiples imágenes en uno solo.
+    await sendWhatsAppTextMessage({
+      phoneNumberId,
+      to: telefonoCliente,
+      text: respuestaTexto,
+      accessToken,
+    });
+    for (const item of interactivo.items) {
+      await sendWhatsAppImageMessage({
+        phoneNumberId,
+        to: telefonoCliente,
+        accessToken,
+        imageUrl: item.imagenUrl,
+        caption: item.nombre,
+      });
+    }
+  } else if (interactivo?.tipo === 'lista_servicios') {
+    await sendWhatsAppInteractiveList({
+      phoneNumberId,
+      to: telefonoCliente,
+      accessToken,
+      textoCuerpo: respuestaTexto,
+      textoBoton: 'Ver servicios',
+      textoHeader: empresa.nombre?.slice(0, 60),
+      filas: [
+        ...interactivo.servicios.map((s) => ({ id: codificarFilaServicio(s.id), titulo: s.nombre })),
+        { id: ID_FILA_SERVICIO_OTRO, titulo: 'Otro / no lo encuentro', descripcion: 'Cuéntame qué necesitas' },
+      ],
+    });
+  } else {
+    await sendWhatsAppTextMessage({
+      phoneNumberId,
+      to: telefonoCliente,
+      text: respuestaTexto,
+      accessToken,
+    });
+  }
+
+  console.log(`Respondido a ${telefonoCliente} (${empresa.nombre}): "${respuestaTexto}"`);
+}
 
 // ------------------------------------------------------------
 // WEBHOOK DE WHATSAPP — recepción de mensajes entrantes
@@ -1031,40 +1141,24 @@ app.post('/webhook/whatsapp', verificarFirmaWebhookWhatsApp, async (req, res) =>
     if (mensaje.type === 'interactive') {
       const listReplyId = mensaje.interactive?.list_reply?.id;
 
-      // NUEVO: el cliente tocó un DÍA de la lista de "próximos días con
-      // hora". Se resuelve sin pasar por Claude, igual que ya se hace con
-      // la selección de una hora puntual — más rápido y determinístico.
+      // El cliente tocó un DÍA de la lista de "próximos días con hora" --
+      // camino de tap determinístico (chatbotEngine.js#procesarSeleccionInteractiva,
+      // fix estructural 2026-09-17): escribe Conversacion.reservaEnCurso
+      // directo y arma la lista real de horarios, sin pasar por Claude
+      // para decidir el flujo (antes este bloque ni siquiera pasaba por
+      // Conversacion -- bypass silencioso encontrado en la exploración
+      // previa a este refactor).
       const diaElegido = decodificarFilaDia(listReplyId);
       if (diaElegido) {
-        const recurso = await prisma.recursoAgendable.findFirst({ where: { empresaId: empresa.id } });
-        if (!recurso) {
-          return;
-        }
-
-        const horas = await obtenerHorariosDisponibles(recurso.id, diaElegido.fecha);
-        const accessTokenDia = empresa.whatsappToken || process.env.WHATSAPP_ACCESS_TOKEN;
-
-        if (!accessTokenDia) {
-          console.error(`Empresa ${empresa.nombre} no tiene whatsappToken configurado y no hay WHATSAPP_ACCESS_TOKEN de respaldo.`);
-          return;
-        }
-
-        if (horas.length === 0) {
-          await sendWhatsAppTextMessage({
-            phoneNumberId, to: telefonoCliente, accessToken: accessTokenDia,
-            text: 'Ese día ya no tiene cupo disponible, ¿quieres que te muestre otro?',
-          });
-          return;
-        }
-
-        const fechaLegible = fechaLegibleDesdeISO(diaElegido.fecha);
-        await sendWhatsAppInteractiveList({
-          phoneNumberId, to: telefonoCliente, accessToken: accessTokenDia,
-          textoCuerpo: `Estos son los horarios disponibles para el ${fechaLegible}. Elige el que más te acomode 👇`,
-          textoBoton: 'Ver horarios',
-          textoHeader: empresa.nombre?.slice(0, 60),
-          filas: horas.map((hora) => ({ id: codificarFilaHorario(diaElegido.fecha, hora), titulo: hora })),
+        const { respuestaTexto: respuestaDia, interactivo: interactivoDia } = await procesarSeleccionInteractiva({
+          empresa,
+          telefonoCliente,
+          nombreContacto,
+          canal: 'whatsapp',
+          tipoSeleccion: 'dia',
+          valorDecodificado: { fecha: diaElegido.fecha },
         });
+        await enviarRespuestaAgendamiento({ phoneNumberId, telefonoCliente, empresa, respuestaTexto: respuestaDia, interactivo: interactivoDia });
         return;
       }
 
@@ -1158,111 +1252,7 @@ app.post('/webhook/whatsapp', verificarFirmaWebhookWhatsApp, async (req, res) =>
       nombreContacto,
     });
 
-    // Coexistence: conversación pausada por intervención humana — no se
-    // envía nada por WhatsApp este turno (ver chatbotEngine.js).
-    if (respuestaTexto === null) {
-      return;
-    }
-
-    // Enviar la respuesta por WhatsApp
-    const accessToken = empresa.whatsappToken || process.env.WHATSAPP_ACCESS_TOKEN;
-
-    if (!accessToken) {
-      console.error(`Empresa ${empresa.nombre} no tiene whatsappToken configurado y no hay WHATSAPP_ACCESS_TOKEN de respaldo.`);
-      return;
-    }
-
-    if (interactivo?.tipo === 'lista_dias') {
-      await sendWhatsAppInteractiveList({
-        phoneNumberId,
-        to: telefonoCliente,
-        accessToken,
-        textoCuerpo: respuestaTexto,
-        textoBoton: 'Ver días',
-        textoHeader: empresa.nombre?.slice(0, 60),
-        secciones: [{
-          titulo: 'Próximos días con hora',
-          filas: interactivo.dias.map((d) => ({
-            id: codificarFilaDia(d.fecha),
-            titulo: fechaLegibleDesdeISO(d.fecha),
-          })),
-        }],
-      });
-    } else if (interactivo?.tipo === 'lista_horarios') {
-      await sendWhatsAppInteractiveList({
-        phoneNumberId,
-        to: telefonoCliente,
-        accessToken,
-        textoCuerpo: respuestaTexto,
-        textoBoton: 'Ver horarios',
-        textoHeader: empresa.nombre?.slice(0, 60),
-        filas: interactivo.horas.map((hora) => ({
-          id: codificarFilaHorario(interactivo.fecha, hora),
-          titulo: hora,
-        })),
-      });
-    } else if (interactivo?.tipo === 'horarios_por_bloque') {
-      // Demasiadas horas para una lista interactiva (o hay más de un bloque
-      // real, ej. mañana/tarde separados por un break) — un mensaje de
-      // texto plano por bloque en vez de un solo texto largo o una lista
-      // truncada a 10. Pedido por Ahorróptica 2026-09-03.
-      for (const bloque of interactivo.bloques) {
-        const textoBloque = `Estos son los horarios disponibles en ${bloque.etiqueta} para el ${fechaLegibleDesdeISO(interactivo.fecha)}: ${bloque.horas.join(', ')}.`;
-        await sendWhatsAppTextMessage({
-          phoneNumberId,
-          to: telefonoCliente,
-          text: textoBloque,
-          accessToken,
-        });
-      }
-      await sendWhatsAppTextMessage({
-        phoneNumberId,
-        to: telefonoCliente,
-        text: '¿Cuál te acomoda? Escríbeme la hora que prefieras.',
-        accessToken,
-      });
-    } else if (interactivo?.tipo === 'catalogo_imagenes') {
-      // Máximo 4 imágenes por respuesta (ya viene acotado desde claude.js).
-      // Se manda primero el texto y luego cada imagen por separado — la API
-      // de WhatsApp no soporta un mensaje con múltiples imágenes en uno solo.
-      await sendWhatsAppTextMessage({
-        phoneNumberId,
-        to: telefonoCliente,
-        text: respuestaTexto,
-        accessToken,
-      });
-      for (const item of interactivo.items) {
-        await sendWhatsAppImageMessage({
-          phoneNumberId,
-          to: telefonoCliente,
-          accessToken,
-          imageUrl: item.imagenUrl,
-          caption: item.nombre,
-        });
-      }
-    } else if (interactivo?.tipo === 'lista_servicios') {
-      await sendWhatsAppInteractiveList({
-        phoneNumberId,
-        to: telefonoCliente,
-        accessToken,
-        textoCuerpo: respuestaTexto,
-        textoBoton: 'Ver servicios',
-        textoHeader: empresa.nombre?.slice(0, 60),
-        filas: [
-          ...interactivo.servicios.map((s) => ({ id: codificarFilaServicio(s.id), titulo: s.nombre })),
-          { id: ID_FILA_SERVICIO_OTRO, titulo: 'Otro / no lo encuentro', descripcion: 'Cuéntame qué necesitas' },
-        ],
-      });
-    } else {
-      await sendWhatsAppTextMessage({
-        phoneNumberId,
-        to: telefonoCliente,
-        text: respuestaTexto,
-        accessToken,
-      });
-    }
-
-    console.log(`Respondido a ${telefonoCliente} (${empresa.nombre}): "${respuestaTexto}"`);
+    await enviarRespuestaAgendamiento({ phoneNumberId, telefonoCliente, empresa, respuestaTexto, interactivo });
   } catch (error) {
     console.error('Error procesando mensaje entrante de WhatsApp:', error);
   }
