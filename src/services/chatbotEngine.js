@@ -16,6 +16,7 @@ const {
 } = require('./disponibilidad');
 const { siguientePaso, coincideConOpcionMostrada, PLANTILLAS_DETERMINISTAS, PASOS } = require('./flujoReserva');
 const { conLockDeConversacion } = require('../lib/conversacionLock');
+const { fechaLegibleDesdeISO } = require('../lib/formatoFechas');
 
 // Frases genéricas que preguntan por la lista de servicios, normalizadas
 // (sin tildes, minúsculas, sin signos de puntuación). Si el mensaje del
@@ -145,8 +146,21 @@ async function procesarMensajeEntranteSinLock({ empresa, telefonoCliente, textoE
     }
   }
 
-  // 4. Si el interceptor no aplicó (no coincidió la frase, o la empresa no
-  // tiene servicios reales todavía), seguimos el flujo normal con Claude.
+  // 3.5. Fast-path determinístico de texto exacto (paso 8 del fix
+  // estructural, ver flujoReserva.js#coincideConOpcionMostrada). Si hay una
+  // reserva en curso y el texto del cliente calza con la misma certeza que
+  // un tap (match exacto contra una opción ya mostrada, o un clasificador
+  // conservador para nombre/confirmación), se resuelve el turno sin pasar
+  // por Claude para decidir el flujo -- Claude solo entra si NO hay
+  // ninguna certeza clara (bias siempre hacia el pipeline completo).
+  if (respuestaTexto === undefined) {
+    const resultadoFastPath = await intentarFastPathTexto({ empresa, telefonoCliente, nombreContacto, canal, conversacion, textoEntrante });
+    if (resultadoFastPath) {
+      return resultadoFastPath;
+    }
+  }
+
+  // 4. Si nada de lo anterior aplicó, seguimos el flujo normal con Claude.
   let escaladoAHumano = false;
   if (respuestaTexto === undefined) {
     const resultadoClaude = await generarRespuestaChatbot({
@@ -244,12 +258,16 @@ function descripcionDeTap(tipoSeleccion, valorDecodificado) {
   if (tipoSeleccion === 'hora') return `Eligió la hora ${valorDecodificado.hora} del ${valorDecodificado.fecha} de la lista.`;
   if (tipoSeleccion === 'servicio') return `Eligió el servicio "${valorDecodificado.servicioNombre}" de la lista.`;
   if (tipoSeleccion === 'servicio_otro') return 'Tocó "Otro / no lo encuentro" en la lista de servicios.';
+  if (tipoSeleccion === 'nombre') return `Escribió su nombre: "${valorDecodificado.nombre}".`;
+  if (tipoSeleccion === 'confirmar') return 'Confirmó los datos de la reserva.';
   return '(tocó una opción de una lista).';
 }
 
 /**
- * Procesa un tap determinístico (día, hora, servicio, o "Otro / no lo
- * encuentro" en la lista de servicios) -- mismo contrato de retorno que
+ * Procesa un tap determinístico (día, hora, servicio, "Otro / no lo
+ * encuentro"), o una selección EQUIVALENTE detectada en texto libre con la
+ * misma certeza (nombre, confirmación -- ver intentarFastPathTexto más
+ * abajo, paso 8 del fix estructural) -- mismo contrato de retorno que
  * procesarMensajeEntrante ({respuestaTexto, interactivo, cliente}), mismo
  * mutex por conversación.
  *
@@ -258,17 +276,18 @@ function descripcionDeTap(tipoSeleccion, valorDecodificado) {
  * @param {string} params.telefonoCliente
  * @param {string|null} params.nombreContacto
  * @param {string} [params.canal]
- * @param {'dia'|'hora'|'servicio'|'servicio_otro'} params.tipoSeleccion
- * @param {Object} params.valorDecodificado - 'dia': {fecha}. 'hora': {fecha, hora}. 'servicio': {servicioId, servicioNombre}. 'servicio_otro': {}.
+ * @param {'dia'|'hora'|'servicio'|'servicio_otro'|'nombre'|'confirmar'} params.tipoSeleccion
+ * @param {Object} params.valorDecodificado - 'dia': {fecha}. 'hora': {fecha, hora}. 'servicio': {servicioId, servicioNombre}. 'servicio_otro'/'confirmar': {}. 'nombre': {nombre}.
+ * @param {string} [params.textoOriginalCliente] - Si viene de texto libre (no de un tap real), el texto tal cual lo escribió el cliente, para guardarlo en el historial en vez de una descripción sintética.
  */
-async function procesarSeleccionInteractiva({ empresa, telefonoCliente, nombreContacto, canal = 'whatsapp', tipoSeleccion, valorDecodificado }) {
+async function procesarSeleccionInteractiva({ empresa, telefonoCliente, nombreContacto, canal = 'whatsapp', tipoSeleccion, valorDecodificado, textoOriginalCliente }) {
   const claveLock = `${empresa.id}:${telefonoCliente}:${canal}`;
   return conLockDeConversacion(claveLock, () =>
-    procesarSeleccionInteractivaSinLock({ empresa, telefonoCliente, nombreContacto, canal, tipoSeleccion, valorDecodificado })
+    procesarSeleccionInteractivaSinLock({ empresa, telefonoCliente, nombreContacto, canal, tipoSeleccion, valorDecodificado, textoOriginalCliente })
   );
 }
 
-async function procesarSeleccionInteractivaSinLock({ empresa, telefonoCliente, nombreContacto, canal, tipoSeleccion, valorDecodificado }) {
+async function procesarSeleccionInteractivaSinLock({ empresa, telefonoCliente, nombreContacto, canal, tipoSeleccion, valorDecodificado, textoOriginalCliente }) {
   let cliente = await prisma.cliente.findFirst({
     where: { empresaId: empresa.id, telefono: telefonoCliente },
   });
@@ -282,7 +301,7 @@ async function procesarSeleccionInteractivaSinLock({ empresa, telefonoCliente, n
     where: { empresaId: empresa.id, telefono: telefonoCliente, canal },
   });
   const historialPrevio = Array.isArray(conversacion?.mensajes) ? conversacion.mensajes : [];
-  const descripcionTap = descripcionDeTap(tipoSeleccion, valorDecodificado);
+  const descripcionTap = textoOriginalCliente || descripcionDeTap(tipoSeleccion, valorDecodificado);
 
   // Coexistence: igual que procesarMensajeEntranteSinLock, si hay un
   // humano interviniendo, el tap solo se registra en el historial (para
@@ -326,6 +345,18 @@ async function procesarSeleccionInteractivaSinLock({ empresa, telefonoCliente, n
     if (reservaEnCurso.fecha !== valorDecodificado.fecha || reservaEnCurso.hora !== valorDecodificado.hora) {
       reservaEnCurso = { ...reservaEnCurso, fecha: valorDecodificado.fecha, hora: valorDecodificado.hora, opcionesMostradas: null };
     }
+  } else if (tipoSeleccion === 'nombre') {
+    // Viene del fast-path de texto (paso 8, ver intentarFastPathTexto) --
+    // nunca de un tap real, pero comparte el mismo camino determinístico
+    // para no duplicar la lógica de "avanzar según el paso" de más abajo.
+    if (reservaEnCurso.nombre !== valorDecodificado.nombre) {
+      reservaEnCurso = { ...reservaEnCurso, nombre: valorDecodificado.nombre };
+    }
+  } else if (tipoSeleccion === 'confirmar') {
+    // Igual que 'nombre': viene del fast-path de texto -- no cambia ningún
+    // campo, solo dispara la evaluación de siguientePaso de más abajo (que
+    // en este punto ya debería ser CONFIRMAR, dado que intentarFastPathTexto
+    // solo lo dispara en ese paso).
   } else {
     throw new Error(`procesarSeleccionInteractiva: tipoSeleccion desconocido "${tipoSeleccion}"`);
   }
@@ -359,7 +390,11 @@ async function procesarSeleccionInteractivaSinLock({ empresa, telefonoCliente, n
           interactivo = armada.interactivo;
           reservaEnCurso = {
             ...reservaEnCurso,
-            opcionesMostradas: dias.map((d) => ({ valor: d.fecha, etiquetas: [d.fecha] })),
+            // etiquetas incluye AMBAS formas -- el ISO crudo y la fecha
+            // legible en español (que es lo que el cliente realmente ve
+            // en la fila de la lista de WhatsApp, ver server.js -- un
+            // cliente que retipea exactamente lo que vio debe calzar).
+            opcionesMostradas: dias.map((d) => ({ valor: d.fecha, etiquetas: [d.fecha, fechaLegibleDesdeISO(d.fecha)] })),
           };
         }
       }
@@ -460,6 +495,144 @@ async function procesarSeleccionInteractivaSinLock({ empresa, telefonoCliente, n
   });
 
   return { respuestaTexto, interactivo, cliente };
+}
+
+// ============================================================
+// FAST-PATH DE TEXTO EXACTO (paso 8 del fix estructural) -- cuando el
+// cliente escribe en vez de tocar, pero su texto calza con la MISMA
+// certeza que un tap (match exacto contra una opción ya mostrada, o un
+// clasificador conservador para nombre/confirmación), se resuelve el turno
+// exactamente igual que un tap, sin pasar por el pipeline agéntico para
+// decidir el flujo. Bias siempre hacia el pipeline completo cuando hay
+// cualquier duda -- nunca se "adivina".
+// ============================================================
+
+// Comandos globales y preguntas SIEMPRE van al pipeline completo, sin
+// excepción, en cualquier paso -- nunca se interceptan acá, para no
+// arriesgar interpretar mal un "cancela mi hora", "hablar con alguien" o
+// una pregunta genuina (incluso sin "?", ej. "puedo ir más temprano") como
+// si fuera una confirmación de dato.
+const REGEX_COMANDO_GLOBAL = /\b(cancela|cancelar|anula|anular|reagenda|reagendar|reprograma|reprogramar)\b.{0,20}\b(cita|hora|reserva)\b|\bhablar\s+con\s+(un|una)?\s*(persona|humano|ejecutivo|agente|alguien)\b/i;
+// Aperturas típicas de pregunta que NO siempre están al inicio del mensaje
+// ni llevan "?" (frecuente en WhatsApp) -- revisadas 2026-09-17 tras
+// encontrar en review que "puedo ir más temprano" se colaba sin marca de
+// pregunta y sin ninguna de las PALABRAS_INTERROGATIVAS clásicas.
+const REGEX_PATRON_PREGUNTA = /\b(puedo|podr[ií]a|podr[ií]as|puede|pueden|debo|se puede|me puedes|me pueden|quiero saber|necesito saber|sabes|sabe|cu[aá]nto (cuesta|sale|vale|es)|hay (disponibilidad|hora|cupo))\b/i;
+const PALABRAS_INTERROGATIVAS = ['que', 'como', 'cuando', 'donde', 'cual', 'cuales', 'cuanto', 'cuanta', 'cuantos', 'cuantas', 'quien', 'quienes', 'porque'];
+
+function esComandoGlobalOPregunta(texto) {
+  const t = (texto || '').trim();
+  if (!t) return false;
+  if (/[?¿]/.test(t)) return true;
+  if (REGEX_COMANDO_GLOBAL.test(t)) return true;
+  if (REGEX_PATRON_PREGUNTA.test(t)) return true;
+  const normalizado = t
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .replace(/[¿?¡!.,]/g, '');
+  // Revisa CUALQUIER palabra del mensaje, no solo la primera (un mensaje
+  // real de WhatsApp rara vez abre con la palabra interrogativa, ej. "y
+  // por qué tan tarde" o "ya pero cuánto cuesta").
+  return normalizado.split(/\s+/).some((p) => PALABRAS_INTERROGATIVAS.includes(p));
+}
+
+// Frases cortas frecuentes que tienen la FORMA de "2+ palabras de solo
+// letras" pero nunca son un nombre -- encontradas en review 2026-09-17
+// ("no se", "hola buenas" pasaban el chequeo de forma sin este filtro).
+// Comparación por texto normalizado completo (no por palabra suelta), para
+// no bloquear nombres reales que casualmente contengan alguna de estas
+// palabras.
+const FRASES_NO_SON_NOMBRE = new Set([
+  'no se', 'nose', 'no lo se', 'no se aun', 'no se todavia',
+  'hola', 'hola buenas', 'buenas', 'buenos dias', 'buenas tardes', 'buenas noches', 'hola buenos dias',
+  'gracias', 'muchas gracias', 'ok gracias',
+  'no gracias', 'no puedo', 'no puedo ir', 'lo mismo', 'me da lo mismo', 'da lo mismo',
+  'cualquiera', 'cualquier hora', 'no importa', 'esta bien', 'de acuerdo',
+]);
+
+// Clasificador conservador de "esto parece un nombre de persona" -- 2 a 5
+// palabras, solo letras (con tildes/ñ), sin dígitos, sin signos de
+// pregunta, ninguna frase conocida de la lista de arriba. Cualquier cosa
+// que no calce claramente cae al pipeline completo (nunca se fuerza una
+// interpretación dudosa) -- el caller ya filtró comandos/preguntas antes
+// de llegar acá (ver esComandoGlobalOPregunta), esto es una segunda capa.
+function pareceNombre(texto) {
+  const t = (texto || '').trim();
+  if (!t || t.length > 60) return false;
+  if (/[¿?\d]/.test(t)) return false;
+  if (FRASES_NO_SON_NOMBRE.has(normalizarTexto(t))) return false;
+  const palabras = t.split(/\s+/);
+  if (palabras.length < 2 || palabras.length > 5) return false;
+  return palabras.every((p) => /^[A-Za-zÁÉÍÓÚÑÜáéíóúñü'.-]{2,}$/.test(p));
+}
+
+// Mismo patrón que el bloque de confirmación de citas PENDIENTES de
+// server.js (respuesta corta a un recordatorio) -- reusado acá para el
+// paso CONFIRMAR de una reserva EN CURSO (dato distinto, mismo criterio de
+// "afirmación corta e inequívoca").
+const REGEX_AFIRMACION_RESERVA = /^\s*(s[ií]|confirmo|confirmar|dale|ok|listo|correcto|de acuerdo|as[ií] es)\s*[.!]?\s*$/i;
+
+/**
+ * Intenta resolver el turno actual con certeza de tap a partir de texto
+ * libre. Devuelve el mismo shape que procesarMensajeEntrante/
+ * procesarSeleccionInteractiva ({respuestaTexto, interactivo, cliente}) si
+ * pudo resolverlo, o null si no hay ninguna certeza clara -- en ese caso el
+ * caller (procesarMensajeEntranteSinLock) sigue al flujo de siempre.
+ *
+ * Deliberadamente NO cubre PEDIR_RUT ni PEDIR_SERVICIO por texto libre: el
+ * primero mezcla 2 campos (RUT + teléfono) que un mensaje corto rara vez
+ * trae de forma inequívoca, y el segundo ya tiene su propia red de
+ * seguridad determinística en claude.js
+ * (mensajeNombraServicioExactoSinDia). Ambos quedan en el pipeline
+ * completo -- mismo criterio de "ante la duda, el camino de siempre".
+ */
+async function intentarFastPathTexto({ empresa, telefonoCliente, nombreContacto, canal, conversacion, textoEntrante }) {
+  if (esComandoGlobalOPregunta(textoEntrante)) return null;
+
+  const contexto = await contextoFlujoReserva(empresa);
+  const reservaCruda = conversacion?.reservaEnCurso || {};
+  // "¿Hay algo en progreso?" se revisa ANTES de sembrar el servicio único
+  // -- conServicioUnicoSembrado agrega servicioId incluso a una reserva
+  // vacía cuando el negocio no tiene ambigüedad real (ej. Ahorróptica, 1
+  // solo servicio), lo que rompía este chequeo por conteo de claves
+  // (encontrado en review 2026-09-17): una conversación recién empezada
+  // para ese tipo de negocio nunca contaba como "vacía". Ahora se revisan
+  // solo los campos que reflejan progreso REAL del cliente.
+  const hayRervaEnProgreso = !!(
+    reservaCruda.fecha || reservaCruda.hora || reservaCruda.nombre || reservaCruda.rut || reservaCruda.telefonoContacto ||
+    (contexto.hayAmbiguedadDeServicio && reservaCruda.servicioId)
+  );
+  if (!hayRervaEnProgreso) return null; // nada en progreso -- pipeline completo, como siempre
+
+  const reservaEnCurso = conServicioUnicoSembrado({ ...reservaCruda }, contexto);
+
+  const paso = siguientePaso(reservaEnCurso, contexto);
+  const base = { empresa, telefonoCliente, nombreContacto, canal, textoOriginalCliente: textoEntrante };
+
+  if (paso === PASOS.PEDIR_DIA) {
+    const fechaCoincidente = coincideConOpcionMostrada(textoEntrante, reservaEnCurso.opcionesMostradas);
+    if (!fechaCoincidente) return null;
+    return procesarSeleccionInteractivaSinLock({ ...base, tipoSeleccion: 'dia', valorDecodificado: { fecha: fechaCoincidente } });
+  }
+
+  if (paso === PASOS.PEDIR_HORA) {
+    const horaCoincidente = coincideConOpcionMostrada(textoEntrante, reservaEnCurso.opcionesMostradas);
+    if (!horaCoincidente) return null;
+    return procesarSeleccionInteractivaSinLock({ ...base, tipoSeleccion: 'hora', valorDecodificado: { fecha: reservaEnCurso.fecha, hora: horaCoincidente } });
+  }
+
+  if (paso === PASOS.PEDIR_NOMBRE) {
+    if (!pareceNombre(textoEntrante)) return null;
+    return procesarSeleccionInteractivaSinLock({ ...base, tipoSeleccion: 'nombre', valorDecodificado: { nombre: textoEntrante.trim() } });
+  }
+
+  if (paso === PASOS.CONFIRMAR) {
+    if (!REGEX_AFIRMACION_RESERVA.test(textoEntrante || '')) return null;
+    return procesarSeleccionInteractivaSinLock({ ...base, tipoSeleccion: 'confirmar', valorDecodificado: {} });
+  }
+
+  return null;
 }
 
 module.exports = { procesarMensajeEntrante, procesarSeleccionInteractiva };
