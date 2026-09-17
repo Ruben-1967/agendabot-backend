@@ -1,7 +1,13 @@
 const Anthropic = require('@anthropic-ai/sdk');
 const prisma = require('../lib/prisma');
-const { obtenerHorariosDisponiblesPorBloque, crearCita, obtenerProximosDiasConDisponibilidad, obtenerHorasDisponiblesPorBloqueParaServicio, obtenerProximosDiasParaServicio } = require('./disponibilidad');
-const { normalizarRut, esRutValido } = require('../lib/rut');
+const {
+  obtenerHorariosDisponiblesPorBloque,
+  obtenerProximosDiasConDisponibilidad,
+  obtenerHorasDisponiblesPorBloqueParaServicio,
+  obtenerProximosDiasParaServicio,
+  resolverServicioParaHerramienta,
+  crearCitaValidada,
+} = require('./disponibilidad');
 
 // El texto que acompaña la lista de "próximos días" es fijo (ver más abajo,
 // no lo redacta el modelo) — así que una instrucción del system prompt
@@ -105,14 +111,6 @@ const TEXTO_PREGUNTA_SERVICIOS_REPETIDA = `¡Perfecto! ${SUFIJO_PREGUNTA_SERVICI
 // el sufijo fijo
 // en vez de por igualdad exacta contra la función.
 const esPreguntaDeServiciosRepetida = (texto) => (texto || '').endsWith(SUFIJO_PREGUNTA_SERVICIOS_REPETIDA);
-
-// Sin esto, un "rut" mal extraído por el modelo (texto libre, un id, lo que
-// sea) se guardaba tal cual en Cliente.rut — visto en producción como un
-// string larguísimo en la columna Rut del panel.
-function normalizarYValidarRut(rutCrudo) {
-  const normalizado = normalizarRut(rutCrudo);
-  return esRutValido(normalizado) ? normalizado : null;
-}
 
 /**
  * Arma la lista de herramientas para una empresa específica.
@@ -239,33 +237,6 @@ function construirTools(empresa, incluirMostrarServicios, incluirCatalogo) {
 }
 
 /**
- * Dado el nombre de servicio que Claude mandó, decide si el flujo de
- * disponibilidad/agendamiento debe usar el recurso fijo de la empresa
- * (comportamiento de siempre) o el modo "cualquier profesional vinculado"
- * (multi-profesional, OPCIÓN C).
- *
- * Si el nombre de servicio no calza con ningún Servicio real (empresa sin
- * servicios cargados, o typo), cae al comportamiento de siempre usando el
- * recurso fijo — así nunca se rompe nada para empresas como Ahorróptica
- * que no tienen Servicio.requiereProfesionalEspecifico configurado.
- *
- * @returns {Promise<{servicioDb: Object|null, usaProfesionalFijo: boolean, recursoId: string|null}>}
- */
-async function resolverServicioParaHerramienta(empresa, recurso, nombreServicio) {
-  const servicioDb = nombreServicio
-    ? await prisma.servicio.findFirst({
-        where: { empresaId: empresa.id, nombre: { equals: nombreServicio, mode: 'insensitive' } },
-      })
-    : null;
-
-  if (!servicioDb || servicioDb.requiereProfesionalEspecifico) {
-    return { servicioDb, usaProfesionalFijo: true, recursoId: recurso?.id || null };
-  }
-
-  return { servicioDb, usaProfesionalFijo: false, recursoId: null };
-}
-
-/**
  * Ejecuta la herramienta pedida por Claude y devuelve el resultado como texto/JSON.
  */
 async function ejecutarHerramienta(nombre, input, contexto) {
@@ -330,64 +301,16 @@ async function ejecutarHerramienta(nombre, input, contexto) {
   }
 
   if (nombre === 'agendar_cita') {
-    const resuelto = await resolverServicioParaHerramienta(empresa, recurso, input.servicio);
-    if (resuelto.usaProfesionalFijo && !resuelto.recursoId) {
-      return { error: 'Esta empresa no tiene un recurso agendable configurado todavía.' };
-    }
-
-    // El schema ya marca "nombre" como required (sin importar requiereRut) —
-    // esto es un resguardo extra por si Claude igual la llama sin él. Nunca
-    // confiamos en el nombre de perfil de WhatsApp: quien escribe no
-    // siempre es quien se atiende (ej. agenda para un familiar).
-    if (!input.nombre) {
-      return { error: 'Falta el nombre completo de quien se va a atender. Pídeselo explícitamente antes de reintentar — no asumas el nombre de perfil de WhatsApp.' };
-    }
-    if (cliente.nombre !== input.nombre) {
-      await prisma.cliente.update({ where: { id: cliente.id }, data: { nombre: input.nombre } });
-    }
-
-    // Si la empresa exige RUT, el schema ya lo marca (junto con teléfono)
-    // como required — resguardo extra por si Claude igual la llama sin
-    // alguno de los dos campos.
-    if (empresa.requiereRut) {
-      if (!input.rut) {
-        return { error: 'Este negocio exige RUT para agendar. Pide el RUT del cliente antes de reintentar.' };
-      }
-      if (!input.telefono) {
-        return { error: 'Este negocio exige un teléfono de contacto para agendar. Pídeselo explícitamente antes de reintentar.' };
-      }
-      const rutValidado = normalizarYValidarRut(input.rut);
-      if (!rutValidado) {
-        return { error: `"${input.rut}" no tiene formato de RUT chileno válido (ej. 12345678-9). Pídeselo de nuevo al cliente antes de reintentar.` };
-      }
-      if (cliente.rut !== rutValidado || cliente.telefono !== input.telefono) {
-        await prisma.cliente.update({
-          where: { id: cliente.id },
-          data: { rut: rutValidado, telefono: input.telefono },
-        });
-      }
-    }
-
-   try {
-      const cita = await crearCita({
-        empresaId: empresa.id,
-        clienteId: cliente.id,
-        recursoAgendableId: resuelto.usaProfesionalFijo ? resuelto.recursoId : null,
-        servicioId: resuelto.servicioDb?.id || null,
-        fechaISO: input.fecha,
-        horaInicio: input.hora,
-      });
-      // fechaLegible (en español, con día de la semana correcto) para que
-      // la confirmación final la reutilice tal cual en vez de calcular ella
-      // misma el día de semana a partir del ISO — ver nota en server.js
-      // sobre la confirmación real que llegó con el día equivocado.
-      return { exito: true, citaId: cita.id, fecha: input.fecha, fechaLegible: fechaLegibleDesdeISO(input.fecha), hora: input.hora };
-    } catch (err) {
-      if (err.message === 'HORARIO_YA_NO_DISPONIBLE') {
-        return { exito: false, error: 'Ese horario ya no está disponible, ofrece otra alternativa.' };
-      }
-      throw err;
-    }
+    // Validación y creación real delegadas a crearCitaValidada
+    // (disponibilidad.js) -- mismo código que usa el camino de tap
+    // determinístico (chatbotEngine.js), para que nunca haya 2 copias de
+    // esta lógica que se puedan desincronizar. agendar_cita como tool de
+    // Claude se retira del catálogo una vez que el camino de tap/reserva
+    // determinística cubra todo el flujo (ver plan de refactor).
+    return crearCitaValidada(
+      { servicioNombre: input.servicio, fecha: input.fecha, hora: input.hora, nombre: input.nombre, rut: input.rut, telefono: input.telefono },
+      { empresa, cliente, recurso }
+    );
   }
 
   if (nombre === 'escalar_a_humano') {
@@ -413,6 +336,48 @@ async function ejecutarHerramienta(nombre, input, contexto) {
  * @returns {Promise<{texto: string, interactivo: Object|null}>}
  */
 /**
+ * Bloque A del system prompt (identidad/tono) -- extraído para poder
+ * reusarlo tal cual desde 2 lugares: el prompt agéntico completo de abajo
+ * (con tools) y redactarMensajePaso() (solo redactar, sin tools, ver fix
+ * estructural 2026-09-17). Sin cambios de contenido respecto al bloque
+ * inline que reemplaza.
+ *
+ * @param {Object} empresa
+ * @returns {string}
+ */
+function construirBloqueIdentidad(empresa) {
+  const nombreEmpresa = empresa.sucursal ? `${empresa.nombre} (${empresa.sucursal})` : empresa.nombre;
+
+  // Se incluye el día de la semana YA CALCULADO (no solo la fecha numérica)
+  // porque dejar que el modelo calcule qué día de semana corresponde a una
+  // fecha es exactamente el mismo tipo de error que ya causó una
+  // confirmación de cita con el día equivocado — el bot dijo "hoy es
+  // martes" estando en miércoles. Reportado por Ahorróptica, 2026-09-02.
+  const fechaHoyChile = new Intl.DateTimeFormat('es-CL', {
+    timeZone: 'America/Santiago',
+    weekday: 'long',
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+  }).format(new Date());
+
+  const tono = empresa.tonoComunicacion || 'Neutral';
+  const instruccionesTono = {
+    'Formal': 'Mantén un tono profesional y respetuoso. Usa usted, estructura las frases con cuidado, sé conciso y formal.',
+    'Neutral': 'Usa un tono equilibrado — profesional pero cercano, tuteo es OK, sé breve y directo.',
+    'Informal': 'Usa un tono conversacional y cercano. Sé amigable, puedes usar emojis ocasionales (no abuses), sé relajado pero siempre profesional.',
+  };
+
+  return `Eres el asistente de agendamiento de "${nombreEmpresa}", vía WhatsApp.
+Hoy es ${fechaHoyChile} (zona horaria de Chile).
+
+TONO DE COMUNICACIÓN:
+${instruccionesTono[tono] || instruccionesTono['Neutral']}
+Este tono aplica a TODA tu comunicación, incluida la interpretación de la "información adicional" que pueda estar cargada. Cuando cites información sobre precios, promociones o detalles del servicio, adáptalo al tono especificado sin cambiar su contenido.
+REGLA ESTRICTA E INQUEBRANTABLE, sin excepción para ningún tono (incluido Informal): SIEMPRE tutea ("tú", "tienes", "puedes", "quieres", "necesitas"), NUNCA vosees. Español neutro de Chile, jamás "vos", "tenés", "querés", "necesitás", "podés", "andá", "fijate", ni ninguna otra conjugación de voseo — aunque el cliente mismo te escriba en voseo, tú SIEMPRE respondes en tuteo.`;
+}
+
+/**
  * Genera la respuesta del chatbot, permitiéndole usar herramientas reales
  * (consultar disponibilidad, agendar cita) antes de responder en texto.
  *
@@ -424,8 +389,6 @@ async function ejecutarHerramienta(nombre, input, contexto) {
  * @returns {Promise<{texto: string, interactivo: Object|null}>}
  */
 async function generarRespuestaChatbotSinCorregirVoseo({ empresa, cliente, historial, mensajeEntrante }) {
-  const nombreEmpresa = empresa.sucursal ? `${empresa.nombre} (${empresa.sucursal})` : empresa.nombre;
-
   // Preferimos los Servicio reales que la empresa cargó en el panel de
   // Configuración de agenda. Si todavía no cargó ninguno (empresa nueva sin
   // configurar), caemos al listado genérico sugerido por el rubro, para no
@@ -472,29 +435,7 @@ async function generarRespuestaChatbotSinCorregirVoseo({ empresa, cliente, histo
     : [];
   const incluirCatalogo = categoriasCatalogo.length > 0;
 
-  // Se incluye el día de la semana YA CALCULADO (no solo la fecha numérica)
-  // porque dejar que el modelo calcule qué día de semana corresponde a una
-  // fecha es exactamente el mismo tipo de error que ya causó una
-  // confirmación de cita con el día equivocado (ver fechaLegible más abajo
-  // en este archivo) — acá pasó de nuevo: el bot dijo "hoy es martes"
-  // estando en miércoles. Reportado por Ahorróptica, 2026-09-02.
-  const fechaHoyChile = new Intl.DateTimeFormat('es-CL', {
-    timeZone: 'America/Santiago',
-    weekday: 'long',
-    day: 'numeric',
-    month: 'long',
-    year: 'numeric',
-  }).format(new Date());
-
   const tools = construirTools(empresa, hayAmbiguedadDeServicio, incluirCatalogo);
-
-  // Leer el tono de comunicación (default "Neutral")
-  const tono = empresa.tonoComunicacion || 'Neutral';
-  const instruccionesTono = {
-    'Formal': 'Mantén un tono profesional y respetuoso. Usa usted, estructura las frases con cuidado, sé conciso y formal.',
-    'Neutral': 'Usa un tono equilibrado — profesional pero cercano, tuteo es OK, sé breve y directo.',
-    'Informal': 'Usa un tono conversacional y cercano. Sé amigable, puedes usar emojis ocasionales (no abuses), sé relajado pero siempre profesional.',
-  };
 
   const bloquesPersonalizacion = [];
   if (empresa.direccion) {
@@ -541,13 +482,7 @@ if (empresa.sitioWeb) {
 `
     : '';
 
-  const systemPrompt = `Eres el asistente de agendamiento de "${nombreEmpresa}", vía WhatsApp.
-Hoy es ${fechaHoyChile} (zona horaria de Chile).
-
-TONO DE COMUNICACIÓN:
-${instruccionesTono[tono] || instruccionesTono['Neutral']}
-Este tono aplica a TODA tu comunicación, incluida la interpretación de la "información adicional" que pueda estar cargada. Cuando cites información sobre precios, promociones o detalles del servicio, adáptalo al tono especificado sin cambiar su contenido.
-REGLA ESTRICTA E INQUEBRANTABLE, sin excepción para ningún tono (incluido Informal): SIEMPRE tutea ("tú", "tienes", "puedes", "quieres", "necesitas"), NUNCA vosees. Español neutro de Chile, jamás "vos", "tenés", "querés", "necesitás", "podés", "andá", "fijate", ni ninguna otra conjugación de voseo — aunque el cliente mismo te escriba en voseo, tú SIEMPRE respondes en tuteo.
+  const systemPrompt = `${construirBloqueIdentidad(empresa)}
 
 SERVICIOS AGENDABLES (la única lista válida para ofrecer o agendar — nunca agregues, separes ni inventes otros, aunque la información adicional mencione procedimientos o exámenes relacionados):
 ${serviciosBase.length ? serviciosBase.map((s) => `- ${s}`).join('\n') : '(el negocio no ha cargado servicios todavía — dile al cliente que consulte directamente)'}

@@ -1,5 +1,7 @@
 const prisma = require('../lib/prisma');
 const { horaChileAFechaUTC } = require('../lib/horaChile');
+const { normalizarRut, esRutValido } = require('../lib/rut');
+const { fechaLegibleDesdeISO } = require('../lib/formatoFechas');
 
 /**
  * Convierte "HH:MM" a minutos desde medianoche.
@@ -514,6 +516,141 @@ async function crearCita({ empresaId, clienteId, recursoAgendableId = null, serv
   }
 }
 
+/**
+ * Sin esto, un "rut" mal extraído (texto libre, un id, lo que sea) se
+ * guardaba tal cual en Cliente.rut -- visto en producción como un string
+ * larguísimo en la columna Rut del panel. Movido desde claude.js junto con
+ * crearCitaValidada (ver más abajo), único lugar que lo usa.
+ */
+function normalizarYValidarRut(rutCrudo) {
+  const normalizado = normalizarRut(rutCrudo);
+  return esRutValido(normalizado) ? normalizado : null;
+}
+
+/**
+ * Dado el nombre de servicio, decide si el flujo de disponibilidad/
+ * agendamiento debe usar el recurso fijo de la empresa (comportamiento de
+ * siempre) o el modo "cualquier profesional vinculado" (multi-profesional,
+ * OPCIÓN C). Si el nombre no calza con ningún Servicio real (empresa sin
+ * servicios cargados, o typo), cae al comportamiento de siempre usando el
+ * recurso fijo.
+ *
+ * @returns {Promise<{servicioDb: Object|null, usaProfesionalFijo: boolean, recursoId: string|null}>}
+ */
+async function resolverServicioParaHerramienta(empresa, recurso, nombreServicio) {
+  const servicioDb = nombreServicio
+    ? await prisma.servicio.findFirst({
+        where: { empresaId: empresa.id, nombre: { equals: nombreServicio, mode: 'insensitive' } },
+      })
+    : null;
+  return _resolverDesdeServicioDb(servicioDb, recurso);
+}
+
+/**
+ * Igual que resolverServicioParaHerramienta, pero resolviendo por id exacto
+ * en vez de nombre -- usado por el camino de tap determinístico (ver
+ * chatbotEngine.js), donde el backend ya conoce el servicioId con certeza
+ * (viene decodificado del botón, no de texto libre que Claude interpretó).
+ *
+ * @returns {Promise<{servicioDb: Object|null, usaProfesionalFijo: boolean, recursoId: string|null}>}
+ */
+async function resolverServicioParaHerramientaPorId(empresa, recurso, servicioId) {
+  const servicioDb = servicioId
+    ? await prisma.servicio.findFirst({ where: { id: servicioId, empresaId: empresa.id } })
+    : null;
+  return _resolverDesdeServicioDb(servicioDb, recurso);
+}
+
+function _resolverDesdeServicioDb(servicioDb, recurso) {
+  if (!servicioDb || servicioDb.requiereProfesionalEspecifico) {
+    return { servicioDb, usaProfesionalFijo: true, recursoId: recurso?.id || null };
+  }
+  return { servicioDb, usaProfesionalFijo: false, recursoId: null };
+}
+
+/**
+ * Valida los datos reunidos de una reserva y crea la Cita real -- extraído
+ * del bloque `agendar_cita` de claude.js (2026-09-17, fix estructural) para
+ * que tanto el camino agéntico (Claude llamando a la tool, mientras siga
+ * existiendo) como el camino determinístico de tap
+ * (chatbotEngine.js#procesarSeleccionInteractiva) compartan exactamente la
+ * misma validación -- nunca dos copias que puedan desincronizarse. Mutea
+ * Cliente.nombre/rut/telefono si cambiaron, igual que hacía el bloque
+ * original.
+ *
+ * @param {Object} datos - {servicioNombre?, servicioId?, fecha, hora, nombre, rut?, telefono?} -- pasar servicioId cuando ya se conoce con certeza (tap), servicioNombre cuando viene de un tool call de Claude.
+ * @param {Object} contexto - {empresa, cliente, recurso}
+ * @returns {Promise<{exito: true, citaId: string, fecha: string, fechaLegible: string, hora: string, servicioNombre: string|null}|{exito: false, error: string}>}
+ */
+async function crearCitaValidada(datos, contexto) {
+  const { empresa, cliente, recurso } = contexto;
+
+  const resuelto = datos.servicioId
+    ? await resolverServicioParaHerramientaPorId(empresa, recurso, datos.servicioId)
+    : await resolverServicioParaHerramienta(empresa, recurso, datos.servicioNombre);
+
+  if (resuelto.usaProfesionalFijo && !resuelto.recursoId) {
+    return { exito: false, error: 'Esta empresa no tiene un recurso agendable configurado todavía.' };
+  }
+
+  // Resguardo: nunca asumir el nombre de perfil de WhatsApp del contacto
+  // (quien escribe no siempre es quien se atiende, ej. agenda para un
+  // familiar) -- ver instrucción equivalente en el system prompt de
+  // claude.js para el camino agéntico.
+  if (!datos.nombre) {
+    return { exito: false, error: 'Falta el nombre completo de quien se va a atender. Pídeselo explícitamente antes de reintentar — no asumas el nombre de perfil de WhatsApp.' };
+  }
+  if (cliente.nombre !== datos.nombre) {
+    await prisma.cliente.update({ where: { id: cliente.id }, data: { nombre: datos.nombre } });
+  }
+
+  if (empresa.requiereRut) {
+    if (!datos.rut) {
+      return { exito: false, error: 'Este negocio exige RUT para agendar. Pide el RUT del cliente antes de reintentar.' };
+    }
+    if (!datos.telefono) {
+      return { exito: false, error: 'Este negocio exige un teléfono de contacto para agendar. Pídeselo explícitamente antes de reintentar.' };
+    }
+    const rutValidado = normalizarYValidarRut(datos.rut);
+    if (!rutValidado) {
+      return { exito: false, error: `"${datos.rut}" no tiene formato de RUT chileno válido (ej. 12345678-9). Pídeselo de nuevo al cliente antes de reintentar.` };
+    }
+    if (cliente.rut !== rutValidado || cliente.telefono !== datos.telefono) {
+      await prisma.cliente.update({
+        where: { id: cliente.id },
+        data: { rut: rutValidado, telefono: datos.telefono },
+      });
+    }
+  }
+
+  try {
+    const cita = await crearCita({
+      empresaId: empresa.id,
+      clienteId: cliente.id,
+      recursoAgendableId: resuelto.usaProfesionalFijo ? resuelto.recursoId : null,
+      servicioId: resuelto.servicioDb?.id || null,
+      fechaISO: datos.fecha,
+      horaInicio: datos.hora,
+    });
+    // fechaLegible (en español, con día de la semana correcto) para que la
+    // confirmación final la reutilice tal cual en vez de calcular ella
+    // misma el día de semana a partir del ISO.
+    return {
+      exito: true,
+      citaId: cita.id,
+      fecha: datos.fecha,
+      fechaLegible: fechaLegibleDesdeISO(datos.fecha),
+      hora: datos.hora,
+      servicioNombre: resuelto.servicioDb?.nombre || datos.servicioNombre || null,
+    };
+  } catch (err) {
+    if (err.message === 'HORARIO_YA_NO_DISPONIBLE') {
+      return { exito: false, error: 'Ese horario ya no está disponible, ofrece otra alternativa.' };
+    }
+    throw err;
+  }
+}
+
 module.exports = {
   obtenerHorarioDelDia,
   obtenerHorariosDisponibles,
@@ -527,4 +664,7 @@ module.exports = {
   obtenerHorasDisponiblesParaServicio,
   obtenerHorasDisponiblesPorBloqueParaServicio,
   obtenerProximosDiasParaServicio,
+  resolverServicioParaHerramienta,
+  resolverServicioParaHerramientaPorId,
+  crearCitaValidada,
 };
