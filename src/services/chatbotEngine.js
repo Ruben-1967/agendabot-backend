@@ -234,6 +234,7 @@ async function procesarMensajeEntranteSinLock({ empresa, telefonoCliente, textoE
       cliente,
       historial: historialPrevio,
       mensajeEntrante: textoEntrante,
+      reservaEnCurso,
     });
     respuestaTexto = resultadoClaude.texto;
     interactivo = resultadoClaude.interactivo;

@@ -8,6 +8,7 @@ const {
   resolverServicioParaHerramienta,
   normalizarYValidarRut,
 } = require('./disponibilidad');
+const { siguientePaso, PLANTILLAS_DETERMINISTAS } = require('./flujoReserva');
 
 // El texto que acompaña la lista de "próximos días" es fijo (ver más abajo,
 // no lo redacta el modelo) — así que una instrucción del system prompt
@@ -583,9 +584,10 @@ ${JSON.stringify(reservaEnCurso || {}, null, 2)}`;
  * @param {Object} params.cliente - Cliente asociado a esta conversación.
  * @param {Array}  params.historial - Mensajes previos [{rol, contenido}].
  * @param {string} params.mensajeEntrante - Texto del cliente.
+ * @param {Object|null} [params.reservaEnCurso] - Conversacion.reservaEnCurso, si existe -- usado SOLO para el fallback determinístico si el ciclo de reintentos se agota (paso 10 del fix estructural), nunca para decidir el flujo normal.
  * @returns {Promise<{texto: string, interactivo: Object|null}>}
  */
-async function generarRespuestaChatbotSinCorregirVoseo({ empresa, cliente, historial, mensajeEntrante }) {
+async function generarRespuestaChatbotSinCorregirVoseo({ empresa, cliente, historial, mensajeEntrante, reservaEnCurso }) {
   // Preferimos los Servicio reales que la empresa cargó en el panel de
   // Configuración de agenda. Si todavía no cargó ninguno (empresa nueva sin
   // configurar), caemos al listado genérico sugerido por el rubro, para no
@@ -835,10 +837,18 @@ ${empresa.requiereRut ? '- Este negocio además EXIGE RUT y teléfono de contact
   };
 
   // Bucle de tool use: Claude puede pedir usar una herramienta varias veces
-  // seguidas (ej. consultar disponibilidad y luego agendar) antes de dar
-  // la respuesta final en texto.
+  // seguidas (ej. consultar disponibilidad, o un reintento forzado por una
+  // de las heurísticas de arriba) antes de dar la respuesta final en
+  // texto. Reducido de 5 a 2 intentos (paso 10 del fix estructural,
+  // 2026-09-17): con el camino determinístico (taps, fast-path de texto,
+  // extracción de RUT) cubriendo la mayoría de las transiciones ciertas,
+  // el pipeline completo ya solo se usa para las partes genuinamente
+  // conversacionales -- 5 reintentos eran un resabio de cuando este ciclo
+  // tenía que cargar con todo el flujo. Si se agotan los 2 intentos, cae a
+  // PLANTILLAS_DETERMINISTAS (más abajo) en vez de un mensaje genérico de
+  // error.
   let forzarHerramienta = null; // null | 'consultar_disponibilidad' | 'consultar_proximos_dias_disponibles' | 'escalar_a_humano' | 'mostrar_lista_servicios'
-  for (let intentos = 0; intentos < 5; intentos++) {
+  for (let intentos = 0; intentos < 2; intentos++) {
     const response = await anthropic.messages.create({
       model: MODEL,
       // 500 alcanzaba de sobra con Haiku (no piensa). Con Sonnet 5, que
@@ -1061,7 +1071,19 @@ ${empresa.requiereRut ? '- Este negocio además EXIGE RUT y teléfono de contact
     messages.push({ role: 'user', content: toolResults });
   }
 
-  return { texto: 'Disculpa, tuve un problema procesando tu solicitud. ¿Puedes intentar de nuevo?', interactivo: null };
+  // Se agotaron los intentos sin una respuesta utilizable -- en vez de un
+  // mensaje genérico de error (que no ayuda al cliente a avanzar), se cae
+  // a la plantilla fija del paso que le corresponde según reservaEnCurso
+  // (la misma red de seguridad que ya usa el camino determinístico, ver
+  // flujoReserva.js#PLANTILLAS_DETERMINISTAS). Si no hay reservaEnCurso
+  // todavía (conversación recién empezada), el paso siempre resuelve a
+  // PEDIR_SERVICIO o PEDIR_DIA según corresponda, nunca a un mensaje vacío.
+  console.warn(
+    '[claude.js] Se agotaron los intentos del pipeline agéntico sin respuesta utilizable -- usando fallback determinístico.',
+    '| empresa:', empresa.id
+  );
+  const pasoFallback = siguientePaso(reservaEnCurso, { hayAmbiguedadDeServicio, requiereRut: !!empresa.requiereRut });
+  return { texto: PLANTILLAS_DETERMINISTAS[pasoFallback], interactivo: null };
 }
 
 // Red de seguridad determinística contra voseo. Confirmado en producción
