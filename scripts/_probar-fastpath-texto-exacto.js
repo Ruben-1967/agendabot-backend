@@ -105,23 +105,29 @@ async function main() {
   conv = await prisma.conversacion.findFirst({ where: { empresaId: EMPRESA_ID, telefono: TELEFONO } });
   assert('"no se" no quedó guardado como reservaEnCurso.nombre (falso positivo evitado)', normalizaNombreGuardado(conv?.reservaEnCurso?.nombre) !== 'no se');
 
-  // 3. El cliente escribe su nombre real en texto libre.
+  // 3. El cliente escribe su nombre real en texto libre -- este negocio de
+  // demo NO exige RUT, así que el nombre es el ÚLTIMO dato que faltaba:
+  // reservaEnCurso pasa a CONFIRMAR y se agenda de inmediato, en el MISMO
+  // turno (por diseño, ver plan del fix estructural: "si el paso es
+  // CONFIRMAR con todos los datos, llama a crearCitaValidada directo" --
+  // no hay un paso separado de "escribe dale para confirmar" cuando el tap/
+  // fast-path ya completó todo).
   const r3 = await procesarMensajeEntrante({ empresa, telefonoCliente: TELEFONO, textoEntrante: 'Rosa Levi Fuentes', nombreContacto: 'Prueba Claude' });
-  console.log('BOT tras escribir el nombre:', r3.respuestaTexto);
-  conv = await prisma.conversacion.findFirst({ where: { empresaId: EMPRESA_ID, telefono: TELEFONO } });
-  assert('reservaEnCurso.nombre quedó guardado (fast-path de nombre)', conv?.reservaEnCurso?.nombre === 'Rosa Levi Fuentes');
+  console.log('BOT tras escribir el nombre (debería agendar directo, sin pedir confirmación extra):', r3.respuestaTexto);
+  assert('la respuesta ya confirma la cita agendada (nombre completó todos los datos)', /agendada exitosamente/i.test(r3.respuestaTexto || ''));
 
-  // 4. El cliente confirma con un "dale" corto -- debe agendar la cita real
-  // directo, sin que Claude decida nada.
-  const r4 = await procesarMensajeEntrante({ empresa, telefonoCliente: TELEFONO, textoEntrante: 'dale', nombreContacto: 'Prueba Claude' });
-  console.log('BOT tras confirmar con "dale":', r4.respuestaTexto);
-  assert('la respuesta final confirma la cita agendada', /agendada exitosamente/i.test(r4.respuestaTexto || ''));
-
-  const citaCreada = await prisma.cita.findFirst({ where: { clienteId: r4.cliente.id }, orderBy: { creadoEn: 'desc' } });
+  const citaCreada = await prisma.cita.findFirst({ where: { clienteId: r3.cliente.id }, orderBy: { creadoEn: 'desc' } });
   assert('se creó una Cita real en la base', !!citaCreada);
 
   conv = await prisma.conversacion.findFirst({ where: { empresaId: EMPRESA_ID, telefono: TELEFONO } });
   assert('reservaEnCurso quedó en null tras agendar', conv?.reservaEnCurso === null);
+
+  // 4. Un "dale" suelto DESPUÉS de que ya se agendó no debe crear una
+  // segunda Cita ni reventar -- no hay nada pendiente que confirmar.
+  const r4 = await procesarMensajeEntrante({ empresa, telefonoCliente: TELEFONO, textoEntrante: 'dale', nombreContacto: 'Prueba Claude' });
+  console.log('BOT tras un "dale" suelto ya con la cita agendada:', r4.respuestaTexto);
+  const citasTotales = await prisma.cita.count({ where: { clienteId: r4.cliente.id } });
+  assert('un "dale" posterior NO crea una segunda Cita', citasTotales === 1);
 
   console.log(`\n${fallos === 0 ? '✅' : '⚠️ '} ${fallos === 0 ? 'Todo OK.' : `${fallos} fallo(s) -- revisar arriba.`}`);
 }
