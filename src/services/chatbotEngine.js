@@ -41,6 +41,21 @@ const FRASES_PREGUNTA_SERVICIOS = new Set([
   'que servicios ofrecen ustedes',
 ]);
 
+// Saludos puros (sin ningún otro contenido en el mismo mensaje), igual de
+// normalizados que arriba. Reportado real por el usuario probando
+// Ahorróptica en producción (2026-09-17, confirmado que ya ocurría desde
+// el 2026-09-15, antes de este refactor -- no es una regresión nueva,
+// pero sigue siendo un bug real): ante un simple "Hola", el modelo a veces
+// inventa un menú de "3 opciones" con capacidades que no siempre existen
+// para todos los negocios/rubros (ej. "Cotizar una receta" para un
+// negocio que no la ofrece) -- mismo principio que el resto de las
+// respuestas fijas de este archivo: no confiarle al modelo un mensaje tan
+// frecuente y visible, responder con un saludo fijo y genérico.
+const FRASES_SALUDO = new Set([
+  'hola', 'holaa', 'holaaa', 'hola buenas', 'hey', 'hi',
+  'buenas', 'buenass', 'buen dia', 'buenos dias', 'buenas tardes', 'buenas noches',
+]);
+
 function normalizarTexto(texto) {
   return (texto || '')
     .toLowerCase()
@@ -191,12 +206,20 @@ async function procesarMensajeEntranteSinLock({ empresa, telefonoCliente, textoE
   // dejaría un tap.
   let reservaEnCurso = conversacion?.reservaEnCurso || null;
 
+  // 2.6. Interceptor determinístico: un saludo puro se responde con un
+  // texto fijo y genérico, sin pasar por Claude -- nunca inventa un menú
+  // de capacidades que no siempre existen para todos los negocios.
+  const textoNormalizado = normalizarTexto(textoEntrante);
+  if (FRASES_SALUDO.has(textoNormalizado)) {
+    const nombreEmpresaSaludo = empresa.sucursal ? `${empresa.nombre} (${empresa.sucursal})` : empresa.nombre;
+    respuestaTexto = `¡Hola! 👋 Bienvenido/a a ${nombreEmpresaSaludo}. ¿En qué te puedo ayudar hoy?`;
+  }
+
   // 3. Interceptor determinístico: si el mensaje es una pregunta genérica
   // por los servicios y la empresa tiene Servicio reales cargados,
   // respondemos directo con la lista real como botones, sin pasar por
   // Claude en absoluto para este turno.
-  const textoNormalizado = normalizarTexto(textoEntrante);
-  if (FRASES_PREGUNTA_SERVICIOS.has(textoNormalizado)) {
+  if (respuestaTexto === undefined && FRASES_PREGUNTA_SERVICIOS.has(textoNormalizado)) {
     const serviciosReales = await prisma.servicio.findMany({
       where: { empresaId: empresa.id, activo: true },
       orderBy: { nombre: 'asc' },
