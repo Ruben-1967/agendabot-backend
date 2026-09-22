@@ -5,10 +5,20 @@ const jwt = require('jsonwebtoken');
 const prisma = require('../lib/prisma');
 const { requireAuth, JWT_SECRET } = require('../middleware/auth');
 const { limitadorLogin, limitadorResetPassword } = require('../middleware/rateLimiting');
-const { sendWhatsAppTextMessage } = require('../services/whatsapp');
+const { sendWhatsAppTemplateMessage } = require('../services/whatsapp');
 const { obtenerUrlPanelPrincipal } = require('../lib/urlPanel');
 const router = express.Router();
 const TOKEN_EXPIRA_EN = '12h';
+
+// Plantilla aprobada (WABA demo) para cualquier link de acceso a cuenta
+// (activación, reset, confirmación post-activación) -- antes se mandaba
+// como texto libre, que WhatsApp solo permite dentro de la ventana de 24h
+// desde el último mensaje del destinatario al bot demo. Fuera de esa
+// ventana Meta lo rechaza en silencio (error 131047, "re-engagement
+// message") -- caso real: LuxVision, 2026-09-22, reset de contraseña
+// nunca llegó. Una plantilla no depende de esa ventana. Ver
+// scripts/crear-plantilla-acceso-cuenta.js para crearla/revisarla en Meta.
+const PLANTILLA_ACCESO_CUENTA = 'acceso_cuenta_totemsystem';
 
 // ------------------------------------------------------------
 // POST /auth/login
@@ -135,10 +145,11 @@ router.post('/activar-cuenta', async (req, res) => {
       const accessToken = process.env.DEMO_WHATSAPP_ACCESS_TOKEN;
       if (phoneNumberId && accessToken && usuarioActivado.empresa.telefonoContacto) {
         const linkLogin = `${obtenerUrlPanelPrincipal()}/login`;
-        await sendWhatsAppTextMessage({
+        await sendWhatsAppTemplateMessage({
           phoneNumberId,
           to: usuarioActivado.empresa.telefonoContacto,
-          text: `¡Tu cuenta ya está activa! Para volver a entrar más adelante, usá este link con tu email y la contraseña que acabás de crear: ${linkLogin}`,
+          templateName: PLANTILLA_ACCESO_CUENTA,
+          variables: [linkLogin],
           accessToken,
         });
       }
@@ -214,10 +225,11 @@ router.post('/solicitar-reset-password', limitadorResetPassword, async (req, res
       const phoneNumberId = process.env.DEMO_PHONE_NUMBER_ID;
       const accessToken = process.env.DEMO_WHATSAPP_ACCESS_TOKEN;
       if (phoneNumberId && accessToken && usuario.empresa.telefonoContacto) {
-        await sendWhatsAppTextMessage({
+        await sendWhatsAppTemplateMessage({
           phoneNumberId,
           to: usuario.empresa.telefonoContacto,
-          text: `Recibimos una solicitud para restablecer la contraseña de tu cuenta de TotemSystem. Si fuiste tú, usa este link (válido por 2 horas) para crear una nueva: ${linkReset}\n\nSi no fuiste tú, puedes ignorar este mensaje.`,
+          templateName: PLANTILLA_ACCESO_CUENTA,
+          variables: [linkReset],
           accessToken,
         });
       } else {

@@ -19,7 +19,10 @@ const { obtenerUrlPanelPrincipal } = require('../lib/urlPanel');
 const { eliminarEmpresaCompleta, traducirErrorRestriccionEmpresa } = require('../lib/eliminarEmpresaCompleta');
 const { requireAuth, requireRole } = require('../middleware/auth');
 const { extraerInfoSitioWeb } = require('../services/extraccionSitioWeb');
-const { sendWhatsAppTextMessage } = require('../services/whatsapp');
+const { sendWhatsAppTemplateMessage } = require('../services/whatsapp');
+// Ver auth.js para el contexto completo de por qué esto es una plantilla y
+// no texto libre (error 131047 fuera de la ventana de 24h).
+const PLANTILLA_ACCESO_CUENTA = 'acceso_cuenta_totemsystem';
 const { listarLeadsConSLA } = require('../services/slaService');
 const { intentarRepoblarCupo } = require('../services/distribucionLeadsService');
 const { conversionesEnRangoPorVendedor } = require('../services/rankingService');
@@ -817,23 +820,24 @@ router.post('/convertir-a-cliente-real', requireAuth, requireRole('VENDEDOR'), a
 
     const linkActivacion = `${obtenerUrlPanelPrincipal()}/activar-cuenta?token=${tokenActivacion}`;
 
-    // El envío es texto libre, que WhatsApp Business API solo permite dentro
-    // de la ventana de 24h desde el último mensaje del prospecto al bot —
-    // fuera de esa ventana, Meta lo rechaza (típicamente error 131047,
-    // "re-engagement message") y haría falta una plantilla aprobada en su
-    // lugar. Mientras tanto: si el envío automático falla por lo que sea, no
-    // se traga el error — se avisa al vendedor y se le entrega el link para
-    // que lo comparta a mano por su propio WhatsApp.
+    // Plantilla aprobada (no texto libre): el texto libre solo se permite
+    // dentro de la ventana de 24h desde el último mensaje del prospecto al
+    // bot, y fuera de esa ventana Meta lo rechaza en silencio (error 131047,
+    // "re-engagement message" -- caso real que lo confirmó: LuxVision,
+    // 2026-09-22, reset de contraseña). Mientras tanto: si el envío falla
+    // por lo que sea, no se traga el error — se avisa al vendedor y se le
+    // entrega el link para que lo comparta a mano por su propio WhatsApp.
     let whatsappEnviado = false;
     let motivoFalloWhatsapp = null;
     try {
       const phoneNumberId = process.env.DEMO_PHONE_NUMBER_ID;
       const accessToken = process.env.DEMO_WHATSAPP_ACCESS_TOKEN;
       if (phoneNumberId && accessToken) {
-        await sendWhatsAppTextMessage({
+        await sendWhatsAppTemplateMessage({
           phoneNumberId,
           to: demo.telefono,
-          text: `¡Gracias por confiar en nosotros! Para activar tu cuenta, define tu contraseña acá: ${linkActivacion}`,
+          templateName: PLANTILLA_ACCESO_CUENTA,
+          variables: [linkActivacion],
           accessToken,
         });
         whatsappEnviado = true;
