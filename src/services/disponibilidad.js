@@ -615,10 +615,13 @@ async function crearCitaValidada(datos, contexto) {
     if (!rutValidado) {
       return { exito: false, error: `"${datos.rut}" no tiene formato de RUT chileno válido (ej. 12345678-9). Pídeselo de nuevo al cliente antes de reintentar.` };
     }
-    if (cliente.rut !== rutValidado || cliente.telefono !== datos.telefono) {
+    // IMPORTANTE: nunca escribir cliente.telefono acá -- es el identificador
+    // estable de WhatsApp (ver comentario en schema.prisma). El teléfono
+    // declarado al agendar va a telefonoContacto, un campo aparte.
+    if (cliente.rut !== rutValidado || cliente.telefonoContacto !== datos.telefono) {
       await prisma.cliente.update({
         where: { id: cliente.id },
-        data: { rut: rutValidado, telefono: datos.telefono },
+        data: { rut: rutValidado, telefonoContacto: datos.telefono },
       });
     }
   }

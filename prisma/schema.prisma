@@ -418,7 +418,22 @@ model Cliente {
 
   nombre    String
   rut       String?
+  // Identificador estable del canal de WhatsApp -- SIEMPRE el número real
+  // del remitente, tal como lo manda Meta (sin "+", sin normalizar por el
+  // usuario). Inmutable después de creado: NINGÚN código debe volver a
+  // escribirlo tras el `create` inicial (ver buscarOCrearCliente en
+  // chatbotEngine.js). Antes se sobrescribía con el "teléfono de contacto"
+  // declarado al agendar (ver telefonoContacto) -- causaba que el mismo
+  // cliente, al escribir de nuevo por WhatsApp, ya no calzara y se creara
+  // un Cliente duplicado y huérfano. Bug real confirmado 2 veces
+  // (2026-09-17 duplicado de Cliente; 2026-09-22 rompió la confirmación
+  // "Sí"/"No" del recordatorio de cita) -- ver memoria del proyecto.
   telefono  String?
+  // Teléfono de CONTACTO declarado al agendar (ej. agendando para un
+  // familiar, o negocios con requiereRut que piden reconfirmar el
+  // teléfono) -- mutable, puramente descriptivo. Nunca se usa para
+  // buscar/crear el Cliente.
+  telefonoContacto String?
   email     String?
   fechaNacimiento DateTime?
  fechaProximaCita DateTime?

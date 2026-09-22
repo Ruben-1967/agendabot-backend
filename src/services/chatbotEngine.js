@@ -119,6 +119,30 @@ function conOpcionesDelPipelineAgentico(reservaEnCurso, interactivo) {
 }
 
 /**
+ * Busca o crea el Cliente por su identificador de canal (telefono real de
+ * WhatsApp, o IGSID para Instagram) -- único punto de esta lógica, usado
+ * por procesarMensajeEntranteSinLock y procesarSeleccionInteractivaSinLock
+ * (antes duplicada en los 2 lugares). Cliente.telefono es INMUTABLE desde
+ * acá en adelante: solo se escribe al crear, nunca se actualiza después
+ * (ver comentario en schema.prisma sobre el bug real que causaba esto).
+ *
+ * @param {string} empresaId
+ * @param {string} telefonoWhatsApp
+ * @param {string|null} nombreContacto
+ */
+async function buscarOCrearCliente(empresaId, telefonoWhatsApp, nombreContacto) {
+  let cliente = await prisma.cliente.findFirst({
+    where: { empresaId, telefono: telefonoWhatsApp },
+  });
+  if (!cliente) {
+    cliente = await prisma.cliente.create({
+      data: { empresaId, telefono: telefonoWhatsApp, nombre: nombreContacto || 'Sin nombre' },
+    });
+  }
+  return cliente;
+}
+
+/**
  * Procesa un mensaje entrante de un cliente para una empresa dada:
  * busca/crea el Cliente y la Conversacion, genera la respuesta con Claude
  * (incluyendo posible uso de herramientas de agenda), y guarda el intercambio.
@@ -149,19 +173,7 @@ async function procesarMensajeEntranteSinLock({ empresa, telefonoCliente, textoE
   // 1. Buscar o crear el Cliente por teléfono dentro de esa empresa. Cliente
   // no tiene campo canal propio -- para Instagram este "telefono" guarda el
   // IGSID (ver Conversacion.canal más abajo, donde sí importa distinguir).
-  let cliente = await prisma.cliente.findFirst({
-    where: { empresaId: empresa.id, telefono: telefonoCliente },
-  });
-
-  if (!cliente) {
-    cliente = await prisma.cliente.create({
-      data: {
-        empresaId: empresa.id,
-        telefono: telefonoCliente,
-        nombre: nombreContacto || 'Sin nombre',
-      },
-    });
-  }
+  const cliente = await buscarOCrearCliente(empresa.id, telefonoCliente, nombreContacto);
 
   // 2. Buscar o crear la Conversacion activa con este cliente. canal entra
   // al where para no confundir un teléfono real de WhatsApp con un IGSID de
@@ -381,14 +393,7 @@ async function procesarSeleccionInteractiva({ empresa, telefonoCliente, nombreCo
 }
 
 async function procesarSeleccionInteractivaSinLock({ empresa, telefonoCliente, nombreContacto, canal, tipoSeleccion, valorDecodificado, textoOriginalCliente }) {
-  let cliente = await prisma.cliente.findFirst({
-    where: { empresaId: empresa.id, telefono: telefonoCliente },
-  });
-  if (!cliente) {
-    cliente = await prisma.cliente.create({
-      data: { empresaId: empresa.id, telefono: telefonoCliente, nombre: nombreContacto || 'Sin nombre' },
-    });
-  }
+  const cliente = await buscarOCrearCliente(empresa.id, telefonoCliente, nombreContacto);
 
   const conversacion = await prisma.conversacion.findFirst({
     where: { empresaId: empresa.id, telefono: telefonoCliente, canal },

@@ -32,10 +32,10 @@ function assert(descripcion, condicion) {
 }
 
 async function limpiarConversacion() {
-  // Busca por AMBOS teléfonos posibles -- crearCitaValidada sobrescribe
-  // Cliente.telefono con el teléfono de CONTACTO confirmado (comportamiento
-  // heredado, no nuevo), así que tras un run exitoso el Cliente ya no
-  // aparece por el teléfono de WhatsApp original.
+  // Desde el fix de 2026-09-22, Cliente.telefono es inmutable -- ya no
+  // hace falta buscar también por TELEFONO_CONTACTO, siempre debería ser
+  // el mismo Cliente encontrado por TELEFONO. Se deja el `in` de todas
+  // formas como red de seguridad por si el fix regresara.
   const clientes = await prisma.cliente.findMany({
     where: { empresaId: EMPRESA_ID, telefono: { in: [TELEFONO, TELEFONO_CONTACTO] } },
   });
@@ -105,13 +105,24 @@ async function main() {
   const citaCreada = await prisma.cita.findFirst({ where: { clienteId: r3.cliente.id }, orderBy: { creadoEn: 'desc' } });
   assert('se creó una Cita real en la base', !!citaCreada);
 
-  // Búsqueda por id, no por telefono: crearCitaValidada sobrescribe
-  // Cliente.telefono con el teléfono de CONTACTO confirmado (comportamiento
-  // heredado del bloque agendar_cita original, no nuevo de este refactor)
-  // -- buscar por el TELEFONO de WhatsApp original ya no lo encuentra.
+  // Fix 2026-09-22 (ver project_bug_cliente_duplicado_rut_telefono.md):
+  // Cliente.telefono es inmutable -- debe seguir siendo el teléfono REAL
+  // de WhatsApp, nunca el de contacto declarado al agendar.
   const clienteFinal = await prisma.cliente.findUnique({ where: { id: r3.cliente.id } });
   assert('Cliente.rut quedó guardado', clienteFinal?.rut === '12345678-5');
-  assert('Cliente.telefono quedó guardado (el de contacto, no el de WhatsApp)', clienteFinal?.telefono === '987654321');
+  assert('Cliente.telefono NO cambió -- sigue siendo el de WhatsApp (inmutable)', clienteFinal?.telefono === TELEFONO);
+  assert('Cliente.telefonoContacto quedó con el teléfono declarado al agendar', clienteFinal?.telefonoContacto === '987654321');
+
+  // El caso real que motivó el fix: un mensaje de seguimiento desde el
+  // MISMO teléfono de WhatsApp debe seguir encontrando al MISMO Cliente
+  // -- antes del fix, como Cliente.telefono ya no calzaba, se creaba un
+  // Cliente nuevo y huérfano (confirmado en producción 2 veces: Ahorróptica
+  // 17-sep con 2 citas seguidas, y Diego 22-sep rompiendo la confirmación
+  // "Sí"/"No" del recordatorio).
+  const r4 = await procesarMensajeEntrante({ empresa, telefonoCliente: TELEFONO, textoEntrante: 'Hola, una consulta', nombreContacto: 'Prueba Claude' });
+  assert('el mensaje de seguimiento se resolvió al MISMO Cliente (sin duplicar)', r4.cliente?.id === r3.cliente.id);
+  const totalClientesConEsteTelefono = await prisma.cliente.count({ where: { empresaId: EMPRESA_ID, telefono: TELEFONO } });
+  assert('sigue habiendo exactamente 1 Cliente con este teléfono de WhatsApp', totalClientesConEsteTelefono === 1);
 
   console.log(`\n${fallos === 0 ? '✅' : '⚠️ '} ${fallos === 0 ? 'Todo OK.' : `${fallos} fallo(s) -- revisar arriba.`}`);
 }
