@@ -12,8 +12,9 @@
 // No requiere EMPRESA_ID -- a diferencia de crear-plantillas-recordatorio-cita.js
 // (que crea plantillas en la WABA propia de cada negocio), esta va en la
 // WABA de la PLATAFORMA (demos), compartida por todo el flujo de cuentas.
-// El whatsapp_business_account id se resuelve solo desde el
-// DEMO_PHONE_NUMBER_ID -- no hace falta pegarlo a mano.
+// Requiere DEMO_WHATSAPP_ACCESS_TOKEN y DEMO_WHATSAPP_WABA_ID (mismo WABA
+// que ya usan los avisos de prueba vencida y activación de cuenta -- ver
+// crear-plantilla-alerta-humano.js/crear-plantilla-prueba-vencida.js).
 //
 // Uso (Render Shell):
 //   node scripts/crear-plantilla-acceso-cuenta.js
@@ -31,30 +32,18 @@ const PLANTILLA = {
 };
 
 async function main() {
-  const phoneNumberId = process.env.DEMO_PHONE_NUMBER_ID;
   const accessToken = process.env.DEMO_WHATSAPP_ACCESS_TOKEN;
-  if (!phoneNumberId || !accessToken) {
-    console.error('Faltan DEMO_PHONE_NUMBER_ID o DEMO_WHATSAPP_ACCESS_TOKEN en el entorno.');
+  const wabaId = process.env.DEMO_WHATSAPP_WABA_ID;
+  if (!accessToken) {
+    console.error('Falta DEMO_WHATSAPP_ACCESS_TOKEN en el entorno.');
     process.exit(1);
   }
-
-  console.log('Resolviendo whatsapp_business_account desde el phone_number_id...');
-  const respuestaPhone = await fetch(`https://graph.facebook.com/${GRAPH_API_VERSION}/${phoneNumberId}?fields=whatsapp_business_account`, {
-    headers: { Authorization: `Bearer ${accessToken}` },
-  });
-  const datosPhone = await respuestaPhone.json();
-  if (!respuestaPhone.ok) {
-    console.error('❌ No se pudo resolver el WABA:', JSON.stringify(datosPhone, null, 2));
-    process.exit(1);
-  }
-  const wabaId = datosPhone.whatsapp_business_account?.id;
   if (!wabaId) {
-    console.error('❌ La respuesta no trajo whatsapp_business_account.id:', JSON.stringify(datosPhone, null, 2));
+    console.error('Falta DEMO_WHATSAPP_WABA_ID en el entorno.');
     process.exit(1);
   }
-  console.log(`WABA resuelto: ${wabaId}\n`);
 
-  console.log(`Enviando a revisión "${PLANTILLA.name}"...`);
+  console.log(`Enviando a revisión "${PLANTILLA.name}" en WABA ${wabaId}...`);
   const respuesta = await fetch(`https://graph.facebook.com/${GRAPH_API_VERSION}/${wabaId}/message_templates`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
