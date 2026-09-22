@@ -569,6 +569,19 @@ model Cita {
 
   origenCanal String @default("whatsapp") // "whatsapp" | "panel" | "widget"
 
+  // Snapshot de quién se atiende en ESTA cita puntual -- puede diferir de
+  // Cliente.nombre/rut si el mismo teléfono agenda para varias personas
+  // (ej. un padre agenda para sí mismo y después para su hija, ambos por
+  // el mismo WhatsApp). Sin esto, Cliente.nombre/rut (un solo valor
+  // compartido por número) se sobrescribía con cada reserva nueva,
+  // corrompiendo retroactivamente el nombre de citas anteriores y de sus
+  // recordatorios ya programados. Bug real confirmado 2026-09-22. rutPaciente
+  // cifrado en reposo igual que Cliente.rut (ver CAMPOS_CIFRADOS en
+  // src/lib/prisma.js). Citas creadas antes de este campo quedan null --
+  // el código que lee esto debe caer a Cliente.nombre/rut en ese caso.
+  nombrePaciente String?
+  rutPaciente    String?
+
   creadoEn  DateTime @default(now())
   actualizadoEn DateTime @updatedAt
 

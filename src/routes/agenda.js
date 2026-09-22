@@ -210,12 +210,16 @@ const agendaHoy = await prisma.cita.findMany({
       return {
         id: cita.id,
         hora,
-        nombre: cita.cliente?.nombre || 'Sin asignar',
+        // nombrePaciente/rutPaciente: snapshot de quién se atiende en ESTA
+        // cita -- puede diferir de Cliente.nombre/rut si el mismo teléfono
+        // agenda para varias personas (ver bug real 2026-09-22). Citas
+        // viejas sin snapshot caen a Cliente.nombre/rut como antes.
+        nombre: cita.nombrePaciente || cita.cliente?.nombre || 'Sin asignar',
         servicio: cita.servicio?.nombre || 'Sin especificar',
         profesional: cita.recurso?.nombre || 'Sin asignar',
         estado: cita.estado,
         telefono: cita.cliente?.telefono || null,
-        rut: descifrarSiCorresponde(cita.cliente?.rut) || null,
+        rut: cita.rutPaciente || descifrarSiCorresponde(cita.cliente?.rut) || null,
         notas: null,
       };
     });
@@ -887,7 +891,7 @@ router.put('/excepciones', requireRole('ADMIN'), async (req, res) => {
     const citasEnConflicto = citasDelDia
       .map((c) => ({
         id: c.id,
-        nombre: c.cliente?.nombre || 'Sin nombre',
+        nombre: c.nombrePaciente || c.cliente?.nombre || 'Sin nombre',
         hora: formatterHora.format(c.fechaHoraInicio),
         horaFin: formatterHora.format(c.fechaHoraFin),
       }))
@@ -1173,8 +1177,11 @@ router.get('/citas', requireRole('ADMIN', 'RECEPCION'), async (req, res) => {
       id: c.id,
       hora: formatterHora.format(c.fechaHoraInicio),
       clienteId: c.clienteId,
-      nombre: c.cliente?.nombre || 'Sin asignar',
-      rut: descifrarSiCorresponde(c.cliente?.rut) || null,
+      // nombrePaciente/rutPaciente: snapshot de esta cita puntual -- ver
+      // bug real 2026-09-22 (mismo teléfono agendando para varias
+      // personas). Citas viejas sin snapshot caen a Cliente.nombre/rut.
+      nombre: c.nombrePaciente || c.cliente?.nombre || 'Sin asignar',
+      rut: c.rutPaciente || descifrarSiCorresponde(c.cliente?.rut) || null,
       telefono: c.cliente?.telefono || null,
       servicioId: c.servicioId,
       servicio: c.servicio?.nombre || 'Sin especificar',
@@ -1398,6 +1405,16 @@ router.post('/citas', requireRole('ADMIN', 'RECEPCION'), async (req, res) => {
       }
     }
 
+    // Snapshot de quién se atiende en ESTA cita -- lo que el staff tipeó
+    // ahora (clienteNuevo), no necesariamente Cliente.nombre/rut (que
+    // puede pertenecer a otra persona de la misma familia si se resolvió
+    // por rut/teléfono a un Cliente ya existente). Ver bug real 2026-09-22.
+    const rutPacienteTrim = clienteNuevo?.rut?.trim() || null;
+    const nombrePaciente = clienteNuevo?.nombre?.trim() || cliente.nombre;
+    const rutPaciente = rutPacienteTrim
+      ? (esRutValido(normalizarRut(rutPacienteTrim)) ? normalizarRut(rutPacienteTrim) : rutPacienteTrim)
+      : cliente.rut;
+
     const cita = await prisma.cita.create({
       data: {
         empresaId,
@@ -1408,6 +1425,8 @@ router.post('/citas', requireRole('ADMIN', 'RECEPCION'), async (req, res) => {
         fechaHoraFin,
         estado: 'CONFIRMADA',
         origenCanal: 'panel',
+        nombrePaciente,
+        rutPaciente,
       },
       include: { cliente: true, servicio: true, recurso: true },
     });

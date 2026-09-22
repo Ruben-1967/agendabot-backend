@@ -87,7 +87,12 @@ async function procesarConfirmacionesDeCitas() {
 
     const { fechaLegible, horaLegible } = formatearFechaHoraChile(cita.fechaHoraInicio);
     const nombreEmpresa = empresa.sucursal ? `${empresa.nombre} (${empresa.sucursal})` : empresa.nombre;
-    const variables = [cliente.nombre || 'Hola', nombreEmpresa, fechaLegible, horaLegible];
+    // Preferir el snapshot de la cita (quién se atiende ESTA vez) sobre
+    // Cliente.nombre -- el mismo número puede agendar para varias personas
+    // (ver bug real 2026-09-22). Citas viejas sin snapshot caen a
+    // Cliente.nombre como antes.
+    const nombreParaSaludo = cita.nombrePaciente || cliente.nombre || 'Hola';
+    const variables = [nombreParaSaludo, nombreEmpresa, fechaLegible, horaLegible];
 
     try {
       if (cita.confirmacionIntentos === 0) {

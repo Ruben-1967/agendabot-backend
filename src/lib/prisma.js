@@ -13,6 +13,7 @@ const prismaBase = new PrismaClient();
 const CAMPOS_CIFRADOS = {
   Empresa: ['whatsappToken', 'googleRefreshToken', 'instagramToken', 'facebookToken'],
   Cliente: ['rut'],
+  Cita: ['rutPaciente'],
 };
 
 function cifrarCamposEnData(model, data) {

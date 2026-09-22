@@ -452,7 +452,7 @@ async function resolverRecursoDisponible(servicioId, fechaISO, horaInicio) {
  * primer profesional vinculado que tenga ese horario libre.
  */
 
-async function crearCita({ empresaId, clienteId, recursoAgendableId = null, servicioId, fechaISO, horaInicio }) {
+async function crearCita({ empresaId, clienteId, recursoAgendableId = null, servicioId, fechaISO, horaInicio, nombrePaciente = null, rutPaciente = null }) {
   if (!recursoAgendableId) {
     if (!servicioId) throw new Error('Falta recursoAgendableId o servicioId');
     const servicio = await prisma.servicio.findUnique({ where: { id: servicioId } });
@@ -505,6 +505,8 @@ async function crearCita({ empresaId, clienteId, recursoAgendableId = null, serv
         fechaHoraFin,
         estado: 'PENDIENTE',
         origenCanal: 'whatsapp',
+        nombrePaciente,
+        rutPaciente,
       },
     });
   } catch (err) {
@@ -575,8 +577,10 @@ function _resolverDesdeServicioDb(servicioDb, recurso) {
  * la ÚNICA vía de creación real, disparada de forma determinística desde
  * chatbotEngine.js#procesarSeleccionInteractivaSinLock (tap, fast-path de
  * texto exacto, o extracción de RUT/teléfono) en el momento exacto en que
- * la reserva queda completa. Mutea Cliente.nombre/rut/telefonoContacto si
- * cambiaron, igual que hacía el bloque original.
+ * la reserva queda completa. Cliente.nombre/rut solo se fijan la primera
+ * vez (ver bug real 2026-09-22, mismo criterio que Cliente.telefono);
+ * Cliente.telefonoContacto sí se actualiza siempre. Cita.nombrePaciente/
+ * rutPaciente quedan con el snapshot real de esta reserva puntual.
  *
  * @param {Object} datos - {servicioNombre?, servicioId?, fecha, hora, nombre, rut?, telefono?} -- pasar servicioId cuando ya se conoce con certeza (tap), servicioNombre cuando viene de un tool call de Claude.
  * @param {Object} contexto - {empresa, cliente, recurso}
@@ -600,10 +604,24 @@ async function crearCitaValidada(datos, contexto) {
   if (!datos.nombre) {
     return { exito: false, error: 'Falta el nombre completo de quien se va a atender. Pídeselo explícitamente antes de reintentar — no asumas el nombre de perfil de WhatsApp.' };
   }
-  if (cliente.nombre !== datos.nombre) {
+  // Cliente.nombre/rut son el "contacto principal" de este número de
+  // WhatsApp -- solo se actualizan con la reserva CONFIRMADA en la
+  // primera Cita real de este Cliente (upgrade desde el nombre de perfil
+  // de WhatsApp, que a menudo ya viene seteado desde que se creó el
+  // registro -- por eso la señal correcta es "sin Cita todavía", no
+  // "campo vacío"). De la segunda reserva en adelante ya no se tocan
+  // (mismo criterio que Cliente.telefono, ver bug real 2026-09-22: el
+  // mismo número agenda para sí mismo y luego para un familiar;
+  // sobrescribir estos campos en cada reserva corrompía retroactivamente
+  // el nombre de citas anteriores). La verdad de "quién se atiende en
+  // ESTA cita" vive en Cita.nombrePaciente/rutPaciente, siempre.
+  const esPrimeraCitaDeEsteCliente = (await prisma.cita.count({ where: { clienteId: cliente.id } })) === 0;
+
+  if (esPrimeraCitaDeEsteCliente && cliente.nombre !== datos.nombre) {
     await prisma.cliente.update({ where: { id: cliente.id }, data: { nombre: datos.nombre } });
   }
 
+  let rutValidado = null;
   if (empresa.requiereRut) {
     if (!datos.rut) {
       return { exito: false, error: 'Este negocio exige RUT para agendar. Pide el RUT del cliente antes de reintentar.' };
@@ -611,18 +629,19 @@ async function crearCitaValidada(datos, contexto) {
     if (!datos.telefono) {
       return { exito: false, error: 'Este negocio exige un teléfono de contacto para agendar. Pídeselo explícitamente antes de reintentar.' };
     }
-    const rutValidado = normalizarYValidarRut(datos.rut);
+    rutValidado = normalizarYValidarRut(datos.rut);
     if (!rutValidado) {
       return { exito: false, error: `"${datos.rut}" no tiene formato de RUT chileno válido (ej. 12345678-9). Pídeselo de nuevo al cliente antes de reintentar.` };
     }
     // IMPORTANTE: nunca escribir cliente.telefono acá -- es el identificador
     // estable de WhatsApp (ver comentario en schema.prisma). El teléfono
     // declarado al agendar va a telefonoContacto, un campo aparte.
-    if (cliente.rut !== rutValidado || cliente.telefonoContacto !== datos.telefono) {
-      await prisma.cliente.update({
-        where: { id: cliente.id },
-        data: { rut: rutValidado, telefonoContacto: datos.telefono },
-      });
+    // Cliente.rut, igual que nombre arriba, solo se fija en la primera cita.
+    const datosActualizarCliente = {};
+    if (esPrimeraCitaDeEsteCliente && cliente.rut !== rutValidado) datosActualizarCliente.rut = rutValidado;
+    if (cliente.telefonoContacto !== datos.telefono) datosActualizarCliente.telefonoContacto = datos.telefono;
+    if (Object.keys(datosActualizarCliente).length > 0) {
+      await prisma.cliente.update({ where: { id: cliente.id }, data: datosActualizarCliente });
     }
   }
 
@@ -634,6 +653,8 @@ async function crearCitaValidada(datos, contexto) {
       servicioId: resuelto.servicioDb?.id || null,
       fechaISO: datos.fecha,
       horaInicio: datos.hora,
+      nombrePaciente: datos.nombre,
+      rutPaciente: rutValidado,
     });
     // fechaLegible (en español, con día de la semana correcto) para que la
     // confirmación final la reutilice tal cual en vez de calcular ella
