@@ -498,6 +498,29 @@ app.post('/webhook/whatsapp', verificarFirmaWebhookWhatsApp, async (req, res) =>
           `[WHATSAPP STATUS] destinatario=${estado.recipient_id} estado=${estado.status} ` +
           `mensajeId=${estado.id}${errorInfo}`
         );
+
+        // Solo se guardan las FALLAS (no cada envío exitoso) -- es lo único
+        // que necesita el indicador del Dashboard (ver routes/agenda.js
+        // GET /dashboard/:empresaId). Caso real que lo motivó: Ahorróptica,
+        // error 131042 "Business eligibility payment issue", 2026-09-22.
+        if (estado.status === 'failed') {
+          const phoneNumberIdEstado = value.metadata?.phone_number_id;
+          const empresaEstado = phoneNumberIdEstado
+            ? await prisma.empresa.findFirst({ where: { whatsappNumeroId: phoneNumberIdEstado } })
+            : null;
+          if (empresaEstado) {
+            const primerError = estado.errors?.[0];
+            await prisma.fallaEnvioWhatsApp.create({
+              data: {
+                empresaId: empresaEstado.id,
+                telefono: estado.recipient_id || '',
+                wamid: estado.id || null,
+                errorCodigo: primerError?.code || null,
+                errorMensaje: primerError?.title || null,
+              },
+            });
+          }
+        }
       }
     }
 

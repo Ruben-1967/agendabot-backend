@@ -34,6 +34,7 @@ const { obtenerHorariosDisponibles, obtenerHorarioDelDia, esConflictoDeHorario }
 // campo DIRECTO, no cuando llega anidado dentro de un include de OTRO
 // modelo (ej. cita.cliente.rut). Ver lib/cifrado.js para el detalle.
 const { descifrarSiCorresponde } = require('../lib/cifrado');
+const { traducirErrorWhatsApp } = require('../lib/erroresWhatsApp');
 
 const REGEX_HORA = /^([01]\d|2[0-3]):([0-5]\d)$/;
 const REGEX_FECHA = /^\d{4}-\d{2}-\d{2}$/;
@@ -348,7 +349,26 @@ const agendaHoy = await prisma.cita.findMany({
     });
     const dineroPorMes = mesesOrdenados.map((mes) => ({ mes, monto: dineroPorMesMap.get(mes) }));
 
+    // Indicador de WhatsApp (banner de alerta) -- solo aparece si hubo
+    // fallas reales de entrega reportadas por Meta en los últimos 7 días
+    // (ver FallaEnvioWhatsApp en server.js, webhook "statuses"). Caso real
+    // que lo motivó: Ahorróptica, error 131042, 2026-09-22.
+    const desdeSieteDias = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+    const fallasWhatsAppRecientes = await prisma.fallaEnvioWhatsApp.findMany({
+      where: { empresaId, creadoEn: { gte: desdeSieteDias } },
+      orderBy: { creadoEn: 'desc' },
+      take: 50,
+    });
+    const alertaWhatsApp = fallasWhatsAppRecientes.length > 0
+      ? {
+          cantidadFallas: fallasWhatsAppRecientes.length,
+          motivo: traducirErrorWhatsApp(fallasWhatsAppRecientes[0].errorCodigo),
+          ultimaFallaEn: fallasWhatsAppRecientes[0].creadoEn,
+        }
+      : null;
+
     res.json({
+      alertaWhatsApp,
       citasHoy,
       confirmadas,
       listaEspera,

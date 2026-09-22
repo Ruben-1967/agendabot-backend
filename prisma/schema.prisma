@@ -149,6 +149,7 @@ model Empresa {
   citas           Cita[]
   listaEspera     ListaEspera[]
   conversaciones  Conversacion[]
+  fallasEnvioWhatsApp FallaEnvioWhatsApp[]
   plantillasRapidas PlantillaRapida[]
   ventas          Venta[]
   suscripcion     Suscripcion? @relation("SuscripcionActual") // relación a la suscripción vigente
@@ -202,6 +203,27 @@ model Empresa {
 
   @@index([rubroTemplateId])
   @@index([vendedorId])
+}
+
+// Fallas reales de entrega de WhatsApp reportadas por Meta (webhook
+// "statuses", estado "failed") — ver server.js. Solo se guardan las
+// fallas, no cada envío exitoso: el objetivo es un indicador simple y
+// certero para que el propio negocio vea en su Dashboard si Meta está
+// rechazando sus mensajes (ej. por falta de método de pago), sin
+// depender de que alguien revise los logs de Render a mano. Caso real
+// que motivó esto: Ahorróptica, error 131042 "Business eligibility
+// payment issue", 2026-09-22.
+model FallaEnvioWhatsApp {
+  id           String   @id @default(uuid())
+  empresaId    String
+  empresa      Empresa  @relation(fields: [empresaId], references: [id])
+  telefono     String
+  wamid        String?
+  errorCodigo  Int?
+  errorMensaje String?
+  creadoEn     DateTime @default(now())
+
+  @@index([empresaId, creadoEn])
 }
 
 
