@@ -367,8 +367,44 @@ const agendaHoy = await prisma.cita.findMany({
         }
       : null;
 
+    // Mensajes de WhatsApp del mes (estimado) -- cuenta los turnos del bot
+    // (rol "asistente") dentro de Conversacion.mensajes este mes calendario
+    // (hora Chile). Es una aproximación: cuenta las respuestas del bot en
+    // conversación libre, pero NO los recordatorios de cita por plantilla
+    // (esos se cuentan aparte, en Cita.confirmacionIntentos, sin timestamp
+    // por intento individual). Meta da 1.000 mensajes de servicio gratis al
+    // mes por número -- el costo mostrado es una ESTIMACIÓN a partir de la
+    // tarifa investigada para Chile (~USD 0,02/mensaje, corroborada con
+    // 360dialog y un rate card de referencia de octubre-2026, ver memoria
+    // del proyecto), no la factura real de Meta.
+    const MENSAJES_GRATIS_POR_MES = 1000;
+    const COSTO_CLP_POR_MENSAJE_EXCEDENTE = 19; // ~USD 0,02 al tipo de cambio de referencia (sep-2026)
+
+    const mesActual = mesChileISO(ahora);
+    const conversacionesEmpresa = await prisma.conversacion.findMany({
+      where: { empresaId },
+      select: { mensajes: true },
+    });
+    let mensajesBotEsteMes = 0;
+    for (const conv of conversacionesEmpresa) {
+      const mensajes = Array.isArray(conv.mensajes) ? conv.mensajes : [];
+      for (const m of mensajes) {
+        if (m.rol === 'asistente' && m.timestamp && mesChileISO(new Date(m.timestamp)) === mesActual) {
+          mensajesBotEsteMes++;
+        }
+      }
+    }
+    const mensajesExcedente = Math.max(0, mensajesBotEsteMes - MENSAJES_GRATIS_POR_MES);
+    const usoMensajes = {
+      mensajesEsteMes: mensajesBotEsteMes,
+      limiteGratis: MENSAJES_GRATIS_POR_MES,
+      costoEstimadoCLP: mensajesExcedente * COSTO_CLP_POR_MENSAJE_EXCEDENTE,
+      esEstimacion: true,
+    };
+
     res.json({
       alertaWhatsApp,
+      usoMensajes,
       citasHoy,
       confirmadas,
       listaEspera,
