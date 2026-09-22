@@ -575,7 +575,7 @@ function _resolverDesdeServicioDb(servicioDb, recurso) {
  * la ÚNICA vía de creación real, disparada de forma determinística desde
  * chatbotEngine.js#procesarSeleccionInteractivaSinLock (tap, fast-path de
  * texto exacto, o extracción de RUT/teléfono) en el momento exacto en que
- * la reserva queda completa. Mutea Cliente.nombre/rut/telefono si
+ * la reserva queda completa. Mutea Cliente.nombre/rut/telefonoContacto si
  * cambiaron, igual que hacía el bloque original.
  *
  * @param {Object} datos - {servicioNombre?, servicioId?, fecha, hora, nombre, rut?, telefono?} -- pasar servicioId cuando ya se conoce con certeza (tap), servicioNombre cuando viene de un tool call de Claude.
