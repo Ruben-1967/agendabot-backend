@@ -41,6 +41,13 @@ async function agendarUnaCita(empresa, nombrePersona, rutPersona, telefonoContac
   const fecha = dias[0].fecha;
   const paramsBase = { empresa, telefonoCliente: TELEFONO, nombreContacto: 'Prueba', canal: 'whatsapp' };
 
+  // Igual que _probar-extraccion-rut-telefono.js: si el negocio demo tiene
+  // 2+ servicios, hay que elegir uno antes de que el flujo acepte "dia".
+  const serviciosReales = await prisma.servicio.findMany({ where: { empresaId: EMPRESA_ID, activo: true } });
+  if (serviciosReales.length > 1) {
+    await procesarSeleccionInteractiva({ ...paramsBase, tipoSeleccion: 'servicio', valorDecodificado: { servicioId: serviciosReales[0].id, servicioNombre: serviciosReales[0].nombre } });
+  }
+
   await procesarSeleccionInteractiva({ ...paramsBase, tipoSeleccion: 'dia', valorDecodificado: { fecha } });
   let conv = await prisma.conversacion.findFirst({ where: { empresaId: EMPRESA_ID, telefono: TELEFONO } });
   const hora = (conv.reservaEnCurso.opcionesMostradas || [])[0]?.valor;
@@ -64,7 +71,12 @@ async function main() {
 
   // 1. Agenda para sí mismo.
   const r1 = await agendarUnaCita(empresa, 'Pedro Soto Lira', '11111111-1', '911111111');
-  assert('primera cita (para sí mismo) se agendó', /agendada exitosamente/i.test(r1.respuestaTexto || ''));
+  const cita1Ok = /agendada exitosamente/i.test(r1.respuestaTexto || '');
+  assert('primera cita (para sí mismo) se agendó', cita1Ok);
+  if (!cita1Ok) {
+    console.log('   Respuesta real del bot:', JSON.stringify(r1.respuestaTexto));
+    throw new Error('No se pudo agendar la primera cita -- abortando antes de intentar la segunda.');
+  }
   const cliente = await prisma.cliente.findFirst({ where: { empresaId: EMPRESA_ID, telefono: TELEFONO } });
   const cita1 = await prisma.cita.findFirst({ where: { clienteId: cliente.id }, orderBy: { creadoEn: 'asc' } });
   assert('Cita 1 tiene el nombre correcto en el momento de crearse', cita1?.nombrePaciente === 'Pedro Soto Lira');
