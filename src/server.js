@@ -480,6 +480,27 @@ app.post('/webhook/whatsapp', verificarFirmaWebhookWhatsApp, async (req, res) =>
       console.log(`[WEBHOOK WHATSAPP] Campo "${change.field}" recibido (no es un mensaje):`, JSON.stringify(req.body));
     }
 
+    // Estados de entrega (sent/delivered/read/failed) de mensajes salientes
+    // -- llegan con field "messages", igual que los mensajes entrantes, así
+    // que el filtro de arriba no los agarra. Antes se descartaban en
+    // silencio junto con el resto de tipos no soportados (ver el filtro de
+    // mensaje.type más abajo), dejando cero rastro para diagnosticar por
+    // qué un recordatorio de confirmación no llegó (caso real: Diego,
+    // Ahorróptica, 2026-09-22 -- la plantilla se envió y Meta la aceptó,
+    // pero no había forma de saber si luego falló la entrega). Ahora se
+    // loguean explícitos, con el motivo cuando Meta reporta "failed".
+    if (value?.statuses?.length) {
+      for (const estado of value.statuses) {
+        const errorInfo = estado.errors?.length
+          ? ` -- ERROR: ${estado.errors.map((e) => `[${e.code}] ${e.title}${e.message ? ': ' + e.message : ''}`).join('; ')}`
+          : '';
+        console.log(
+          `[WHATSAPP STATUS] destinatario=${estado.recipient_id} estado=${estado.status} ` +
+          `mensajeId=${estado.id}${errorInfo}`
+        );
+      }
+    }
+
     // ------------------------------------------------------------
     // Coexistence (WhatsApp Business App + Cloud API activas en paralelo):
     // un mensaje enviado por un humano desde la app de WhatsApp Business
