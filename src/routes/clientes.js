@@ -323,6 +323,7 @@ router.patch('/:id', async (req, res) => {
   try {
     const cliente = await prisma.cliente.findFirst({
       where: { id: req.params.id, empresaId: req.usuario.empresaId },
+      include: { _count: { select: { conversaciones: true } } },
     });
     if (!cliente) return res.status(404).json({ error: 'Cliente no encontrado' });
 
@@ -333,6 +334,18 @@ router.patch('/:id', async (req, res) => {
 
     if (optInCampanas !== undefined && typeof optInCampanas !== 'boolean') {
       return res.status(400).json({ error: 'optInCampanas debe ser true o false' });
+    }
+
+    // Cliente.telefono es el identificador estable de WhatsApp -- editarlo a
+    // mano en un Cliente que ya tiene una Conversacion activa rompe el
+    // reconocimiento del cliente en su próximo mensaje real (mismo bug
+    // estructural corregido 2026-09-22, ver memoria del proyecto). Un
+    // Cliente sin Conversacion (cargado a mano, nunca escribió por
+    // WhatsApp) no tiene ese riesgo, así que ahí sí se permite editar.
+    if (telefono !== undefined && telefono !== cliente.telefono && cliente._count.conversaciones > 0) {
+      return res.status(400).json({
+        error: 'No se puede cambiar el teléfono de este cliente porque ya tiene conversaciones de WhatsApp asociadas -- cambiarlo haría que no se le reconozca la próxima vez que escriba. Si el teléfono real cambió, contacta a soporte.',
+      });
     }
 
     const actualizado = await prisma.cliente.update({
