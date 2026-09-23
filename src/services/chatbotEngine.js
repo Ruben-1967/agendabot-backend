@@ -15,7 +15,7 @@ const {
   obtenerHorariosDisponiblesPorBloque,
   obtenerHorasDisponiblesPorBloqueParaServicio,
 } = require('./disponibilidad');
-const { siguientePaso, coincideConOpcionMostrada, PLANTILLAS_DETERMINISTAS, PASOS } = require('./flujoReserva');
+const { siguientePaso, coincideConOpcionMostrada, PLANTILLAS_DETERMINISTAS, PASOS, reservaAbandonada } = require('./flujoReserva');
 const { conLockDeConversacion } = require('../lib/conversacionLock');
 const { fechaLegibleDesdeISO } = require('../lib/formatoFechas');
 
@@ -218,6 +218,17 @@ async function procesarMensajeEntranteSinLock({ empresa, telefonoCliente, textoE
   // dejaría un tap.
   let reservaEnCurso = conversacion?.reservaEnCurso || null;
 
+  // 2.5. Reserva abandonada: si pasaron más de HORAS_MAX_INACTIVIDAD_RESERVA
+  // desde el último mensaje real sin que el cliente terminara de agendar,
+  // se descarta -- sin esto, un mensaje corto días después (incluida una
+  // respuesta "Sí" a un recordatorio de OTRA cita) se metía a completar
+  // esa reserva vieja en vez de tratarse como algo nuevo. Bug real
+  // confirmado 2026-09-22/23 (Diego, Ahorróptica).
+  if (reservaEnCurso && reservaAbandonada(historialPrevio)) {
+    console.log(`[RESERVA ABANDONADA] Se descartó una reservaEnCurso vieja para ${telefonoCliente} (${empresa.nombre}) -- último mensaje hace más de 3h.`);
+    reservaEnCurso = null;
+  }
+
   // 2.6. Interceptor determinístico: un saludo puro se responde con un
   // texto fijo y genérico, sin pasar por Claude -- nunca inventa un menú
   // de capacidades que no siempre existen para todos los negocios.
@@ -416,7 +427,9 @@ async function procesarSeleccionInteractivaSinLock({ empresa, telefonoCliente, n
   }
 
   const contexto = await contextoFlujoReserva(empresa);
-  let reservaEnCurso = conServicioUnicoSembrado({ ...(conversacion?.reservaEnCurso || {}) }, contexto);
+  // Mismo criterio que procesarMensajeEntranteSinLock -- ver reservaAbandonada.
+  const reservaCrudaTap = reservaAbandonada(historialPrevio) ? {} : (conversacion?.reservaEnCurso || {});
+  let reservaEnCurso = conServicioUnicoSembrado({ ...reservaCrudaTap }, contexto);
   let interactivo = null;
   let respuestaTexto;
   let escaladoAHumano = false;

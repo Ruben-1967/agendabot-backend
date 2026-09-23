@@ -29,6 +29,34 @@ const PASOS = Object.freeze({
  * @param {boolean} contexto.requiereRut - Empresa.requiereRut.
  * @returns {string} Una de las claves de PASOS.
  */
+// Horas de inactividad tras las que una reservaEnCurso a medio hacer se
+// considera abandonada, en vez de "seguir en progreso" indefinidamente.
+// Bug real confirmado 2026-09-22/23 (Diego, Ahorróptica): una reserva
+// iniciada el 18-sep y nunca terminada (dejó de responder al pedirle
+// RUT+teléfono) seguía "viva" 4 días después -- cualquier mensaje corto
+// posterior (incluida una respuesta "Sí" a un recordatorio de OTRA cita)
+// se metía a completar esa reserva vieja en vez de tratarse como algo
+// nuevo, produciendo respuestas sin sentido ("¿prefieres que intentemos
+// agendar de nuevo?", pedir la hora de una fecha ya vieja, etc.).
+const HORAS_MAX_INACTIVIDAD_RESERVA = 3;
+
+/**
+ * true si el último mensaje real de la conversación (antes de este turno)
+ * es más viejo que HORAS_MAX_INACTIVIDAD_RESERVA -- señal de que cualquier
+ * reservaEnCurso pendiente quedó abandonada, no que el cliente sigue en el
+ * mismo trámite.
+ *
+ * @param {Array} historialPrevio - Conversacion.mensajes tal cual está guardado (antes de agregar el turno actual).
+ * @param {Date} [ahora] - inyectable para pruebas.
+ */
+function reservaAbandonada(historialPrevio, ahora = new Date()) {
+  if (!Array.isArray(historialPrevio) || historialPrevio.length === 0) return false;
+  const ultimoTimestamp = historialPrevio[historialPrevio.length - 1]?.timestamp;
+  if (!ultimoTimestamp) return false;
+  const horasTranscurridas = (ahora - new Date(ultimoTimestamp)) / (1000 * 60 * 60);
+  return horasTranscurridas > HORAS_MAX_INACTIVIDAD_RESERVA;
+}
+
 function siguientePaso(reservaEnCurso, contexto) {
   const r = reservaEnCurso || {};
   const { hayAmbiguedadDeServicio, requiereRut } = contexto || {};
@@ -92,4 +120,5 @@ module.exports = {
   normalizarTextoPlano,
   coincideConOpcionMostrada,
   PLANTILLAS_DETERMINISTAS,
+  reservaAbandonada,
 };
