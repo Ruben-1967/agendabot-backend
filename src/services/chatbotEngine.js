@@ -778,7 +778,14 @@ async function intentarFastPathTexto({ empresa, telefonoCliente, nombreContacto,
   if (esComandoGlobalOPregunta(textoEntrante)) return null;
 
   const contexto = await contextoFlujoReserva(empresa);
-  const reservaCruda = conversacion?.reservaEnCurso || {};
+  // Mismo criterio que procesarMensajeEntranteSinLock/
+  // procesarSeleccionInteractivaSinLock -- ver reservaAbandonada. Esta
+  // función lee conversacion.reservaEnCurso de forma independiente (no
+  // recibe la variable ya limpiada del caller), así que necesita su propio
+  // chequeo -- sin esto, el caller nuleaba reservaEnCurso pero el fast-path
+  // igual la volvía a leer cruda acá (hallazgo de code review 2026-09-23).
+  const historialPrevio = Array.isArray(conversacion?.mensajes) ? conversacion.mensajes : [];
+  const reservaCruda = reservaAbandonada(historialPrevio) ? {} : (conversacion?.reservaEnCurso || {});
   // "¿Hay algo en progreso?" se revisa ANTES de sembrar el servicio único
   // -- conServicioUnicoSembrado agrega servicioId incluso a una reserva
   // vacía cuando el negocio no tiene ambigüedad real (ej. Ahorróptica, 1
