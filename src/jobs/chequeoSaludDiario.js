@@ -288,8 +288,19 @@ async function chequeoF_SimulacionConversacionSintetica() {
     const rSaludo = await procesarMensajeEntrante({ ...paramsBase, textoEntrante: 'Hola, quiero agendar una hora' });
     respuestasBot.push(rSaludo.respuestaTexto);
     if (serviciosReales.length > 1) {
-      const ofreceAlgunoReal = serviciosReales.some((s) => (rSaludo.respuestaTexto || '').includes(s.nombre)) || (rSaludo.interactivo?.opciones?.length || 0) > 0;
+      // interactivo.tipo === 'lista_servicios' trae los servicios REALES
+      // (Servicio de Prisma, ver claude.js) en interactivo.servicios -- NO
+      // en interactivo.opciones (ese campo no existe, era un nombre
+      // supuesto que produjo un falso positivo en la primera corrida,
+      // 2026-09-23). Se verifican las dos formas en que el bot puede
+      // haber mostrado los servicios: en el texto (prosa) o en la lista
+      // interactiva.
+      const nombresReales = new Set(serviciosReales.map((s) => s.nombre));
+      const serviciosListados = rSaludo.interactivo?.servicios || [];
+      const ofreceAlgunoReal = serviciosReales.some((s) => (rSaludo.respuestaTexto || '').includes(s.nombre)) || serviciosListados.some((s) => nombresReales.has(s.nombre));
       if (!ofreceAlgunoReal) problemas.push('el saludo inicial no mostró ningún servicio real configurado (posible menú inventado)');
+      const inventados = serviciosListados.filter((s) => !nombresReales.has(s.nombre)).map((s) => s.nombre);
+      if (inventados.length > 0) problemas.push(`la lista de servicios incluyó nombre(s) que no existen en la empresa: ${inventados.join(', ')} (menú inventado)`);
       const primerServicio = serviciosReales[0];
       const rServicio = await procesarSeleccionInteractiva({ ...paramsBase, tipoSeleccion: 'servicio', valorDecodificado: { servicioId: primerServicio.id, servicioNombre: primerServicio.nombre } });
       respuestasBot.push(rServicio.respuestaTexto);
