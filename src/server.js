@@ -63,6 +63,7 @@ require('./jobs/enviarPreguntaOptIn');
 require('./jobs/rankingCache');
 require('./jobs/cierreRankingMensual');
 require('./jobs/pausaCoexistence');
+require('./jobs/chequeoSaludDiario');
 iniciarJobBloqueoVencidas();
 
 const app = express();
