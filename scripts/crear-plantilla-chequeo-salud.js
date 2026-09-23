@@ -1,9 +1,11 @@
 #!/usr/bin/env node
 // Envía a revisión (vía Graph API) la plantilla "chequeo_salud_sistema" --
-// usada por src/jobs/chequeoSaludDiario.js para avisar por WhatsApp SOLO
-// cuando el chequeo diario (08:00 hora de Chile) encuentra algo mal. Va en
-// la WABA demo (misma que activación de cuenta / reset de password), mismo
-// patrón que scripts/crear-plantilla-acceso-cuenta.js.
+// usada por src/jobs/chequeoSaludDiario.js para avisar por WhatsApp TODOS
+// los días (08:00 hora de Chile), haya o no problemas -- pedido explícito
+// 2026-09-23: sirve también de "latido" (si un día no llega, es señal de
+// que el job dejó de correr). Va en la WABA demo (misma que activación de
+// cuenta / reset de password), mismo patrón que
+// scripts/crear-plantilla-acceso-cuenta.js.
 //
 // Requiere DEMO_WHATSAPP_ACCESS_TOKEN y DEMO_WHATSAPP_WABA_ID.
 //
@@ -17,8 +19,8 @@ const GRAPH_API_VERSION = 'v21.0';
 const PLANTILLA = {
   name: 'chequeo_salud_sistema',
   body: {
-    text: '⚠️ El chequeo diario del sistema encontró {{1}} punto(s) a revisar. Detalle completo en los logs de Render (buscar "CHEQUEO-SALUD-DIARIO").',
-    example: { body_text: [['2']] },
+    text: '📋 Chequeo diario del sistema: {{1}}. Detalle completo en los logs de Render (buscar "CHEQUEO-SALUD-DIARIO").',
+    example: { body_text: [['3 punto(s) a revisar ⚠️']] },
   },
 };
 
