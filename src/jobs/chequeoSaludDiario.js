@@ -102,11 +102,21 @@ async function chequeoC_CitasAPuntoDeAutoCancelar() {
   return { ok: false, resumen: `${citas.length} cita(s) en el último aviso antes de cancelarse automáticamente: ${detalle}.` };
 }
 
+const TOPE_CONVERSACIONES_REVISADAS = 500;
+
 async function chequeoD_ReservasAbandonadasActivas() {
   const desde = new Date(Date.now() - HORAS_ABANDONO * 60 * 60 * 1000);
+  // reservaEnCurso no tiene índice propio -- esto es un recorrido completo
+  // de Conversacion con reservaEnCurso no nulo. Hoy el conjunto es chico,
+  // pero se pone un tope de seguridad para que nunca se vuelva una consulta
+  // pesada dentro del mismo proceso que sirve HTTP en vivo, aunque la base
+  // de clientes crezca mucho (hallazgo de revisión 2026-09-23). Si se llega
+  // al tope, el conteo es un mínimo, no el total exacto -- se avisa en el
+  // resumen.
   const conversaciones = await prisma.conversacion.findMany({
     where: { reservaEnCurso: { not: null } },
-    select: { mensajes: true, empresaId: true },
+    select: { mensajes: true },
+    take: TOPE_CONVERSACIONES_REVISADAS,
   });
   let colgadas = 0;
   for (const conv of conversaciones) {
@@ -114,9 +124,13 @@ async function chequeoD_ReservasAbandonadasActivas() {
     const ultimo = mensajes[mensajes.length - 1];
     if (ultimo?.timestamp && new Date(ultimo.timestamp) < desde) colgadas++;
   }
+  const tocoElTope = conversaciones.length === TOPE_CONVERSACIONES_REVISADAS;
   // Informativo -- nunca marca ok:false por sí solo (el fix de hoy ya las
   // descarta en el próximo mensaje del cliente, no es una falla activa).
-  return { ok: true, resumen: `${colgadas} reserva(s) en curso sin actividad hace más de ${HORAS_ABANDONO}h (se descartan solas en el próximo mensaje del cliente).` };
+  return {
+    ok: true,
+    resumen: `${colgadas}${tocoElTope ? '+' : ''} reserva(s) en curso sin actividad hace más de ${HORAS_ABANDONO}h (se descartan solas en el próximo mensaje del cliente)${tocoElTope ? ` -- se revisaron solo las primeras ${TOPE_CONVERSACIONES_REVISADAS}` : ''}.`,
+  };
 }
 
 async function ejecutarChequeoSaludDiario() {
