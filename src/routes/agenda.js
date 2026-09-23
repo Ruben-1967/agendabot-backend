@@ -1415,21 +1415,37 @@ router.post('/citas', requireRole('ADMIN', 'RECEPCION'), async (req, res) => {
       ? (esRutValido(normalizarRut(rutPacienteTrim)) ? normalizarRut(rutPacienteTrim) : rutPacienteTrim)
       : cliente.rut;
 
-    const cita = await prisma.cita.create({
-      data: {
-        empresaId,
-        clienteId: cliente.id,
-        recursoAgendableId: recurso.id,
-        servicioId: servicio?.id || null,
-        fechaHoraInicio,
-        fechaHoraFin,
-        estado: 'CONFIRMADA',
-        origenCanal: 'panel',
-        nombrePaciente,
-        rutPaciente,
-      },
-      include: { cliente: true, servicio: true, recurso: true },
-    });
+    let cita;
+    try {
+      cita = await prisma.cita.create({
+        data: {
+          empresaId,
+          clienteId: cliente.id,
+          recursoAgendableId: recurso.id,
+          servicioId: servicio?.id || null,
+          fechaHoraInicio,
+          fechaHoraFin,
+          estado: 'CONFIRMADA',
+          origenCanal: 'panel',
+          nombrePaciente,
+          rutPaciente,
+          esSobrecupo: !!forzarSobrecupo,
+        },
+        include: { cliente: true, servicio: true, recurso: true },
+      });
+    } catch (errCrear) {
+      // El EXCLUDE constraint de Postgres (protección real contra doble
+      // reserva, ver scripts/_migracion-exclude-constraint-doble-reserva.js)
+      // ignora las citas con esSobrecupo=true (ver
+      // scripts/_migracion-permitir-sobrecupo-constraint.js) -- si de todas
+      // formas choca acá, es el caso normal (sin forzar) perdiendo la
+      // condición de carrera contra el check de arriba (tieneConflicto no es
+      // atómico). Mismo criterio que crearCita() en disponibilidad.js.
+      if (esConflictoDeHorario(errCrear)) {
+        return res.status(400).json({ error: 'Hay un conflicto con otra cita en ese horario', codigo: 'CONFLICTO_HORARIO' });
+      }
+      throw errCrear;
+    }
 
     // Mismo caso de cliente anidado sin descifrar automáticamente (ver
     // descifrarSiCorresponde arriba) — acá no se usa hoy desde el panel,

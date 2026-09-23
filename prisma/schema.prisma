@@ -582,6 +582,18 @@ model Cita {
   nombrePaciente String?
   rutPaciente    String?
 
+  // true cuando el admin forzó esta cita a propósito pese a chocar con otra
+  // hora ya ocupada del mismo profesional ("Forzar sobrecupo" en Tabla de
+  // citas, ver routes/agenda.js). El EXCLUDE constraint de Postgres
+  // "cita_no_solapa_horario" (fuera de este schema, ver
+  // scripts/_migracion-exclude-constraint-doble-reserva.js) ignora las citas
+  // con esSobrecupo=true -- sin este campo, esa protección contra doble
+  // reserva accidental rechazaba TAMBIÉN los sobrecupos intencionales,
+  // dejando la función rota desde que se creó el constraint (bug real
+  // reportado por Ahorróptica, 2026-09-23; ver
+  // scripts/_migracion-permitir-sobrecupo-constraint.js para el ajuste).
+  esSobrecupo Boolean @default(false)
+
   creadoEn  DateTime @default(now())
   actualizadoEn DateTime @updatedAt
 
