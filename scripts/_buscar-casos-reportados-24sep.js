@@ -19,13 +19,15 @@ const EMPRESA_ID = 'ahoroptica-lautaro-seed-id';
 const TEXTO_CONTENCION = 'Estamos revisando tu consulta, en breve te respondemos';
 
 async function main() {
-  // 1. Conversaciones con actividad HOY (últimas 24h) para Ahorróptica.
-  const desde = new Date(Date.now() - 24 * 60 * 60 * 1000);
+  // 1. TODAS las conversaciones de Ahorróptica (sin filtrar por fecha) --
+  // la primera corrida, acotada a 24h, no encontró nada; el caso puede ser
+  // de hace más de un día. El conjunto total de Ahorróptica es chico, así
+  // que traer todo es seguro.
   const conversaciones = await prisma.conversacion.findMany({
-    where: { empresaId: EMPRESA_ID, actualizadoEn: { gte: desde } },
+    where: { empresaId: EMPRESA_ID },
     orderBy: { actualizadoEn: 'desc' },
   });
-  console.log(`${conversaciones.length} conversación(es) con actividad en las últimas 24h.\n`);
+  console.log(`${conversaciones.length} conversación(es) en total para Ahorróptica.\n`);
 
   // 2. Carlos Silva (caso 2, ya identificado) -- confirmar que aparece.
   const casoCarlos = conversaciones.find((c) => {
@@ -36,31 +38,31 @@ async function main() {
     console.log(`✅ Caso "Carlos Silva" (cita 09:30) encontrado: teléfono ${casoCarlos.telefono}\n`);
   }
 
-  // 3. Buscar el patrón del caso 1: contención aparece HOY, en una
-  // conversación cuyo mensaje ANTERIOR a la contención ya sonaba a cierre
-  // (despedida) -- imprime cada conversación con contención hoy junto a
-  // los mensajes previos, para que se pueda leer el contexto completo.
+  // 3. Buscar el patrón del caso 1 en TODO el historial: contención
+  // apareciendo en una conversación, con el contexto de mensajes previos
+  // para ver si sonaba a cierre justo antes.
   console.log('='.repeat(70));
-  console.log('Conversaciones con mensaje de contención en las últimas 24h:');
+  console.log('Conversaciones con mensaje de contención (todo el historial):');
   console.log('='.repeat(70));
 
   let encontroAlguna = false;
   for (const conv of conversaciones) {
     const mensajes = Array.isArray(conv.mensajes) ? conv.mensajes : [];
-    const idxContencion = mensajes.findIndex((m) => m.contenido === TEXTO_CONTENCION && new Date(m.timestamp) >= desde);
+    const idxContencion = mensajes.findIndex((m) => m.contenido === TEXTO_CONTENCION);
     if (idxContencion === -1) continue;
 
     encontroAlguna = true;
     console.log(`\n--- Teléfono ${conv.telefono} | pausadaPorHumanoEn: ${conv.pausadaPorHumanoEn} ---`);
     const desdeIdx = Math.max(0, idxContencion - 6);
-    for (let i = desdeIdx; i < mensajes.length; i++) {
+    const hastaIdx = Math.min(mensajes.length, idxContencion + 4);
+    for (let i = desdeIdx; i < hastaIdx; i++) {
       const m = mensajes[i];
       const marca = i === idxContencion ? ' <-- CONTENCIÓN' : '';
       console.log(`  [${m.rol}] ${m.timestamp} | "${(m.contenido || '').slice(0, 100)}"${marca}`);
     }
   }
   if (!encontroAlguna) {
-    console.log('Ninguna conversación con contención en las últimas 24h.');
+    console.log('Ninguna conversación con contención en todo el historial (revisar si el pantallazo es de otra empresa).');
   }
 }
 
