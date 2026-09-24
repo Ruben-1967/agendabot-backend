@@ -85,8 +85,16 @@ async function sendWhatsAppTextMessage({ phoneNumberId, to, text, accessToken })
  * @param {string} params.accessToken
  * @param {string} params.templateName - Nombre exacto de la plantilla aprobada (ej. 'recordatorio_control_anual').
  * @param {string[]} params.variables - Valores en orden para {{1}}, {{2}}, etc. del body.
+ * @param {{payload: string}[]} [params.botonesQuickReply] - Opcional. Uno por
+ *   cada botón QUICK_REPLY que la plantilla tenga definido, EN EL MISMO
+ *   ORDEN (index 0, 1, ...). `payload` es el identificador que se recibe de
+ *   vuelta en el webhook (mensaje.button.payload) al tocar ese botón --
+ *   fijo y elegido por nosotros, sin depender del texto visible del botón
+ *   (que puede cambiar de redacción sin romper nada). Sin esto, la
+ *   plantilla debe existir sin botones o Meta usa un payload por defecto
+ *   menos predecible.
  */
-async function sendWhatsAppTemplateMessage({ phoneNumberId, to, accessToken, templateName, variables = [] }) {
+async function sendWhatsAppTemplateMessage({ phoneNumberId, to, accessToken, templateName, variables = [], botonesQuickReply }) {
   const url = `https://graph.facebook.com/${GRAPH_API_VERSION}/${phoneNumberId}/messages`;
 
   const components = variables.length > 0
@@ -95,6 +103,17 @@ async function sendWhatsAppTemplateMessage({ phoneNumberId, to, accessToken, tem
         parameters: variables.map((texto) => ({ type: 'text', text: texto })),
       }]
     : [];
+
+  if (Array.isArray(botonesQuickReply)) {
+    botonesQuickReply.forEach((boton, indice) => {
+      components.push({
+        type: 'button',
+        sub_type: 'quick_reply',
+        index: String(indice),
+        parameters: [{ type: 'payload', payload: boton.payload }],
+      });
+    });
+  }
 
   const response = await fetch(url, {
     method: 'POST',

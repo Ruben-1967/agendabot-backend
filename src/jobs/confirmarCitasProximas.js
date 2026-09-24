@@ -20,8 +20,22 @@ const { descifrarSiCorresponde } = require('../lib/cifrado');
 
 // Nombres de las plantillas de WhatsApp — deben existir y estar aprobadas en
 // Meta antes de que este job funcione de verdad. Ver notas de despliegue.
-const PLANTILLA_RECORDATORIO = 'confirmacion_cita_recordatorio'; // intentos 1 y 2, mismo texto
-const PLANTILLA_ULTIMO_AVISO = 'confirmacion_cita_ultimo_aviso'; // intento 3
+const PLANTILLA_RECORDATORIO = 'confirmacion_cita_recordatorio'; // intentos 1 y 2, mismo texto -- ACTIVA
+const PLANTILLA_ULTIMO_AVISO = 'confirmacion_cita_ultimo_aviso'; // intento 3 -- ACTIVA
+
+// Variantes con botones "Sí, confirmo" / "No puedo" (2026-09-24) -- pedido
+// explícito tras un caso real (Ahorróptica, Carlos Silva): confirmar por
+// texto libre es ambiguo -- el cliente escribió "Si hay estaré a las 9:30"
+// y no calzó con el regex de confirmación (ver server.js), cayendo al
+// pipeline general de Claude por error. Los botones eliminan la ambigüedad
+// de raíz: el payload que vuelve al tocar un botón es exacto, ver
+// server.js (bloque de confirmación de citas). NO ACTIVAR (no reemplazar
+// las de arriba) hasta confirmar que Meta las aprobó -- ver
+// scripts/crear-plantilla-confirmacion-cita-botones-ahoroptica.js. Mismo
+// patrón de cutover que TEMPLATE_ALERTA_URGENTE_V2 en pausaCoexistence.js.
+const PLANTILLA_RECORDATORIO_BOTONES = 'confirmacion_cita_recordatorio_botones';
+const PLANTILLA_ULTIMO_AVISO_BOTONES = 'confirmacion_cita_ultimo_aviso_botones';
+const BOTONES_CONFIRMACION = [{ payload: 'CONFIRMAR_CITA' }, { payload: 'CANCELAR_CITA' }];
 
 const HORAS_ANTES_PRIMER_INTENTO = 24;
 const HORAS_ENTRE_INTENTOS = 1;

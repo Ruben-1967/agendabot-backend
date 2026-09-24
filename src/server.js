@@ -1291,9 +1291,21 @@ app.post('/webhook/whatsapp', verificarFirmaWebhookWhatsApp, async (req, res) =>
     // por Claude. Si el mensaje no calza con ninguno de los dos patrones,
     // seguimos al flujo normal (puede ser otra cosa, ej. "puedo cambiar la
     // hora?").
+    //
+    // Un tap de botón (plantilla con "Sí, confirmo"/"No puedo", ver
+    // confirmarCitasProximas.js#BOTONES_CONFIRMACION) se resuelve por el
+    // PAYLOAD exacto, con certeza total -- nunca por el texto visible del
+    // botón. Bug real (Ahorróptica, 2026-09-24): un cliente escribió "Si
+    // hay estaré a las 9:30" (una confirmación natural con contexto extra)
+    // y el regex, que exige match EXACTO, no lo reconoció -- cayó al
+    // pipeline general de Claude por error. El regex de texto libre queda
+    // como respaldo para quien sigue prefiriendo escribir en vez de tocar.
     if (mensaje.type === 'text' || mensaje.type === 'button') {
-      const pareceConfirmar = /^\s*(s[ií]|confirmo|confirmar|dale|ok|listo|correcto)\s*[.!]?\s*$/i.test(textoEntrante);
-      const pareceCancelar = /^\s*no(\s+puedo|\s+podr[eé])?\s*[.!]?\s*$|^\s*(cancelar|anular)\s*[.!]?\s*$/i.test(textoEntrante);
+      const payloadBoton = mensaje.type === 'button' ? (mensaje.button?.payload || '') : null;
+      const pareceConfirmar = payloadBoton === 'CONFIRMAR_CITA'
+        || (mensaje.type === 'text' && /^\s*(s[ií]|confirmo|confirmar|dale|ok|listo|correcto)\s*[.!]?\s*$/i.test(textoEntrante));
+      const pareceCancelar = payloadBoton === 'CANCELAR_CITA'
+        || (mensaje.type === 'text' && /^\s*no(\s+puedo|\s+podr[eé])?\s*[.!]?\s*$|^\s*(cancelar|anular)\s*[.!]?\s*$/i.test(textoEntrante));
 
       if (pareceConfirmar || pareceCancelar) {
         const clienteExistente = await prisma.cliente.findFirst({
