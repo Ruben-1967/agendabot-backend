@@ -562,10 +562,30 @@ app.post('/webhook/whatsapp', verificarFirmaWebhookWhatsApp, async (req, res) =>
             where: { empresaId: empresaEco.id, telefono: telefonoClienteEco },
           });
 
+          // Si el eco trae contenido real (texto, imagen, audio, documento,
+          // etc. -- cualquier cosa que NO sea un "revoke" ni una reacción),
+          // el humano ya respondió de verdad -- se marcan la contención y
+          // la alerta urgente como ya satisfechas en este mismo momento,
+          // para que pausaCoexistence.js nunca las mande de más. Excluye
+          // "revoke" (el staff borró un mensaje, no es una respuesta) y
+          // "reaction" (un emoji de reacción, no cuenta como haber resuelto
+          // la consulta).
+          // Bug real (Ahorróptica, 2026-09-24): un cliente preguntó algo, el
+          // staff contestó por la app en menos de 2 min y se despidió, pero
+          // 5 min después el sistema igual mandó "Estamos revisando tu
+          // consulta, en breve te respondemos" -- el temporizador de
+          // contención solo mira tiempo transcurrido, nunca si el humano ya
+          // contestó con contenido real.
+          const esRespuestaHumanaReal = !!eco.type && !['revoke', 'reaction'].includes(eco.type);
+          const datosPausa = {
+            pausadaPorHumanoEn: new Date(),
+            ...(esRespuestaHumanaReal ? { contencionEnviadaEn: new Date(), alertaUrgenteEnviadaEn: new Date() } : {}),
+          };
+
           if (conversacionEco) {
             await prisma.conversacion.update({
               where: { id: conversacionEco.id },
-              data: { pausadaPorHumanoEn: new Date() },
+              data: datosPausa,
             });
           } else {
             // Humano escribió primero, antes de que el cliente le hablara
@@ -576,7 +596,7 @@ app.post('/webhook/whatsapp', verificarFirmaWebhookWhatsApp, async (req, res) =>
                 clienteId: clienteEco?.id || null,
                 telefono: telefonoClienteEco,
                 mensajes: [],
-                pausadaPorHumanoEn: new Date(),
+                ...datosPausa,
               },
             });
           }
