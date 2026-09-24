@@ -48,7 +48,7 @@ async function main() {
   let encontroAlguna = false;
   for (const conv of conversaciones) {
     const mensajes = Array.isArray(conv.mensajes) ? conv.mensajes : [];
-    const idxContencion = mensajes.findIndex((m) => m.contenido === TEXTO_CONTENCION);
+    const idxContencion = mensajes.findIndex((m) => (m.contenido || '').includes(TEXTO_CONTENCION));
     if (idxContencion === -1) continue;
 
     encontroAlguna = true;
