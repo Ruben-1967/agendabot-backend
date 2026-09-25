@@ -110,6 +110,19 @@ model Empresa {
   // el aviso salga igual aunque se haya agendado hace poco).
   horasMinimasConfirmacionCita Int @default(24)
 
+  // Interruptor por empresa del job de recordatorios de confirmación
+  // (jobs/confirmarCitasProximas.js) -- 2026-09-25, pedido explícito de
+  // Diego (Ahorróptica) tras 2 incidentes reales en 2 días con la
+  // confirmación por texto libre (ver server.js, bloque de confirmación).
+  // El fix estructural real (botones) ya está en main pero depende de que
+  // Meta apruebe las plantillas -- mientras tanto, este interruptor permite
+  // pausar el ENVÍO de recordatorios para un negocio puntual sin apagar el
+  // bot completo (sigue agendando/respondiendo normal). Efecto secundario a
+  // tener presente: con esto en false, las citas PENDIENTE de ese negocio
+  // no reciben más recordatorios NI se liberan automáticamente tras 3
+  // intentos -- quedan pendientes hasta gestión manual.
+  recordatorioConfirmacionCitaActivo Boolean @default(true)
+
   // ====== CAMPOS PARA WHATSAPP BUSINESS ======
   whatsappNumeroId    String?   @unique  // phone_number_id de Meta (ej: "135018715483508")
   whatsappToken       String?   @db.Text // Access token permanente (cifrado AES-256-GCM)

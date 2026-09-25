@@ -67,8 +67,10 @@ async function procesarConfirmacionesDeCitas() {
 
   // Traemos solo citas PENDIENTES cuyo ciclo de confirmación no se haya
   // agotado todavía (0-3 intentos; en 3 decidimos si cancelar).
+  // empresa.recordatorioConfirmacionCitaActivo (2026-09-25): interruptor por
+  // negocio para pausar el ENVÍO sin apagar el resto del bot -- ver schema.
   const citas = await prisma.cita.findMany({
-    where: { estado: 'PENDIENTE', confirmacionIntentos: { lte: 3 } },
+    where: { estado: 'PENDIENTE', confirmacionIntentos: { lte: 3 }, empresa: { recordatorioConfirmacionCitaActivo: true } },
     include: { cliente: true, empresa: true, servicio: true },
   });
 
