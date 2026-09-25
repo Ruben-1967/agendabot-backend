@@ -269,6 +269,53 @@ router.get('/', async (req, res) => {
 });
 
 // ------------------------------------------------------------
+// GET /clientes/verificar-telefono?telefono=X&excluirClienteId=Y — ADMIN
+// only. Chequea si `telefono` ya pertenece a OTRO Cliente de esta empresa,
+// para el flujo de "Corregir teléfono" (ver corregir-telefono y
+// fusionar-en más abajo) -- 2026-09-25, caso real Ahorróptica (Oscar
+// Monsalves): el teléfono quedó mal asignado y el PATCH normal no permite
+// corregirlo si el Cliente ya tiene conversaciones (guard de abajo).
+// Declarada ANTES de /:id -- ver nota al inicio del archivo.
+// ------------------------------------------------------------
+router.get('/verificar-telefono', requireRole('ADMIN'), async (req, res) => {
+  try {
+    const { telefono, excluirClienteId } = req.query;
+    if (!telefono || !telefono.trim()) {
+      return res.status(400).json({ error: 'Falta el teléfono a verificar' });
+    }
+
+    const clienteExistente = await prisma.cliente.findFirst({
+      where: {
+        empresaId: req.usuario.empresaId,
+        telefono: telefono.trim(),
+        ...(excluirClienteId && { NOT: { id: excluirClienteId } }),
+      },
+      include: {
+        _count: {
+          select: { citas: true, ventas: true, pedidos: true, atencionesClinicas: true, conversaciones: true, listaEspera: true },
+        },
+      },
+    });
+
+    if (!clienteExistente) return res.json({ disponible: true });
+
+    res.json({
+      disponible: false,
+      clienteExistente: {
+        id: clienteExistente.id,
+        nombre: clienteExistente.nombre,
+        rut: clienteExistente.rut,
+        telefono: clienteExistente.telefono,
+        conteos: clienteExistente._count,
+      },
+    });
+  } catch (error) {
+    console.error('Error en GET /clientes/verificar-telefono:', error);
+    res.status(500).json({ error: 'Error al verificar el teléfono' });
+  }
+});
+
+// ------------------------------------------------------------
 // GET /clientes/:id — detalle completo + historial de ventas
 // ------------------------------------------------------------
 router.get('/:id', async (req, res) => {
@@ -376,6 +423,123 @@ router.patch('/:id', async (req, res) => {
   } catch (error) {
     console.error('Error actualizando cliente:', error);
     res.status(500).json({ error: 'Error al actualizar el cliente' });
+  }
+});
+
+// ------------------------------------------------------------
+// PATCH /clientes/:id/corregir-telefono — ADMIN only. Bypassea el guard de
+// PATCH /:id (arriba, "ya tiene conversaciones asociadas") para una
+// corrección deliberada y humano-revisada del teléfono, cuando NO hay
+// colisión con otro Cliente. Si hay colisión, devuelve 409 con
+// clienteExistente -- el frontend debe ofrecer fusionar en su lugar (ver
+// POST /:id/fusionar-en/:supervivienteId más abajo), no reintentar esto.
+// ------------------------------------------------------------
+router.patch('/:id/corregir-telefono', requireRole('ADMIN'), async (req, res) => {
+  try {
+    const { telefono } = req.body;
+    if (!telefono || !telefono.trim()) {
+      return res.status(400).json({ error: 'Falta el teléfono' });
+    }
+    const telefonoNuevo = telefono.trim();
+
+    const cliente = await prisma.cliente.findFirst({
+      where: { id: req.params.id, empresaId: req.usuario.empresaId },
+    });
+    if (!cliente) return res.status(404).json({ error: 'Cliente no encontrado' });
+
+    // Re-verificar colisión -- defensa contra carrera vs. el GET
+    // verificar-telefono previo del frontend, que pudo quedar viejo.
+    const colision = await prisma.cliente.findFirst({
+      where: { empresaId: req.usuario.empresaId, telefono: telefonoNuevo, NOT: { id: cliente.id } },
+      include: {
+        _count: {
+          select: { citas: true, ventas: true, pedidos: true, atencionesClinicas: true, conversaciones: true, listaEspera: true },
+        },
+      },
+    });
+    if (colision) {
+      return res.status(409).json({
+        error: 'Ese teléfono ya pertenece a otro cliente de esta empresa -- probablemente la misma persona con 2 registros. Usa "Fusionar" en vez de corregir.',
+        clienteExistente: {
+          id: colision.id,
+          nombre: colision.nombre,
+          rut: colision.rut,
+          telefono: colision.telefono,
+          conteos: colision._count,
+        },
+      });
+    }
+
+    const actualizado = await prisma.cliente.update({
+      where: { id: cliente.id },
+      data: { telefono: telefonoNuevo },
+    });
+
+    res.json({ cliente: actualizado });
+  } catch (error) {
+    console.error('Error en PATCH /clientes/:id/corregir-telefono:', error);
+    res.status(500).json({ error: 'Error al corregir el teléfono' });
+  }
+});
+
+// ------------------------------------------------------------
+// POST /clientes/:id/fusionar-en/:supervivienteId — ADMIN only. Fusiona
+// :id (el registro que se estaba editando, "perdedor") dentro de
+// :supervivienteId (el que ya tiene legítimamente el teléfono correcto,
+// "sobreviviente") -- mismo patrón que scripts/_fusionar-cliente-diego-
+// 22sep.js y _fusionar-pares-seguros-riesgo-real.js, generalizado a TODAS
+// las relaciones reales de Cliente (esos scripts solo reasignaban
+// Conversacion porque sus casos no tenían citas/ventas del lado perdedor).
+// El sobreviviente mantiene su propio nombre/rut/telefono intactos -- no
+// se tocan. Ninguna relación tiene @@unique sobre clienteId ni
+// onDelete:Cascade -- si falta reasignar alguna, el delete final falla por
+// FK y la transacción entera revierte sola.
+// ------------------------------------------------------------
+router.post('/:id/fusionar-en/:supervivienteId', requireRole('ADMIN'), async (req, res) => {
+  try {
+    const { id: perdedorId, supervivienteId } = req.params;
+    if (perdedorId === supervivienteId) {
+      return res.status(400).json({ error: 'No se puede fusionar un cliente consigo mismo' });
+    }
+
+    const empresaId = req.usuario.empresaId;
+
+    const resultado = await prisma.$transaction(async (tx) => {
+      // Releer fresco DENTRO de la transacción -- la lectura del frontend
+      // (verificar-telefono) es de antes de este click, puede haber
+      // quedado vieja. Mismo patrón que _fusionar-pares-seguros-riesgo-real.js.
+      const [perdedor, superviviente] = await Promise.all([
+        tx.cliente.findFirst({ where: { id: perdedorId, empresaId } }),
+        tx.cliente.findFirst({ where: { id: supervivienteId, empresaId } }),
+      ]);
+      if (!perdedor || !superviviente) {
+        throw Object.assign(new Error('Cliente no encontrado'), { status: 404 });
+      }
+
+      await tx.cita.updateMany({ where: { clienteId: perdedorId }, data: { clienteId: supervivienteId } });
+      await tx.venta.updateMany({ where: { clienteId: perdedorId }, data: { clienteId: supervivienteId } });
+      await tx.pedido.updateMany({ where: { clienteId: perdedorId }, data: { clienteId: supervivienteId } });
+      await tx.atencionClinica.updateMany({ where: { clienteId: perdedorId }, data: { clienteId: supervivienteId } });
+      await tx.listaEspera.updateMany({ where: { clienteId: perdedorId }, data: { clienteId: supervivienteId } });
+      await tx.conversacion.updateMany({ where: { clienteId: perdedorId }, data: { clienteId: supervivienteId } });
+
+      await tx.cliente.delete({ where: { id: perdedorId } });
+
+      return { perdedorNombre: perdedor.nombre, supervivienteNombre: superviviente.nombre };
+    });
+
+    // recalcularCacheCliente usa el cliente prisma global, no el `tx` de la
+    // transacción -- se llama DESPUÉS de que confirma, no adentro.
+    await recalcularCacheCliente(supervivienteId);
+
+    const clienteFinal = await prisma.cliente.findUnique({ where: { id: supervivienteId } });
+    console.log(`[FUSIÓN] Cliente ${perdedorId} ("${resultado.perdedorNombre}") fusionado en ${supervivienteId} ("${resultado.supervivienteNombre}") por admin ${req.usuario.id}.`);
+
+    res.json({ cliente: clienteFinal });
+  } catch (error) {
+    if (error.status === 404) return res.status(404).json({ error: error.message });
+    console.error('Error en POST /clientes/:id/fusionar-en/:supervivienteId:', error);
+    res.status(500).json({ error: 'Error al fusionar los clientes' });
   }
 });
 
