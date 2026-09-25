@@ -1338,16 +1338,24 @@ app.post('/webhook/whatsapp', verificarFirmaWebhookWhatsApp, async (req, res) =>
       // la palabra "puedo", ver REGEX_PATRON_PREGUNTA en chatbotEngine.js)
       // -- sin esta prioridad, "no puedo" dejaría de cancelar la cita.
       if (pareceConfirmar || pareceCancelar || (mensaje.type === 'text' && !esComandoGlobalOPregunta(textoEntrante))) {
-        const clienteExistente = await prisma.cliente.findFirst({
-          where: { empresaId: empresa.id, telefono: telefonoCliente },
+        // Se busca la Cita DIRECTO por la relación con el teléfono (no
+        // "el Cliente primero, después su cita") -- bug real encontrado
+        // probando esto (2026-09-25): con 2 Cliente duplicados para el
+        // mismo teléfono (telefono no es @unique en el schema, solo
+        // @@index -- puede pasar con datos históricos previos al fix de
+        // teléfono inmutable), el findFirst sobre Cliente podía agarrar el
+        // que NO tenía la cita pendiente, dejando la confirmación sin
+        // efecto y cayendo al pipeline general. Filtrando por
+        // cliente.telefono en la propia Cita, el duplicado deja de importar.
+        const citaPendiente = await prisma.cita.findFirst({
+          where: {
+            empresaId: empresa.id,
+            estado: 'PENDIENTE',
+            confirmacionIntentos: { gt: 0 },
+            cliente: { telefono: telefonoCliente },
+          },
+          orderBy: { fechaHoraInicio: 'asc' },
         });
-
-        const citaPendiente = clienteExistente
-          ? await prisma.cita.findFirst({
-              where: { empresaId: empresa.id, clienteId: clienteExistente.id, estado: 'PENDIENTE', confirmacionIntentos: { gt: 0 } },
-              orderBy: { fechaHoraInicio: 'asc' },
-            })
-          : null;
 
         if (citaPendiente) {
           const accessTokenCita = empresa.whatsappToken || process.env.WHATSAPP_ACCESS_TOKEN;
