@@ -63,8 +63,11 @@ function horasEntre(a, b) {
 }
 
 function formatearFechaHoraChile(fecha) {
+  // weekday: 'long' agrega el día de la semana (ej. "miércoles, 30 de
+  // septiembre") -- pedido explícito del usuario 2026-09-25, tras probar el
+  // recordatorio real y ver que solo mostraba el día del mes.
   const fechaLegible = fecha.toLocaleDateString('es-CL', {
-    day: 'numeric', month: 'long', timeZone: 'America/Santiago',
+    weekday: 'long', day: 'numeric', month: 'long', timeZone: 'America/Santiago',
   });
   const horaLegible = fecha.toLocaleTimeString('es-CL', {
     hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'America/Santiago',
