@@ -860,4 +860,4 @@ async function intentarFastPathTexto({ empresa, telefonoCliente, nombreContacto,
   return null;
 }
 
-module.exports = { procesarMensajeEntrante, procesarSeleccionInteractiva };
+module.exports = { procesarMensajeEntrante, procesarSeleccionInteractiva, esComandoGlobalOPregunta };

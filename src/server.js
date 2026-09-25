@@ -25,7 +25,7 @@ const {
   ID_FILA_SERVICIO_OTRO_DEMO,
 } = require('./services/whatsapp');
 const { fechaLegibleDesdeISO } = require('./lib/formatoFechas');
-const { procesarMensajeEntrante, procesarSeleccionInteractiva } = require('./services/chatbotEngine');
+const { procesarMensajeEntrante, procesarSeleccionInteractiva, esComandoGlobalOPregunta } = require('./services/chatbotEngine');
 const { sendInstagramTextMessage, armarTextoConInteractivo } = require('./services/instagram');
 const { sendFacebookTextMessage, armarTextoConInteractivo: armarTextoConInteractivoFacebook } = require('./services/facebook');
 const { renderFormulario, PLANES } = require('./services/contratoHtml');
@@ -1288,9 +1288,11 @@ app.post('/webhook/whatsapp', verificarFirmaWebhookWhatsApp, async (req, res) =>
     // Si el cliente tiene una cita PENDIENTE esperando confirmación
     // (ver src/jobs/confirmarCitasProximas.js), interpretamos un "sí"/"no"
     // corto como respuesta a esa confirmación, antes que nada — sin pasar
-    // por Claude. Si el mensaje no calza con ninguno de los dos patrones,
-    // seguimos al flujo normal (puede ser otra cosa, ej. "puedo cambiar la
-    // hora?").
+    // por Claude. Si el mensaje PARECE pregunta/comando (esComandoGlobalOPregunta),
+    // seguimos al flujo normal (ej. "puedo cambiar la hora?") -- para
+    // cualquier otro texto libre que no confirme ni cancele, se le insiste
+    // que toque el botón (2026-09-25) en vez de dejar que ese mensaje se
+    // pierda en el pipeline general.
     //
     // Un tap de botón (plantilla con "Sí, confirmo"/"No puedo", ver
     // confirmarCitasProximas.js#BOTONES_CONFIRMACION) se resuelve por el
@@ -1325,7 +1327,17 @@ app.post('/webhook/whatsapp', verificarFirmaWebhookWhatsApp, async (req, res) =>
       const pareceCancelar = payloadBoton === 'CANCELAR_CITA'
         || (mensaje.type === 'text' && /^\s*no(\s+puedo|\s+podr[eé])?\s*[.!]?\s*$|^\s*(cancelar|anular)\s*[.!]?\s*$/i.test(textoEntrante));
 
-      if (pareceConfirmar || pareceCancelar) {
+      // citaPendiente se busca no solo cuando pareceConfirmar/pareceCancelar
+      // calzó, sino para CUALQUIER texto libre que no parezca pregunta/
+      // comando -- así detectamos también "el cliente escribió cualquier
+      // cosa en vez de tocar el botón" para insistirle, en vez de dejar que
+      // ese mensaje se pierda en el pipeline general de Claude (raíz de los
+      // 3 incidentes reales del 24 y 25-sep). pareceConfirmar/pareceCancelar
+      // van PRIMERO en el OR a propósito: "no puedo" es un cancelar exacto
+      // válido pero esComandoGlobalOPregunta lo clasifica como pregunta (por
+      // la palabra "puedo", ver REGEX_PATRON_PREGUNTA en chatbotEngine.js)
+      // -- sin esta prioridad, "no puedo" dejaría de cancelar la cita.
+      if (pareceConfirmar || pareceCancelar || (mensaje.type === 'text' && !esComandoGlobalOPregunta(textoEntrante))) {
         const clienteExistente = await prisma.cliente.findFirst({
           where: { empresaId: empresa.id, telefono: telefonoCliente },
         });
@@ -1346,15 +1358,25 @@ app.post('/webhook/whatsapp', verificarFirmaWebhookWhatsApp, async (req, res) =>
               phoneNumberId, to: telefonoCliente, accessToken: accessTokenCita,
               text: '¡Gracias por confirmar! Tu cita queda lista ✅',
             });
-          } else {
+          } else if (pareceCancelar) {
             await prisma.cita.update({ where: { id: citaPendiente.id }, data: { estado: 'CANCELADA', canceladaPorNoConfirmar: false } });
             await sendWhatsAppTextMessage({
               phoneNumberId, to: telefonoCliente, accessToken: accessTokenCita,
               text: 'Entendido, cancelamos tu cita. Escríbenos cuando quieras agendar otra 🙌',
             });
+          } else {
+            // Ni confirmó ni canceló, ni parece pregunta/comando -- insiste
+            // con el botón en vez de dejar que caiga al pipeline general
+            // (que antes respondía con el menú de bienvenida, ver incidente
+            // 2026-09-25). No cuenta como un intento nuevo del ciclo de
+            // confirmarCitasProximas.js -- solo un recordatorio puntual.
+            await sendWhatsAppTextMessage({
+              phoneNumberId, to: telefonoCliente, accessToken: accessTokenCita,
+              text: 'Para confirmar o cancelar tu hora, por favor toca uno de los botones de arriba ("Sí, confirmo" / "No puedo") en vez de escribir 🙏',
+            });
           }
 
-          console.log(`Cita ${citaPendiente.id} ${pareceConfirmar ? 'confirmada' : 'cancelada'} por respuesta de texto (${empresa.nombre}).`);
+          console.log(`Cita ${citaPendiente.id}: ${pareceConfirmar ? 'confirmada' : pareceCancelar ? 'cancelada' : 'recordatorio de tocar botón'} (${empresa.nombre}).`);
           return; // ya respondimos, no seguir al flujo normal de Claude
         }
       }
