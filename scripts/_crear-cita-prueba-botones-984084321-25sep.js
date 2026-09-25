@@ -78,6 +78,7 @@ async function main() {
   const accessToken = descifrarSiCorresponde(empresa.whatsappToken);
   const nombreEmpresa = empresa.sucursal ? `${empresa.nombre} (${empresa.sucursal})` : empresa.nombre;
   const { fechaLegible, horaLegible } = formatearFechaHoraChile(inicio);
+  console.log(`🔎 Variables calculadas -- fechaLegible="${fechaLegible}" horaLegible="${horaLegible}"`);
 
   const resultado = await sendWhatsAppTemplateMessage({
     phoneNumberId: empresa.whatsappNumeroId,
