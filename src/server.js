@@ -1295,15 +1295,33 @@ app.post('/webhook/whatsapp', verificarFirmaWebhookWhatsApp, async (req, res) =>
     // Un tap de botón (plantilla con "Sí, confirmo"/"No puedo", ver
     // confirmarCitasProximas.js#BOTONES_CONFIRMACION) se resuelve por el
     // PAYLOAD exacto, con certeza total -- nunca por el texto visible del
-    // botón. Bug real (Ahorróptica, 2026-09-24): un cliente escribió "Si
-    // hay estaré a las 9:30" (una confirmación natural con contexto extra)
-    // y el regex, que exige match EXACTO, no lo reconoció -- cayó al
-    // pipeline general de Claude por error. El regex de texto libre queda
-    // como respaldo para quien sigue prefiriendo escribir en vez de tocar.
+    // botón. El regex de texto libre (pareceConfirmar/pareceCancelar, más
+    // abajo) queda como respaldo para quien sigue prefiriendo escribir en
+    // vez de tocar -- las plantillas con botón están PENDIENTES de
+    // aprobación de Meta al 2026-09-25, así que este respaldo es hoy el
+    // único camino real.
     if (mensaje.type === 'text' || mensaje.type === 'button') {
       const payloadBoton = mensaje.type === 'button' ? (mensaje.button?.payload || '') : null;
+      // pareceConfirmar ya NO exige match anclado (mensaje = SOLO la palabra)
+      // -- bug real (Ahorróptica, 2026-09-25): un cliente escribió "Hola,
+      // confirmo" y el regex anclado no lo reconoció por el saludo delante,
+      // cayendo al pipeline general de Claude (mandó el menú de bienvenida
+      // en vez de confirmar la cita) -- misma familia de falla que "Si hay
+      // estaré a las 9:30" (ver comentario de arriba, 2026-09-24). Ahora
+      // basta con que la palabra de confirmación aparezca suelta en un
+      // mensaje corto (<=40 caracteres), sin "no" ni signo de pregunta --
+      // evita mensajes largos/ambiguos o negaciones ("no, no puedo confirmar
+      // todavía"). pareceCancelar NO se toca a propósito: cancelar una cita
+      // por error es más costoso que no reconocer una confirmación.
+      // Límites de palabra Unicode-safe (\b de JS no reconoce tildes -- "sí"
+      // sin esto no calzaba: 'í' no cuenta como \w, así que \b nunca cierra
+      // después de la tilde).
+      const textoCorto = mensaje.type === 'text'
+        && textoEntrante.trim().length > 0 && textoEntrante.trim().length <= 40
+        && !/[?¿]/.test(textoEntrante);
+      const contieneNoSuelto = /(^|[^\p{L}])no([^\p{L}]|$)/iu.test(textoEntrante);
       const pareceConfirmar = payloadBoton === 'CONFIRMAR_CITA'
-        || (mensaje.type === 'text' && /^\s*(s[ií]|confirmo|confirmar|dale|ok|listo|correcto)\s*[.!]?\s*$/i.test(textoEntrante));
+        || (textoCorto && !contieneNoSuelto && /(^|[^\p{L}])(s[ií]|confirmo|confirmar|dale|ok|listo|correcto)([^\p{L}]|$)/iu.test(textoEntrante));
       const pareceCancelar = payloadBoton === 'CANCELAR_CITA'
         || (mensaje.type === 'text' && /^\s*no(\s+puedo|\s+podr[eé])?\s*[.!]?\s*$|^\s*(cancelar|anular)\s*[.!]?\s*$/i.test(textoEntrante));
 
