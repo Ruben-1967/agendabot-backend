@@ -23,19 +23,29 @@ const { descifrarSiCorresponde } = require('../lib/cifrado');
 const PLANTILLA_RECORDATORIO = 'confirmacion_cita_recordatorio'; // intentos 1 y 2, mismo texto -- ACTIVA
 const PLANTILLA_ULTIMO_AVISO = 'confirmacion_cita_ultimo_aviso'; // intento 3 -- ACTIVA
 
-// Variantes con botones "Sí, confirmo" / "No puedo" (2026-09-24) -- pedido
-// explícito tras un caso real (Ahorróptica, Carlos Silva): confirmar por
-// texto libre es ambiguo -- el cliente escribió "Si hay estaré a las 9:30"
-// y no calzó con el regex de confirmación (ver server.js), cayendo al
-// pipeline general de Claude por error. Los botones eliminan la ambigüedad
-// de raíz: el payload que vuelve al tocar un botón es exacto, ver
-// server.js (bloque de confirmación de citas). NO ACTIVAR (no reemplazar
-// las de arriba) hasta confirmar que Meta las aprobó -- ver
-// scripts/crear-plantilla-confirmacion-cita-botones-ahoroptica.js. Mismo
-// patrón de cutover que TEMPLATE_ALERTA_URGENTE_V2 en pausaCoexistence.js.
+// Variantes con botones "Sí, confirmo" / "No puedo" -- pedido explícito tras
+// 3 casos reales de confirmación por texto libre ambigua (Ahorróptica,
+// 2026-09-24 y 2026-09-25, ver server.js bloque de confirmación de citas).
+// Los botones eliminan la ambigüedad de raíz: el payload que vuelve al
+// tocar un botón es exacto. ACTIVADAS 2026-09-25 -- Meta aprobó las 2
+// plantillas de la WABA de Ahorróptica (verificado con
+// scripts/_ver-plantillas-ahoroptica-produccion.js, status APPROVED).
+// Mismo patrón de cutover que TEMPLATE_ALERTA_URGENTE_V2 en
+// pausaCoexistence.js.
+//
+// Solo Ahorróptica tiene estas plantillas creadas/aprobadas en SU WABA --
+// cualquier otra empresa real (LuxVision, Alejandro Barber) necesitaría
+// crear y aprobar sus propias antes de sumarse acá, o Meta rechaza el envío
+// (plantilla inexistente en esa WABA). Por eso el cutover es por empresa.id,
+// no global.
+const EMPRESA_ID_AHOROPTICA = 'ahoroptica-lautaro-seed-id';
 const PLANTILLA_RECORDATORIO_BOTONES = 'confirmacion_cita_recordatorio_botones';
 const PLANTILLA_ULTIMO_AVISO_BOTONES = 'confirmacion_cita_ultimo_aviso_botones';
 const BOTONES_CONFIRMACION = [{ payload: 'CONFIRMAR_CITA' }, { payload: 'CANCELAR_CITA' }];
+
+function elegirPlantilla(empresa, { conBotones, sinBotones }) {
+  return empresa.id === EMPRESA_ID_AHOROPTICA ? conBotones : sinBotones;
+}
 
 const HORAS_ANTES_PRIMER_INTENTO = 24;
 const HORAS_ENTRE_INTENTOS = 1;
@@ -122,7 +132,9 @@ async function procesarConfirmacionesDeCitas() {
         ) {
           await sendWhatsAppTemplateMessage({
             phoneNumberId: empresa.whatsappNumeroId, to: cliente.telefono, accessToken,
-            templateName: PLANTILLA_RECORDATORIO, variables,
+            templateName: elegirPlantilla(empresa, { conBotones: PLANTILLA_RECORDATORIO_BOTONES, sinBotones: PLANTILLA_RECORDATORIO }),
+            variables,
+            botonesQuickReply: empresa.id === EMPRESA_ID_AHOROPTICA ? BOTONES_CONFIRMACION : undefined,
           });
           await prisma.cita.update({
             where: { id: cita.id },
@@ -133,7 +145,9 @@ async function procesarConfirmacionesDeCitas() {
       } else if (cita.confirmacionIntentos === 1 && horasDesdeUltimoEnvio >= HORAS_ENTRE_INTENTOS) {
         await sendWhatsAppTemplateMessage({
           phoneNumberId: empresa.whatsappNumeroId, to: cliente.telefono, accessToken,
-          templateName: PLANTILLA_RECORDATORIO, variables,
+          templateName: elegirPlantilla(empresa, { conBotones: PLANTILLA_RECORDATORIO_BOTONES, sinBotones: PLANTILLA_RECORDATORIO }),
+          variables,
+          botonesQuickReply: empresa.id === EMPRESA_ID_AHOROPTICA ? BOTONES_CONFIRMACION : undefined,
         });
         await prisma.cita.update({
           where: { id: cita.id },
@@ -143,7 +157,9 @@ async function procesarConfirmacionesDeCitas() {
       } else if (cita.confirmacionIntentos === 2 && horasDesdeUltimoEnvio >= HORAS_ENTRE_INTENTOS) {
         await sendWhatsAppTemplateMessage({
           phoneNumberId: empresa.whatsappNumeroId, to: cliente.telefono, accessToken,
-          templateName: PLANTILLA_ULTIMO_AVISO, variables,
+          templateName: elegirPlantilla(empresa, { conBotones: PLANTILLA_ULTIMO_AVISO_BOTONES, sinBotones: PLANTILLA_ULTIMO_AVISO }),
+          variables,
+          botonesQuickReply: empresa.id === EMPRESA_ID_AHOROPTICA ? BOTONES_CONFIRMACION : undefined,
         });
         await prisma.cita.update({
           where: { id: cita.id },
