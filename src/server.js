@@ -1098,17 +1098,34 @@ app.post('/webhook/whatsapp', verificarFirmaWebhookWhatsApp, async (req, res) =>
     // mensaje.type === 'interactive' con button_reply.id (eso es solo para
     // botones interactivos libres tipo sendWhatsAppReplyButtons, que no
     // sirven acá porque solo funcionan dentro de la ventana de 24h).
-    // sendWhatsAppTemplateMessage no soporta un payload/id personalizado por
-    // botón, así que se hace match por el TEXTO exacto del botón — distinto
-    // del patrón de texto libre "sí"/"no" (más abajo) porque el regex de ese
-    // patrón exige que el mensaje sea SOLO esa palabra corta, y estos
-    // botones tienen texto más largo ("Sí, asisto" / "No puedo").
+    // recordatoriosFicha.js NO pasa botonesQuickReply al enviar esta
+    // plantilla, así que Meta le asigna como payload el propio TEXTO del
+    // botón por defecto -- se verifica texto Y payload para distinguirlo de
+    // otro flujo que por coincidencia use el mismo texto visible pero SÍ
+    // pase un payload propio (ver bug real de abajo).
     // Solo aplica a modo ESCALONADO (SIMPLE nunca pide confirmación).
+    //
+    // Bug real (Ahorróptica, 2026-09-25): la plantilla de confirmación de
+    // CITA (confirmarCitasProximas.js) usa el mismo texto visible "No
+    // puedo" para su botón de cancelar -- coincidencia de redacción, no
+    // relacionado a este flujo. Como este bloque corre PRIMERO y matcheaba
+    // solo por texto, se comía silenciosamente cualquier tap de "No puedo"
+    // de una cita (sin atención de ficha pendiente, así que ni mandaba
+    // nada) antes de que llegara al bloque real de confirmación de citas
+    // más abajo -- cancelar una cita por botón no hacía NADA. Ahora exige
+    // que el payload sea igual al texto (comportamiento por defecto de Meta
+    // cuando no se pasa botonesQuickReply) -- el botón de cita usa el
+    // payload propio 'CANCELAR_CITA', así que ya no colisiona.
     // ------------------------------------------------------------
     if (mensaje.type === 'button') {
       const textoBotonFicha = mensaje.button?.text || '';
+      const payloadBotonFicha = mensaje.button?.payload || '';
 
-      if (textoBotonFicha === 'Sí, asisto' || textoBotonFicha === 'No puedo') {
+      const esBotonDeEsteFlujo =
+        (textoBotonFicha === 'Sí, asisto' && payloadBotonFicha === 'Sí, asisto') ||
+        (textoBotonFicha === 'No puedo' && payloadBotonFicha === 'No puedo');
+
+      if (esBotonDeEsteFlujo) {
         const clienteFicha = await prisma.cliente.findFirst({
           where: { empresaId: empresa.id, telefono: telefonoCliente },
         });
