@@ -609,9 +609,31 @@ async function procesarSeleccionInteractivaSinLock({ empresa, telefonoCliente, n
         // el cliente preguntó algo, o dijo que no tiene el RUT a mano) --
         // se usa su respuesta puntual tal cual, sin avanzar nada.
         respuestaTexto = extraido.texto;
+      } else if (
+        extraido.rut
+        && reservaEnCurso.rut
+        && reservaEnCurso.rut !== extraido.rut
+        && reservaEnCurso.rutCandidatoAmbiguo !== extraido.rut
+      ) {
+        // Guardia contra pisar en silencio un RUT que ya se le había
+        // confirmado al cliente -- bug real (Ahorróptica, 2026-09-28):
+        // Jessica confirmó su RUT, y al pedirle el teléfono tipeó por
+        // error el RUT de Hugo (otra persona agendando desde el mismo
+        // teléfono en la misma conversación) -- el extractor lo tomó como
+        // una corrección legítima y lo pisó sin avisar; la cita de
+        // Jessica quedó guardada con el RUT de Hugo. Nunca reemplazar un
+        // RUT ya confirmado sin que el cliente lo confirme de nuevo --
+        // se guarda como candidato pendiente (rutCandidatoAmbiguo) y solo
+        // se aplica si el cliente lo repite en su próximo mensaje (ver la
+        // rama de abajo, donde deja de ser "distinto al candidato").
+        reservaEnCurso = { ...reservaEnCurso, rutCandidatoAmbiguo: extraido.rut };
+        if (extraido.telefono && reservaEnCurso.telefonoContacto !== extraido.telefono) {
+          reservaEnCurso = { ...reservaEnCurso, telefonoContacto: extraido.telefono };
+        }
+        respuestaTexto = `Ya tenía registrado tu RUT como ${reservaEnCurso.rut}, pero en tu último mensaje veo uno distinto: ${extraido.rut}. ¿Es tu RUT correcto (lo cambio) o es el de otra persona (seguimos con ${reservaEnCurso.rut})? Si quieres cambiarlo, vuelve a escribírmelo.`;
       } else {
         if (extraido.rut && reservaEnCurso.rut !== extraido.rut) {
-          reservaEnCurso = { ...reservaEnCurso, rut: extraido.rut };
+          reservaEnCurso = { ...reservaEnCurso, rut: extraido.rut, rutCandidatoAmbiguo: null };
         }
         if (extraido.telefono && reservaEnCurso.telefonoContacto !== extraido.telefono) {
           reservaEnCurso = { ...reservaEnCurso, telefonoContacto: extraido.telefono };
