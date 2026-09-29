@@ -360,34 +360,44 @@ router.post('/flow-webhook-collect', async (req, res) => {
   }
 });
 
+// El subscriptionId de Flow siempre empieza con "sus_" (ver crearSuscripcionFlow)
+// -- ancla la extracción desde commerceOrder sin depender del resto del
+// formato (invoiceId numérico + fecha con espacios, que Flow arma solo).
+const REGEX_SUBSCRIPTION_ID_DESDE_COMERCIO_ORDEN = /^(sus_[^_]+)_(\d+)_/;
+
 /**
  * POST /suscripcion/flow-webhook-plan
  * urlCallback configurado en cada Plan de Flow (ver scripts/crear-planes-flow.js).
  * Flow llama acá en cada cobro automático de período — a partir del segundo
  * ciclo de cada suscripción, ya que el primero lo cubre /flow-webhook-collect.
  *
- * RIESGO CONOCIDO: el formato exacto del payload que Flow POSTea para cobros
- * de suscripción (¿trae subscriptionId directo, o solo un token a resolver
- * vía getStatus, como en pagos únicos?) no está confirmado en la
- * documentación pública — hay que validarlo contra un cobro real en Sandbox
- * y ajustar la extracción de subscriptionId/estado si hace falta.
- * Confirmado en flow-webhook-collect que Flow NO firma estos POST (llegan
- * sin campo `s`) — si este payload también viene solo con un token, hay
- * que resolverlo vía una consulta propia (firmada) a Flow antes de confiar
- * en subscriptionId/status del body directamente, igual que hace
- * flow-webhook-collect con consultarEstado(token).
+ * Confirmado contra un cobro real en Sandbox (2026-09-29/30): el payload
+ * viene SOLO con `{ token }`, sin firma (`s`) ni subscriptionId/status/amount
+ * directo -- igual que flow-webhook-collect. Se resuelve con la misma
+ * consultarEstado(token) (firmada, llamada nuestra hacia Flow), que además
+ * devuelve `comercioOrden` con el formato real observado
+ * "sus_<id>_<invoiceId>_<fecha>" -- de ahí se extrae el subscriptionId real
+ * para encontrar la Suscripcion (nunca se confía en nada del body del POST).
  */
 router.post('/flow-webhook-plan', async (req, res) => {
   try {
     console.log('[flow-webhook-plan] Payload recibido:', JSON.stringify(req.body));
 
-    const subscriptionId = req.body.subscriptionId || req.body.subscription_id;
-    // status típico de Flow: 1=Iniciado/Pendiente, 2=Pagado, 3=Rechazado, 4=Anulado
-    const exitoso = String(req.body.status) === '2';
+    const token = req.body.token;
+    if (!token) {
+      console.error('[flow-webhook-plan] Payload sin token reconocible:', req.body);
+      return res.status(200).send('OK'); // 200 igual, para que Flow no reintente indefinidamente
+    }
 
+    const estadoFlow = await flowClient.consultarEstado(token);
+    // estado: 1=Iniciado, 2=Pagado, 3=Rechazado, 4=Anulado (mismo enum que flow-webhook-collect)
+    const exitoso = String(estadoFlow.estado) === '2';
+
+    const matchOrden = REGEX_SUBSCRIPTION_ID_DESDE_COMERCIO_ORDEN.exec(estadoFlow.comercioOrden || '');
+    const subscriptionId = matchOrden ? matchOrden[1] : null;
     if (!subscriptionId) {
-      console.error('[flow-webhook-plan] Payload sin subscriptionId reconocible, revisar formato real de Flow:', req.body);
-      return res.status(200).send('OK'); // 200 igual, para que Flow no reintente indefinidamente mientras se investiga
+      console.error('[flow-webhook-plan] No se pudo extraer subscriptionId de comercioOrden:', estadoFlow.comercioOrden);
+      return res.status(200).send('OK');
     }
 
     const suscripcion = await prisma.suscripcion.findFirst({
@@ -417,9 +427,9 @@ router.post('/flow-webhook-plan', async (req, res) => {
           data: {
             suscripcionId: suscripcion.id,
             tipo,
-            monto: Number(req.body.amount) || suscripcion.montoMensualActual,
+            monto: Number(estadoFlow.monto) || suscripcion.montoMensualActual,
             estado: 'FALLIDO',
-            flowOrderId: subscriptionId,
+            flowOrderId: token,
           },
         });
       });
@@ -435,7 +445,7 @@ router.post('/flow-webhook-plan', async (req, res) => {
       nuevaFecha.setMonth(nuevaFecha.getMonth() + 1);
     }
 
-    const monto = Number(req.body.amount) || (esHosting ? undefined : suscripcion.montoMensualActual);
+    const monto = Number(estadoFlow.monto) || (esHosting ? undefined : suscripcion.montoMensualActual);
 
     await prisma.$transaction(async (tx) => {
       await tx.suscripcion.update({
@@ -454,7 +464,7 @@ router.post('/flow-webhook-plan', async (req, res) => {
           monto: monto || 0,
           valorUfDelDia: esHosting ? monto : undefined,
           estado: 'EXITOSO',
-          flowOrderId: subscriptionId,
+          flowOrderId: token,
         },
       });
     });
