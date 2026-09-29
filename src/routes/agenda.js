@@ -481,7 +481,8 @@ router.put('/recurso', requireRole('ADMIN'), async (req, res) => {
 // adelante). Válido según el límite del plan de la empresa:
 //   PLAN_A / PLAN_INICIO_LEGACY / sin Suscripcion -> 1 profesional
 //   PLAN_B                                        -> 2 profesionales
-//   PLAN_C                                         -> ilimitado
+//   PLAN_C                                         -> 5 profesionales
+//   PLAN_D                                         -> ilimitado
 // Si se supera el límite, responde 402 con mensaje de upsell (no
 // bloquea la UI, el botón "Agregar profesional" siempre está visible
 // para todos los planes).
@@ -490,7 +491,8 @@ router.put('/recurso', requireRole('ADMIN'), async (req, res) => {
 const LIMITES_PROFESIONALES = {
   PLAN_A: 1,
   PLAN_B: 2,
-  PLAN_C: Infinity,
+  PLAN_C: 5,
+  PLAN_D: Infinity,
   PLAN_INICIO_LEGACY: 1,
 };
 
@@ -988,12 +990,15 @@ router.patch('/citas/:id/estado', requireRole('ADMIN', 'RECEPCION'), async (req,
 // GET /agenda/disponibilidad/:recursoId?fecha=YYYY-MM-DD — horas libres de
 // un recurso en una fecha puntual, usando el motor real de disponibilidad
 // (src/services/disponibilidad.js, el mismo que usa el bot — ya respeta
-// HorarioExcepcion). Alimenta el selector de "Reagendar" de Tabla de citas.
+// HorarioExcepcion). Alimenta el selector de "Reagendar" de Tabla de citas
+// y el de "Agendar" de Lista de Espera.
 //
-// NO usar /disponibilidad/:recursoId (src/routes/disponibilidad.js) para
-// esto — ese endpoint depende de disponibilidadService.js, que quedó de un
-// diseño "Opción C" nunca migrado al schema actual (usa modelos Profesional
-// / BloqueoProfesional que no existen) y falla en cuanto se lo llama.
+// Existió una ruta vieja /disponibilidad/:recursoId (src/routes/disponibilidad.js)
+// que dependía de un lib/disponibilidadService.js de un diseño "Opción C"
+// nunca migrado al schema actual (modelos Profesional/BloqueoProfesional
+// inexistentes) — fallaba en cuanto se la llamaba. Se eliminó junto con su
+// único consumidor real, CalendarPickerModal.jsx, al migrar Lista de Espera
+// a este mismo endpoint.
 // ------------------------------------------------------------
 router.get('/disponibilidad/:recursoId', requireRole('ADMIN', 'RECEPCION'), async (req, res) => {
   try {

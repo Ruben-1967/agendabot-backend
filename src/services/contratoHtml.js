@@ -2,10 +2,18 @@
 // con la identidad visual de MultiDigital (acordeón de cláusulas, paleta
 // teal/brass, tipografía Fraunces + Inter + IBM Plex Mono).
 
+// Precios revisados 2026-09-30 contra comparativa de mercado (AgendaPro,
+// aibot.cl) y costo real medido (Anthropic + exposición de Meta service
+// messages desde oct-2026, ver memoria del proyecto) -- citasIncluidas y
+// precioCitaExcedente calibrados para que el excedente sea siempre más caro
+// que la tarifa ya incluida (antes Plan C tenía esto invertido). El límite
+// de profesionales por plan vive aparte, en LIMITES_PROFESIONALES
+// (src/routes/agenda.js): A=1, B=2, C=5, D=ilimitado.
 const PLANES = {
-  PLAN_A: { etiqueta: 'Plan A', montoMensual: 9900, citasIncluidas: 100, precioCitaExcedente: 150 },
-  PLAN_B: { etiqueta: 'Plan B', montoMensual: 19900, citasIncluidas: 300, precioCitaExcedente: 90 },
-  PLAN_C: { etiqueta: 'Plan C', montoMensual: 49900, citasIncluidas: 700, precioCitaExcedente: 60 },
+  PLAN_A: { etiqueta: 'Plan A', montoMensual: 14900, citasIncluidas: 150, precioCitaExcedente: 130 },
+  PLAN_B: { etiqueta: 'Plan B', montoMensual: 24900, citasIncluidas: 400, precioCitaExcedente: 85 },
+  PLAN_C: { etiqueta: 'Plan C', montoMensual: 59900, citasIncluidas: 1000, precioCitaExcedente: 70 },
+  PLAN_D: { etiqueta: 'Plan D', montoMensual: 99900, citasIncluidas: 2500, precioCitaExcedente: 55 },
 };
 
 function renderFormulario(empresa) {

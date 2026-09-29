@@ -6,6 +6,7 @@ const LIMITES_CATALOGO_POR_PLAN = {
   PLAN_A: { maxPorCategoria: 6, maxTotal: 24 },
   PLAN_B: { maxPorCategoria: 12, maxTotal: 48 },
   PLAN_C: { maxPorCategoria: 18, maxTotal: 72 },
+  PLAN_D: { maxPorCategoria: 24, maxTotal: 96 },
   PLAN_INICIO_LEGACY: { maxPorCategoria: 6, maxTotal: 24 }, // mismo tope que Plan A
 };
 

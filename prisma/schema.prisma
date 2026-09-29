@@ -787,6 +787,7 @@ enum PlanSuscripcion {
   PLAN_A
   PLAN_B
   PLAN_C
+  PLAN_D // ilimitado -- profesionales sin límite, ver LIMITES_PROFESIONALES (agenda.js)
   PLAN_INICIO_LEGACY // condiciones especiales de Ahorróptica, pre-grilla A/B/C
 }
 
