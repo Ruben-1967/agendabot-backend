@@ -26,4 +26,16 @@ const limitadorResetPassword = rateLimit({
   message: { error: 'Demasiadas solicitudes. Intenta de nuevo más tarde.' },
 });
 
-module.exports = { limitadorLogin, limitadorResetPassword };
+// Límite de solicitudes de código de acceso (login sin contraseña) — 8 cada
+// 15 minutos por IP, más estricto que limitadorLogin porque cada solicitud
+// dispara un WhatsApp real con costo (plantilla AUTHENTICATION) -- mismo
+// valor que usa el proyecto hermano Norman para este mismo endpoint.
+const limitadorCodigo = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutos
+  max: 8,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Demasiados códigos solicitados, prueba de nuevo en unos minutos.' },
+});
+
+module.exports = { limitadorLogin, limitadorResetPassword, limitadorCodigo };

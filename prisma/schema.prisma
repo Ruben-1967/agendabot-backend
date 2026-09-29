@@ -256,7 +256,19 @@ model Usuario {
 
   nombre    String
   email     String     @unique
-  passwordHash String
+  // Nullable desde el login sin contraseña (código WhatsApp, ver CodigoAcceso
+  // más abajo) -- una cuenta que solo entra por código nunca tiene una
+  // contraseña real, el valor que trae desde convertir-a-cliente-real es un
+  // hash aleatorio inutilizable que nadie conoce. Mismo criterio que Norman
+  // (proyecto hermano), adaptado: acá SÍ puede quedar null en vez de siempre
+  // tener un valor descartable.
+  passwordHash String?
+  // Login sin contraseña -- identifica al Usuario para recibir el código de
+  // 6 dígitos por WhatsApp (ver POST /auth/solicitar-codigo). Nullable
+  // porque las cuentas existentes (creadas antes de esta feature) no tienen
+  // teléfono vinculado todavía -- para esas, el login sigue siendo
+  // email+contraseña hasta que alguien agregue su teléfono.
+  telefono  String?    @unique
   rol       RolUsuario
 
   // Si el usuario es un profesional, se vincula a su recurso agendable
@@ -273,6 +285,26 @@ model Usuario {
   fechaActivacionCuenta DateTime? // cuándo definió su contraseña por primera vez — ancla del aviso de pago pendiente
 
   @@index([empresaId])
+}
+
+// ------------------------------------------------------------
+// LOGIN SIN CONTRASEÑA -- código de 6 dígitos por WhatsApp
+// (mismo patrón que el proyecto hermano Norman, ver
+// POST /auth/solicitar-codigo y POST /auth/verificar-codigo en auth.js).
+// Sin FK a Usuario a propósito -- se identifica solo por teléfono (string),
+// consistente con que Usuario.telefono también puede ser null (cuenta
+// legacy sin teléfono vinculado todavía).
+// ------------------------------------------------------------
+model CodigoAcceso {
+  id         String   @id @default(uuid())
+  telefono   String
+  codigoHash String
+  expiraEn   DateTime
+  intentos   Int      @default(0)
+
+  creadoEn DateTime @default(now())
+
+  @@index([telefono])
 }
 
 // ------------------------------------------------------------

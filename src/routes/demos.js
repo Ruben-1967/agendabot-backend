@@ -14,6 +14,12 @@ const express = require('express');
 const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
 const { parsePhoneNumberFromString } = require('libphonenumber-js');
+// Alias -- ya existe una normalizarTelefono() LOCAL más abajo en este mismo
+// archivo (línea ~37, usada al crear una demo), pero esa exige un paisIso
+// explícito y no sirve para un número ya guardado sin "+" (formato WhatsApp,
+// ej. "56912345678") como demo.telefono. Esta versión (misma que usa
+// POST /auth/solicitar-codigo) antepone el "+" sola si falta.
+const { normalizarTelefono: normalizarTelefonoConMas } = require('../lib/normalizarTelefono');
 const prisma = require('../lib/prisma');
 const { obtenerUrlPanelPrincipal } = require('../lib/urlPanel');
 const { eliminarEmpresaCompleta, traducirErrorRestriccionEmpresa } = require('../lib/eliminarEmpresaCompleta');
@@ -772,12 +778,20 @@ router.post('/convertir-a-cliente-real', requireAuth, requireRole('VENDEDOR'), a
           });
         }
 
+        // telefono habilita el login sin contraseña (ver POST
+        // /auth/solicitar-codigo) desde el primer minuto -- demo.telefono es
+        // el número real con el que el prospecto ya habló con el bot de
+        // demo, no un dato nuevo que haya que pedirle. normalizarTelefono
+        // devuelve null si no es válido (no debería pasar, ya se validó al
+        // crear la demo, pero nunca se asume) -- Usuario.telefono es
+        // nullable justamente para este caso.
         await tx.usuario.create({
           data: {
             empresaId: empresaReal.id,
             nombre: demo.nombreProspecto || demo.empresaDemo.nombre,
             email,
             passwordHash: passwordHashTemporal,
+            telefono: normalizarTelefonoConMas(demo.telefono),
             rol: 'ADMIN',
             tokenActivacion,
             tokenActivacionExpira,
@@ -806,6 +820,14 @@ router.post('/convertir-a-cliente-real', requireAuth, requireRole('VENDEDOR'), a
       }));
     } catch (errTx) {
       if (errTx.code === 'P2002') {
+        // Usuario.telefono también es @unique desde el login sin contraseña
+        // (ver POST /auth/solicitar-codigo) -- un P2002 acá ya no es
+        // necesariamente el email. meta.target trae el/los campo(s) reales
+        // de la restricción violada.
+        const campo = errTx.meta?.target?.[0];
+        if (campo === 'telefono') {
+          return res.status(400).json({ error: 'Ese teléfono ya está vinculado a otra cuenta -- probablemente esta persona ya tiene un negocio registrado.' });
+        }
         return res.status(400).json({ error: 'Ese correo ya está en uso por otra cuenta' });
       }
       throw errTx;

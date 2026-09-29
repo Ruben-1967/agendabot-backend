@@ -144,6 +144,57 @@ async function sendWhatsAppTemplateMessage({ phoneNumberId, to, accessToken, tem
 }
 
 /**
+ * Envía el código de acceso (login sin contraseña) por WhatsApp usando una
+ * plantilla categoría AUTHENTICATION de Meta -- distinta de una plantilla
+ * UTILITY normal, exige un formato de componentes específico que
+ * sendWhatsAppTemplateMessage (arriba) no arma: además del body con el
+ * código, un botón `copy_code` con el mismo código como `coupon_code`
+ * (Meta renderiza esto como un botón "Copiar código" en WhatsApp). Mismo
+ * patrón ya probado en el proyecto hermano Norman
+ * (norman-medicamentos/src/services/whatsapp.js#sendWhatsAppOtpMessage).
+ *
+ * @param {Object} params
+ * @param {string} params.phoneNumberId
+ * @param {string} params.to
+ * @param {string} params.accessToken
+ * @param {string} params.templateName - Plantilla AUTHENTICATION aprobada (ej. 'agendabot_codigo_acceso').
+ * @param {string|number} params.codigo - Código de 6 dígitos, ya generado.
+ */
+async function sendWhatsAppOtpMessage({ phoneNumberId, to, accessToken, templateName, codigo }) {
+  const url = `https://graph.facebook.com/${GRAPH_API_VERSION}/${phoneNumberId}/messages`;
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${accessToken}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      messaging_product: 'whatsapp',
+      to,
+      type: 'template',
+      template: {
+        name: templateName,
+        language: { code: 'es' },
+        components: [
+          { type: 'body', parameters: [{ type: 'text', text: String(codigo) }] },
+          { type: 'button', sub_type: 'copy_code', index: '0', parameters: [{ type: 'coupon_code', coupon_code: String(codigo) }] },
+        ],
+      },
+    }),
+  });
+
+  const data = await response.json();
+
+  if (!response.ok) {
+    console.error(`Error enviando plantilla OTP "${templateName}":`, JSON.stringify(data, null, 2));
+    throw new Error(`WhatsApp API error: ${data.error?.message || response.statusText}`);
+  }
+
+  return data;
+}
+
+/**
  * Envía un mensaje de tipo imagen, referenciando la imagen por URL directa
  * (Cloudinary) en vez de subirla primero a la Media API de Meta — más simple
  * y sin lógica de expiración de media_id (vence a los 30 días). Meta cachea
@@ -520,6 +571,7 @@ module.exports = {
   obtenerCalidadWhatsApp,
   sendWhatsAppTextMessage,
   sendWhatsAppTemplateMessage,
+  sendWhatsAppOtpMessage,
   sendWhatsAppImageMessage,
   sendWhatsAppInteractiveList,
   sendWhatsAppReplyButtons,

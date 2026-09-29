@@ -4,8 +4,9 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const prisma = require('../lib/prisma');
 const { requireAuth, JWT_SECRET } = require('../middleware/auth');
-const { limitadorLogin, limitadorResetPassword } = require('../middleware/rateLimiting');
-const { sendWhatsAppTemplateMessage } = require('../services/whatsapp');
+const { limitadorLogin, limitadorResetPassword, limitadorCodigo } = require('../middleware/rateLimiting');
+const { sendWhatsAppTemplateMessage, sendWhatsAppOtpMessage } = require('../services/whatsapp');
+const { normalizarTelefono, ERROR_TELEFONO_INVALIDO } = require('../lib/normalizarTelefono');
 const { obtenerUrlPanelPrincipal } = require('../lib/urlPanel');
 const router = express.Router();
 const TOKEN_EXPIRA_EN = '12h';
@@ -47,6 +48,16 @@ router.post('/login', limitadorLogin, async (req, res) => {
     // Mismo mensaje genérico si el email no existe o la clave no calza,
     // para no revelar cuáles emails están registrados.
     if (!usuario) {
+      return res.status(401).json({ error: 'Email o contraseña incorrectos' });
+    }
+
+    // passwordHash es nullable desde que existe el login sin contraseña (ver
+    // POST /auth/solicitar-codigo más abajo) -- una cuenta que solo entra
+    // por código nunca tiene un hash real. bcrypt.compare truena si se le
+    // pasa null en vez de simplemente devolver false, así que se corta
+    // antes con el mismo mensaje genérico (no revela si el teléfono/código
+    // es el método real de esa cuenta).
+    if (!usuario.passwordHash) {
       return res.status(401).json({ error: 'Email o contraseña incorrectos' });
     }
 
@@ -247,6 +258,173 @@ router.post('/solicitar-reset-password', limitadorResetPassword, async (req, res
 });
 
 // ------------------------------------------------------------
+// LOGIN SIN CONTRASEÑA -- código de 6 dígitos por WhatsApp
+// (mismo patrón que el proyecto hermano Norman: solicitar-codigo /
+// verificar-codigo, ver norman-medicamentos/src/routes/auth.js).
+//
+// Distinto de Norman en un punto clave: acá NO se auto-crea una cuenta
+// nueva si el teléfono no existe -- un Usuario ya se creó antes, por un
+// Vendedor vía POST /demos/convertir-a-cliente-real. Este flujo solo sirve
+// para volver a entrar a una cuenta que YA tiene el teléfono vinculado.
+// ------------------------------------------------------------
+const PLANTILLA_CODIGO_ACCESO = 'agendabot_codigo_acceso'; // categoría AUTHENTICATION en Meta
+const CODIGO_EXPIRA_MINUTOS = 10;
+const CODIGO_MAX_INTENTOS = 5;
+// Sesión larga a propósito -- el login sin contraseña existe justamente
+// para no tener que volver a pedirle nada al negocio; 30 días es el mismo
+// criterio que ya usa Norman para su login por código.
+const TOKEN_EXPIRA_EN_CODIGO = '30d';
+
+function generarCodigoAcceso() {
+  return String(crypto.randomInt(0, 1000000)).padStart(6, '0');
+}
+
+// ------------------------------------------------------------
+// POST /auth/solicitar-codigo
+// body: { telefono }
+// ------------------------------------------------------------
+router.post('/solicitar-codigo', limitadorCodigo, async (req, res) => {
+  try {
+    const { telefono } = req.body;
+    if (!telefono) {
+      return res.status(400).json({ error: 'Falta el teléfono' });
+    }
+
+    const telefonoLimpio = normalizarTelefono(telefono);
+    if (!telefonoLimpio) {
+      return res.status(400).json({ error: ERROR_TELEFONO_INVALIDO });
+    }
+
+    const usuario = await prisma.usuario.findUnique({ where: { telefono: telefonoLimpio } });
+    if (!usuario) {
+      return res.status(404).json({ error: 'Este número no está vinculado a ninguna cuenta. Si ya te suscribiste, revisa el WhatsApp de bienvenida, o contáctanos.' });
+    }
+
+    const codigo = process.env.MODO_PRUEBA_LOGIN === 'true' ? '123456' : generarCodigoAcceso();
+    const codigoHash = await bcrypt.hash(codigo, 10);
+
+    await prisma.codigoAcceso.create({
+      data: {
+        telefono: telefonoLimpio,
+        codigoHash,
+        expiraEn: new Date(Date.now() + CODIGO_EXPIRA_MINUTOS * 60 * 1000),
+      },
+    });
+
+    try {
+      const phoneNumberId = process.env.DEMO_PHONE_NUMBER_ID;
+      const accessToken = process.env.DEMO_WHATSAPP_ACCESS_TOKEN;
+      if (!phoneNumberId || !accessToken) {
+        throw new Error('Falta DEMO_PHONE_NUMBER_ID/DEMO_WHATSAPP_ACCESS_TOKEN en el entorno');
+      }
+      await sendWhatsAppOtpMessage({
+        phoneNumberId,
+        accessToken,
+        to: telefonoLimpio,
+        templateName: PLANTILLA_CODIGO_ACCESO,
+        codigo,
+      });
+    } catch (errWhatsapp) {
+      // MODO_PRUEBA_LOGIN: mientras la plantilla AUTHENTICATION no esté
+      // aprobada (o para probar en staging sin gastar WhatsApp real), el
+      // código queda logueado en vez de cortar el flujo -- ver memoria del
+      // proyecto hermano Norman, mismo criterio. Apagar apenas la plantilla
+      // se apruebe: no debe quedar prendido con clientes reales, deja
+      // códigos visibles en logs de Render.
+      if (process.env.MODO_PRUEBA_LOGIN === 'true') {
+        console.warn(`[MODO_PRUEBA_LOGIN] Código de acceso para ${telefonoLimpio}: ${codigo}`);
+      } else {
+        console.error('[solicitar-codigo] Error enviando WhatsApp:', errWhatsapp.message);
+        return res.status(502).json({ error: 'No pudimos enviar el código por WhatsApp. Intenta de nuevo en unos minutos.' });
+      }
+    }
+
+    res.json({ ok: true });
+  } catch (error) {
+    console.error('Error en /auth/solicitar-codigo:', error);
+    res.status(500).json({ error: 'Error al solicitar el código' });
+  }
+});
+
+// ------------------------------------------------------------
+// POST /auth/verificar-codigo
+// body: { telefono, codigo }
+// ------------------------------------------------------------
+router.post('/verificar-codigo', limitadorLogin, async (req, res) => {
+  try {
+    const { telefono, codigo } = req.body;
+    if (!telefono || !codigo) {
+      return res.status(400).json({ error: 'Faltan teléfono o código' });
+    }
+
+    const telefonoLimpio = normalizarTelefono(telefono);
+    if (!telefonoLimpio) {
+      return res.status(400).json({ error: ERROR_TELEFONO_INVALIDO });
+    }
+
+    const registro = await prisma.codigoAcceso.findFirst({
+      where: { telefono: telefonoLimpio, expiraEn: { gt: new Date() } },
+      orderBy: { creadoEn: 'desc' },
+    });
+    if (!registro) {
+      return res.status(401).json({ error: 'El código venció o no fue solicitado. Pide uno nuevo.' });
+    }
+    if (registro.intentos >= CODIGO_MAX_INTENTOS) {
+      return res.status(401).json({ error: 'Demasiados intentos con este código. Pide uno nuevo.' });
+    }
+
+    const codigoValido = await bcrypt.compare(String(codigo).trim(), registro.codigoHash);
+    if (!codigoValido) {
+      await prisma.codigoAcceso.update({ where: { id: registro.id }, data: { intentos: { increment: 1 } } });
+      return res.status(401).json({ error: 'Código incorrecto' });
+    }
+
+    // Uso único -- se borra apenas se valida, para que no se pueda reusar.
+    await prisma.codigoAcceso.delete({ where: { id: registro.id } });
+
+    const usuario = await prisma.usuario.findUnique({
+      where: { telefono: telefonoLimpio },
+      include: { empresa: { include: { rubroTemplate: true, suscripcion: true } }, recursoAgendable: true },
+    });
+    if (!usuario) {
+      // No debería pasar -- el teléfono ya se validó contra un Usuario real
+      // en /solicitar-codigo -- salvo que la cuenta se haya borrado entremedio.
+      return res.status(404).json({ error: 'Cuenta no encontrada' });
+    }
+
+    const payload = {
+      userId: usuario.id,
+      empresaId: usuario.empresaId,
+      rol: usuario.rol,
+      recursoAgendableId: usuario.recursoAgendableId,
+      nombre: usuario.nombre,
+    };
+    const jwtToken = jwt.sign(payload, JWT_SECRET, { expiresIn: TOKEN_EXPIRA_EN_CODIGO });
+
+    res.json({
+      token: jwtToken,
+      usuario: {
+        id: usuario.id,
+        nombre: usuario.nombre,
+        email: usuario.email,
+        rol: usuario.rol,
+        empresaId: usuario.empresaId,
+        empresaNombre: usuario.empresa.nombre,
+        empresaModoOperacion: usuario.empresa.rubroTemplate.modoOperacion,
+        rubroClave: usuario.empresa.rubroTemplate.clave,
+        recursoAgendableId: usuario.recursoAgendableId,
+        recursoAgendableNombre: usuario.recursoAgendable?.nombre || null,
+        plan: usuario.empresa.suscripcion?.plan || null,
+        whatsappConectado: Boolean(usuario.empresa.whatsappNumeroId),
+      },
+    });
+  } catch (error) {
+    console.error('Error en /auth/verificar-codigo:', error);
+    res.status(500).json({ error: 'Error al verificar el código' });
+  }
+});
+
+// ------------------------------------------------------------
 // GET /auth/me — para que el frontend valide el token al cargar
 // ------------------------------------------------------------
 router.get('/me', requireAuth, async (req, res) => {
@@ -290,6 +468,13 @@ router.post('/cambiar-contraseña', requireAuth, async (req, res) => {
 
     if (!usuario) {
       return res.status(404).json({ error: 'Usuario no encontrado' });
+    }
+
+    // Cuenta que entra solo por código (ver /auth/solicitar-codigo) -- nunca
+    // tuvo una contraseña que "cambiar" en este sentido. bcrypt.compare
+    // truena con null en vez de devolver false.
+    if (!usuario.passwordHash) {
+      return res.status(400).json({ error: 'Esta cuenta usa código de acceso por WhatsApp, no tiene contraseña que cambiar.' });
     }
 
     // Verificar contraseña actual
