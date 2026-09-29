@@ -5,7 +5,7 @@ const jwt = require('jsonwebtoken');
 const prisma = require('../lib/prisma');
 const { requireAuth, JWT_SECRET } = require('../middleware/auth');
 const { limitadorLogin, limitadorResetPassword, limitadorCodigo } = require('../middleware/rateLimiting');
-const { sendWhatsAppTemplateMessage, sendWhatsAppOtpMessage } = require('../services/whatsapp');
+const { sendWhatsAppTemplateMessage } = require('../services/whatsapp');
 const { normalizarTelefono, ERROR_TELEFONO_INVALIDO } = require('../lib/normalizarTelefono');
 const { obtenerUrlPanelPrincipal } = require('../lib/urlPanel');
 const router = express.Router();
@@ -267,7 +267,14 @@ router.post('/solicitar-reset-password', limitadorResetPassword, async (req, res
 // Vendedor vía POST /demos/convertir-a-cliente-real. Este flujo solo sirve
 // para volver a entrar a una cuenta que YA tiene el teléfono vinculado.
 // ------------------------------------------------------------
-const PLANTILLA_CODIGO_ACCESO = 'agendabot_codigo_acceso'; // categoría AUTHENTICATION en Meta
+// Plantilla UTILITY normal (no AUTHENTICATION) -- Meta exige, para poder
+// crear una plantilla AUTHENTICATION, verificación de negocio Y un piso de
+// volumen (1.000 "business-initiated dialogs"/día por número) que esta WABA
+// compartida no alcanza. Se manda el código como texto {{1}} en una
+// plantilla UTILITY normal (mismo patrón ya aprobado de
+// acceso_cuenta_totemsystem) -- se pierde el botón nativo "Copiar código"
+// de WhatsApp, el resto del flujo es idéntico.
+const PLANTILLA_CODIGO_ACCESO = 'agendabot_codigo_acceso';
 const CODIGO_EXPIRA_MINUTOS = 10;
 const CODIGO_MAX_INTENTOS = 5;
 // Sesión larga a propósito -- el login sin contraseña existe justamente
@@ -317,20 +324,20 @@ router.post('/solicitar-codigo', limitadorCodigo, async (req, res) => {
       if (!phoneNumberId || !accessToken) {
         throw new Error('Falta DEMO_PHONE_NUMBER_ID/DEMO_WHATSAPP_ACCESS_TOKEN en el entorno');
       }
-      await sendWhatsAppOtpMessage({
+      await sendWhatsAppTemplateMessage({
         phoneNumberId,
         accessToken,
         to: telefonoLimpio,
         templateName: PLANTILLA_CODIGO_ACCESO,
-        codigo,
+        variables: [codigo],
       });
     } catch (errWhatsapp) {
-      // MODO_PRUEBA_LOGIN: mientras la plantilla AUTHENTICATION no esté
-      // aprobada (o para probar en staging sin gastar WhatsApp real), el
-      // código queda logueado en vez de cortar el flujo -- ver memoria del
-      // proyecto hermano Norman, mismo criterio. Apagar apenas la plantilla
-      // se apruebe: no debe quedar prendido con clientes reales, deja
-      // códigos visibles en logs de Render.
+      // MODO_PRUEBA_LOGIN: mientras la plantilla no esté aprobada (o para
+      // probar en staging sin gastar WhatsApp real), el código queda
+      // logueado en vez de cortar el flujo -- ver memoria del proyecto
+      // hermano Norman, mismo criterio. Apagar apenas la plantilla se
+      // apruebe: no debe quedar prendido con clientes reales, deja códigos
+      // visibles en logs de Render.
       if (process.env.MODO_PRUEBA_LOGIN === 'true') {
         console.warn(`[MODO_PRUEBA_LOGIN] Código de acceso para ${telefonoLimpio}: ${codigo}`);
       } else {
