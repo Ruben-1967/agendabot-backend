@@ -2,14 +2,19 @@ const express = require('express');
 const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const { Resend } = require('resend');
 const prisma = require('../lib/prisma');
 const { requireAuth, JWT_SECRET } = require('../middleware/auth');
 const { limitadorLogin, limitadorResetPassword, limitadorCodigo } = require('../middleware/rateLimiting');
 const { sendWhatsAppTemplateMessage } = require('../services/whatsapp');
-const { normalizarTelefono, ERROR_TELEFONO_INVALIDO } = require('../lib/normalizarTelefono');
 const { obtenerUrlPanelPrincipal } = require('../lib/urlPanel');
 const router = express.Router();
 const TOKEN_EXPIRA_EN = '12h';
+const resend = new Resend(process.env.RESEND_API_KEY);
+// Dominio verificado en Resend (mismo servicio ya usado en
+// src/routes/websiteLeads.js, ahí con noreply@ohparis.cl -- ese es
+// específico de otro cliente, este es genérico de la plataforma).
+const EMAIL_REMITENTE_CODIGO = 'noreply@multidigital.cl';
 
 // Plantilla aprobada (WABA demo) para cualquier link de acceso a cuenta
 // (activación, reset, confirmación post-activación) -- antes se mandaba
@@ -258,28 +263,27 @@ router.post('/solicitar-reset-password', limitadorResetPassword, async (req, res
 });
 
 // ------------------------------------------------------------
-// LOGIN SIN CONTRASEÑA -- código de 6 dígitos por WhatsApp
-// (mismo patrón que el proyecto hermano Norman: solicitar-codigo /
-// verificar-codigo, ver norman-medicamentos/src/routes/auth.js).
+// LOGIN SIN CONTRASEÑA -- código de 6 dígitos por EMAIL.
 //
-// Distinto de Norman en un punto clave: acá NO se auto-crea una cuenta
-// nueva si el teléfono no existe -- un Usuario ya se creó antes, por un
-// Vendedor vía POST /demos/convertir-a-cliente-real. Este flujo solo sirve
-// para volver a entrar a una cuenta que YA tiene el teléfono vinculado.
+// Idea original: código por WhatsApp (mismo patrón del proyecto hermano
+// Norman: solicitar-codigo/verificar-codigo). Meta rechazó la plantilla
+// (INCORRECT_CATEGORY) -- un código de acceso es contenido AUTHENTICATION,
+// y esa categoría exige un piso de 1.000 "business-initiated dialogs"/día
+// por número que esta WABA compartida (Ahorróptica + LuxVision + Alejandro
+// Barber) no alcanza. Se usa email en su lugar -- cada Usuario ya tiene uno
+// obligatorio, a diferencia del teléfono (nullable).
+//
+// Distinto de Norman en otro punto: acá NO se auto-crea una cuenta nueva si
+// el email no existe -- un Usuario ya se creó antes, por un Vendedor vía
+// POST /demos/convertir-a-cliente-real. Este flujo solo sirve para volver a
+// entrar a una cuenta que ya existe.
 // ------------------------------------------------------------
-// Plantilla UTILITY normal (no AUTHENTICATION) -- Meta exige, para poder
-// crear una plantilla AUTHENTICATION, verificación de negocio Y un piso de
-// volumen (1.000 "business-initiated dialogs"/día por número) que esta WABA
-// compartida no alcanza. Se manda el código como texto {{1}} en una
-// plantilla UTILITY normal (mismo patrón ya aprobado de
-// acceso_cuenta_totemsystem) -- se pierde el botón nativo "Copiar código"
-// de WhatsApp, el resto del flujo es idéntico.
-const PLANTILLA_CODIGO_ACCESO = 'agendabot_codigo_acceso';
 const CODIGO_EXPIRA_MINUTOS = 10;
 const CODIGO_MAX_INTENTOS = 5;
 // Sesión larga a propósito -- el login sin contraseña existe justamente
 // para no tener que volver a pedirle nada al negocio; 30 días es el mismo
-// criterio que ya usa Norman para su login por código.
+// criterio que ya usa Norman para su login por código (WhatsApp, en su
+// caso).
 const TOKEN_EXPIRA_EN_CODIGO = '30d';
 
 function generarCodigoAcceso() {
@@ -288,23 +292,22 @@ function generarCodigoAcceso() {
 
 // ------------------------------------------------------------
 // POST /auth/solicitar-codigo
-// body: { telefono }
+// body: { email }
 // ------------------------------------------------------------
 router.post('/solicitar-codigo', limitadorCodigo, async (req, res) => {
   try {
-    const { telefono } = req.body;
-    if (!telefono) {
-      return res.status(400).json({ error: 'Falta el teléfono' });
+    const { email } = req.body;
+    if (!email) {
+      return res.status(400).json({ error: 'Falta el email' });
     }
 
-    const telefonoLimpio = normalizarTelefono(telefono);
-    if (!telefonoLimpio) {
-      return res.status(400).json({ error: ERROR_TELEFONO_INVALIDO });
-    }
-
-    const usuario = await prisma.usuario.findUnique({ where: { telefono: telefonoLimpio } });
+    // findFirst insensitive, mismo criterio que /login -- ver nota ahí.
+    const emailLimpio = email.trim();
+    const usuario = await prisma.usuario.findFirst({
+      where: { email: { equals: emailLimpio, mode: 'insensitive' } },
+    });
     if (!usuario) {
-      return res.status(404).json({ error: 'Este número no está vinculado a ninguna cuenta. Si ya te suscribiste, revisa el WhatsApp de bienvenida, o contáctanos.' });
+      return res.status(404).json({ error: 'Este email no está registrado. Si ya te suscribiste, revisa el correo de bienvenida, o contáctanos.' });
     }
 
     const codigo = process.env.MODO_PRUEBA_LOGIN === 'true' ? '123456' : generarCodigoAcceso();
@@ -312,37 +315,39 @@ router.post('/solicitar-codigo', limitadorCodigo, async (req, res) => {
 
     await prisma.codigoAcceso.create({
       data: {
-        telefono: telefonoLimpio,
+        email: usuario.email,
         codigoHash,
         expiraEn: new Date(Date.now() + CODIGO_EXPIRA_MINUTOS * 60 * 1000),
       },
     });
 
     try {
-      const phoneNumberId = process.env.DEMO_PHONE_NUMBER_ID;
-      const accessToken = process.env.DEMO_WHATSAPP_ACCESS_TOKEN;
-      if (!phoneNumberId || !accessToken) {
-        throw new Error('Falta DEMO_PHONE_NUMBER_ID/DEMO_WHATSAPP_ACCESS_TOKEN en el entorno');
+      if (!process.env.RESEND_API_KEY) {
+        throw new Error('Falta RESEND_API_KEY en el entorno');
       }
-      await sendWhatsAppTemplateMessage({
-        phoneNumberId,
-        accessToken,
-        to: telefonoLimpio,
-        templateName: PLANTILLA_CODIGO_ACCESO,
-        variables: [codigo],
+      const envioEmail = await resend.emails.send({
+        from: EMAIL_REMITENTE_CODIGO,
+        to: usuario.email,
+        subject: `Tu código de acceso: ${codigo}`,
+        html: `
+          <h2>Tu código de acceso a TotemSystem</h2>
+          <p style="font-size: 32px; font-weight: bold; letter-spacing: 4px;">${codigo}</p>
+          <p>Vence en ${CODIGO_EXPIRA_MINUTOS} minutos. Si no lo solicitaste tú, puedes ignorar este correo.</p>
+        `,
       });
-    } catch (errWhatsapp) {
-      // MODO_PRUEBA_LOGIN: mientras la plantilla no esté aprobada (o para
-      // probar en staging sin gastar WhatsApp real), el código queda
-      // logueado en vez de cortar el flujo -- ver memoria del proyecto
-      // hermano Norman, mismo criterio. Apagar apenas la plantilla se
-      // apruebe: no debe quedar prendido con clientes reales, deja códigos
-      // visibles en logs de Render.
+      if (envioEmail.error) {
+        throw new Error(JSON.stringify(envioEmail.error));
+      }
+    } catch (errEmail) {
+      // MODO_PRUEBA_LOGIN: mientras se prueba en staging sin gastar envíos
+      // reales, el código queda logueado en vez de cortar el flujo --
+      // apagar apenas esto quede verificado en producción: no debe quedar
+      // prendido con clientes reales, deja códigos visibles en logs.
       if (process.env.MODO_PRUEBA_LOGIN === 'true') {
-        console.warn(`[MODO_PRUEBA_LOGIN] Código de acceso para ${telefonoLimpio}: ${codigo}`);
+        console.warn(`[MODO_PRUEBA_LOGIN] Código de acceso para ${usuario.email}: ${codigo}`);
       } else {
-        console.error('[solicitar-codigo] Error enviando WhatsApp:', errWhatsapp.message);
-        return res.status(502).json({ error: 'No pudimos enviar el código por WhatsApp. Intenta de nuevo en unos minutos.' });
+        console.error('[solicitar-codigo] Error enviando email:', errEmail.message);
+        return res.status(502).json({ error: 'No pudimos enviar el código por email. Intenta de nuevo en unos minutos.' });
       }
     }
 
@@ -355,22 +360,24 @@ router.post('/solicitar-codigo', limitadorCodigo, async (req, res) => {
 
 // ------------------------------------------------------------
 // POST /auth/verificar-codigo
-// body: { telefono, codigo }
+// body: { email, codigo }
 // ------------------------------------------------------------
 router.post('/verificar-codigo', limitadorLogin, async (req, res) => {
   try {
-    const { telefono, codigo } = req.body;
-    if (!telefono || !codigo) {
-      return res.status(400).json({ error: 'Faltan teléfono o código' });
+    const { email, codigo } = req.body;
+    if (!email || !codigo) {
+      return res.status(400).json({ error: 'Faltan email o código' });
     }
 
-    const telefonoLimpio = normalizarTelefono(telefono);
-    if (!telefonoLimpio) {
-      return res.status(400).json({ error: ERROR_TELEFONO_INVALIDO });
+    const usuarioPorEmail = await prisma.usuario.findFirst({
+      where: { email: { equals: email.trim(), mode: 'insensitive' } },
+    });
+    if (!usuarioPorEmail) {
+      return res.status(404).json({ error: 'Este email no está registrado' });
     }
 
     const registro = await prisma.codigoAcceso.findFirst({
-      where: { telefono: telefonoLimpio, expiraEn: { gt: new Date() } },
+      where: { email: usuarioPorEmail.email, expiraEn: { gt: new Date() } },
       orderBy: { creadoEn: 'desc' },
     });
     if (!registro) {
@@ -390,12 +397,12 @@ router.post('/verificar-codigo', limitadorLogin, async (req, res) => {
     await prisma.codigoAcceso.delete({ where: { id: registro.id } });
 
     const usuario = await prisma.usuario.findUnique({
-      where: { telefono: telefonoLimpio },
+      where: { id: usuarioPorEmail.id },
       include: { empresa: { include: { rubroTemplate: true, suscripcion: true } }, recursoAgendable: true },
     });
     if (!usuario) {
-      // No debería pasar -- el teléfono ya se validó contra un Usuario real
-      // en /solicitar-codigo -- salvo que la cuenta se haya borrado entremedio.
+      // No debería pasar -- el email ya se validó contra un Usuario real
+      // arriba mismo -- salvo que la cuenta se haya borrado entremedio.
       return res.status(404).json({ error: 'Cuenta no encontrada' });
     }
 
