@@ -13,8 +13,22 @@ const PLANES = {
   PLAN_A: { etiqueta: 'Plan A', montoMensual: 14900, citasIncluidas: 150, precioCitaExcedente: 130 },
   PLAN_B: { etiqueta: 'Plan B', montoMensual: 24900, citasIncluidas: 400, precioCitaExcedente: 85 },
   PLAN_C: { etiqueta: 'Plan C', montoMensual: 59900, citasIncluidas: 1000, precioCitaExcedente: 70 },
-  PLAN_D: { etiqueta: 'Plan D', montoMensual: 99900, citasIncluidas: 2500, precioCitaExcedente: 55 },
+  // 149900 desde 2026-09-30 (antes 99900) -- mismo valor ya actualizado en
+  // el plan real de Flow (agendabot-plan-d) vía /plans/edit.
+  PLAN_D: { etiqueta: 'Plan D', montoMensual: 149900, citasIncluidas: 2500, precioCitaExcedente: 55 },
 };
+
+function formatoCLPServidor(monto) {
+  return '$' + monto.toLocaleString('es-CL');
+}
+
+// Texto de la cláusula 5 (Precio) del contrato, armado desde PLANES en vez
+// de quedar escrito a mano -- antes se desincronizó silenciosamente cuando
+// cambiaron los precios (el contrato firmado seguía mostrando los 3 planes
+// viejos, sin Plan D, mientras Flow ya cobraba los montos nuevos).
+const TEXTO_PLANES_CLAUSULA5 = Object.values(PLANES)
+  .map((p) => `${p.etiqueta} (${formatoCLPServidor(p.montoMensual)}/mes, ${p.citasIncluidas.toLocaleString('es-CL')} citas incluidas, excedente ${formatoCLPServidor(p.precioCitaExcedente)}/cita)`)
+  .join(', ');
 
 function renderFormulario(empresa) {
   const nombreEmpresa = empresa.sucursal ? `${empresa.nombre} · ${empresa.sucursal}` : empresa.nombre;
@@ -215,10 +229,10 @@ function renderFormulario(empresa) {
       </div>
       <div class="accordion-body">
         <div class="clause"><b>1. Partes.</b> Multidigital, nombre comercial bajo el cual opera Ruben González Erazo (persona natural), en adelante "el proveedor", y ${nombreEmpresa}, en adelante "el cliente".</div>
-        <div class="clause"><b>2. Objeto.</b> Agendamiento, chatbot IA, panel administrativo, panel profesional y administración de pacientes, según el plan elegido (A, B o C).</div>
+        <div class="clause"><b>2. Objeto.</b> Agendamiento, chatbot IA, panel administrativo, panel profesional y administración de pacientes, según el plan elegido (A, B, C o D).</div>
         <div class="clause"><b>3. Plazo de implementación.</b> Aproximadamente 3 semanas desde la aceptación y la entrega de información por parte del cliente.</div>
         <div class="clause"><b>4. Duración.</b> Continua, sin permanencia mínima. Renovación automática mensual. Cualquiera de las partes puede terminar el contrato con 30 días de aviso previo.</div>
-        <div class="clause"><b>5. Precio.</b> El precio mensual corresponde al plan elegido: Plan A ($9.900/mes, 100 citas incluidas, excedente $150/cita), Plan B ($19.900/mes, 300 citas incluidas, excedente $90/cita), o Plan C ($49.900/mes, 700 citas incluidas, excedente $60/cita). Incluye hosting anual de 1 UF, facturado junto al primer pago y luego una vez al año. El cliente puede cambiar de plan en cualquier momento, avisando con al menos 5 días de anticipación al próximo ciclo de cobro.</div>
+        <div class="clause"><b>5. Precio.</b> El precio mensual corresponde al plan elegido: ${TEXTO_PLANES_CLAUSULA5}. Incluye hosting anual de 1 UF, facturado junto al primer pago y luego una vez al año. El cliente puede cambiar de plan en cualquier momento, avisando con al menos 5 días de anticipación al próximo ciclo de cobro.</div>
         <div class="clause"><b>6. Cuentas de terceros.</b> La Business Manager y el WhatsApp Business Account quedan a nombre del cliente. Multidigital opera como partner técnico delegado.</div>
         <div class="clause"><b>7. Datos y privacidad.</b> El tratamiento de datos personales y de salud se rige por la Ley 19.628. Multidigital actúa como encargado del tratamiento, implementando medidas de seguridad razonables. El cliente es responsable de obtener el consentimiento de sus propios pacientes.</div>
         <div class="clause"><b>8. Propiedad intelectual y de datos.</b> El software es propiedad de Multidigital. Los datos del cliente (pacientes, citas, recetas) le pertenecen al cliente y son exportables al término del contrato.</div>
