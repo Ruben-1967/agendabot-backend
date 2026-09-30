@@ -10,10 +10,11 @@ const { sendWhatsAppTemplateMessage } = require('../services/whatsapp');
 const { obtenerUrlPanelPrincipal } = require('../lib/urlPanel');
 const router = express.Router();
 const TOKEN_EXPIRA_EN = '12h';
-const resend = new Resend(process.env.RESEND_API_KEY);
-// Dominio verificado en Resend (mismo servicio ya usado en
-// src/routes/websiteLeads.js, ahí con noreply@ohparis.cl -- ese es
-// específico de otro cliente, este es genérico de la plataforma).
+// Cuenta y API key propias, distintas de RESEND_API_KEY (la que ya usa
+// src/routes/websiteLeads.js en producción con noreply@ohparis.cl) --
+// multidigital.cl está verificado en una cuenta de Resend separada, así
+// que no se puede reusar la misma key sin romper el envío de leads.
+const resend = new Resend(process.env.RESEND_API_KEY_MULTIDIGITAL);
 const EMAIL_REMITENTE_CODIGO = 'noreply@multidigital.cl';
 
 // Plantilla aprobada (WABA demo) para cualquier link de acceso a cuenta
