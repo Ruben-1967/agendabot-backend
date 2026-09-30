@@ -344,7 +344,7 @@ router.post('/solicitar-codigo', limitadorCodigo, async (req, res) => {
       // apagar apenas esto quede verificado en producción: no debe quedar
       // prendido con clientes reales, deja códigos visibles en logs.
       if (process.env.MODO_PRUEBA_LOGIN === 'true') {
-        console.warn(`[MODO_PRUEBA_LOGIN] Código de acceso para ${usuario.email}: ${codigo}`);
+        console.warn(`[MODO_PRUEBA_LOGIN] Código de acceso para ${usuario.email}: ${codigo} (envío real falló: ${errEmail.message})`);
       } else {
         console.error('[solicitar-codigo] Error enviando email:', errEmail.message);
         return res.status(502).json({ error: 'No pudimos enviar el código por email. Intenta de nuevo en unos minutos.' });
