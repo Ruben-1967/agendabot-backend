@@ -399,7 +399,9 @@ router.patch('/:id', async (req, res) => {
       where: { id: cliente.id },
       data: {
         ...(nombre !== undefined && { nombre: nombre.trim() }),
-        ...(rut !== undefined && { rut: rut || null }),
+        // trim: un RUT guardado con espacio al inicio (visto en producción,
+        // 2026-10-05) nunca calza en comparaciones/dedupe por RUT.
+        ...(rut !== undefined && { rut: (typeof rut === 'string' ? rut.trim() : rut) || null }),
         ...(telefono !== undefined && { telefono: telefono || null }),
         ...(email !== undefined && { email: email || null }),
         ...(fechaNacimiento !== undefined && {

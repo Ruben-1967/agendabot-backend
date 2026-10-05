@@ -986,6 +986,52 @@ router.patch('/citas/:id/estado', requireRole('ADMIN', 'RECEPCION'), async (req,
   }
 });
 
+// ============================================================
+// PATCH /agenda/citas/:id/paciente — corrige nombre/RUT de QUIÉN se atiende
+// en ESTA cita puntual (Cita.nombrePaciente/rutPaciente), sin tocar
+// Cliente.nombre/rut -- 2026-10-05, caso real Ahorróptica (Romilia Arias /
+// Andrea Raasch): 2 familiares con el mismo teléfono comparten UN solo
+// Cliente, y las citas creadas desde el panel sin RUT propio caían al
+// Cliente.rut compartido en la tabla; editar ese RUT en la ficha del
+// cliente cambiaba el de ambas personas y no había forma de corregir una
+// sola. body: { nombre, rut? } -- rut vacío deja el snapshot en null (la
+// tabla vuelve a mostrar el Cliente.rut, que es el comportamiento previo).
+// ============================================================
+router.patch('/citas/:id/paciente', requireRole('ADMIN', 'RECEPCION'), async (req, res) => {
+  try {
+    const empresaId = req.usuario.empresaId;
+    const nombre = typeof req.body.nombre === 'string' ? req.body.nombre.trim() : '';
+    const rutTrim = typeof req.body.rut === 'string' ? req.body.rut.trim() : '';
+
+    if (!nombre) {
+      return res.status(400).json({ error: 'Falta el nombre del paciente' });
+    }
+
+    const citaExistente = await prisma.cita.findFirst({ where: { id: req.params.id, empresaId } });
+    if (!citaExistente) {
+      return res.status(404).json({ error: 'Cita no encontrada' });
+    }
+
+    // Mismo criterio que POST /citas: acá escribe un humano, no la IA
+    // extrayendo de texto libre -- si no tiene forma de RUT válido se guarda
+    // tal cual (recortado) en vez de rechazar.
+    const rutPaciente = rutTrim
+      ? (esRutValido(normalizarRut(rutTrim)) ? normalizarRut(rutTrim) : rutTrim)
+      : null;
+
+    const cita = await prisma.cita.update({
+      where: { id: citaExistente.id },
+      data: { nombrePaciente: nombre, rutPaciente },
+      select: { id: true, nombrePaciente: true, rutPaciente: true },
+    });
+
+    res.json({ cita });
+  } catch (error) {
+    console.error('Error en PATCH /agenda/citas/:id/paciente:', error);
+    res.status(500).json({ error: 'Error al actualizar los datos del paciente de la cita' });
+  }
+});
+
 // ------------------------------------------------------------
 // GET /agenda/disponibilidad/:recursoId?fecha=YYYY-MM-DD — horas libres de
 // un recurso en una fecha puntual, usando el motor real de disponibilidad
