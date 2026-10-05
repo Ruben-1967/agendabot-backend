@@ -20,6 +20,7 @@ const { obtenerUrlPanelPrincipal } = require('../lib/urlPanel');
 const { obtenerValorUfHoy } = require('../lib/uf');
 const { activarSuscripcionPorCobroFlow } = require('../lib/activarSuscripcionPorCobroFlow');
 const { PLANES: DETALLE_PLANES } = require('../services/contratoHtml'); // fuente única de montoMensual/citasIncluidas/precioCitaExcedente por plan
+const { obtenerPrecioVigente } = require('../lib/precioSuscripcion');
 
 /**
  * GET /suscripcion/estado
@@ -152,6 +153,10 @@ router.post('/elegir-plan', async (req, res) => {
 
     let suscripcion = await prisma.suscripcion.findUnique({ where: { empresaId } });
 
+    // Precio promocional por cliente (si lo tiene y aplica a ESTE plan) -- ver
+    // src/lib/precioSuscripcion.js.
+    const precioVigente = obtenerPrecioVigente({ ...(suscripcion || {}), plan: planEnum }, detallePlan);
+
     if (suscripcion) {
       // No tocamos estado/fechaActivacion acá — si ya estaba ACTIVA, elegir de
       // nuevo el plan no debe revertir una conversión ya contada en el ranking.
@@ -159,7 +164,7 @@ router.post('/elegir-plan', async (req, res) => {
         where: { empresaId },
         data: {
           plan: planEnum,
-          montoMensualActual: detallePlan.montoMensual,
+          montoMensualActual: precioVigente.monto,
           citasIncluidas: detallePlan.citasIncluidas,
           precioCitaExcedente: detallePlan.precioCitaExcedente,
         },
@@ -198,7 +203,7 @@ router.post('/elegir-plan', async (req, res) => {
     res.json({
       exitoso: true,
       plan,
-      monto: detallePlan.montoMensual,
+      monto: precioVigente.monto,
       url: registro.url,
       empresaId,
     });
@@ -264,7 +269,8 @@ async function manejarCallbackTarjeta(req, res) {
     // corresponde cobrarle.
     const valorUf = suscripcion.exentoDeHosting ? 0 : await obtenerValorUfHoy();
     const cobraPlanAhora = !suscripcion.exentoDePlan && suscripcion.mesesGratisPlan === 0;
-    const montoCombinado = (cobraPlanAhora ? detallePlan.montoMensual : 0) + valorUf;
+    const precioVigente = obtenerPrecioVigente({ ...suscripcion, plan: planEnum }, detallePlan);
+    const montoCombinado = (cobraPlanAhora ? precioVigente.monto : 0) + valorUf;
 
     if (montoCombinado <= 0) {
       // Nada que cobrar este ciclo (100% gratis, o exento de ambos) —

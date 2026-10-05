@@ -15,6 +15,7 @@
 const prisma = require('./prisma');
 const flowClient = require('../services/flowClient');
 const { PLANES: DETALLE_PLANES } = require('../services/contratoHtml');
+const { obtenerPrecioVigente } = require('./precioSuscripcion');
 
 const DIAS_TRIAL_PLAN = 30;
 const DIAS_TRIAL_HOSTING = 365;
@@ -41,14 +42,16 @@ async function activarSuscripcionPorCobroFlow({ empresaId, valorUf, token }) {
     return { ok: false, motivo: 'sin_flowCustomerId' };
   }
 
-  const letraPlan = suscripcion.plan.replace('PLAN_', '');
-  const flowPlanId = process.env[`FLOW_PLAN_ID_${letraPlan}`];
+  // Plan de Flow y monto vigentes (incluye el precio promocional por cliente,
+  // ver src/lib/precioSuscripcion.js).
+  const detallePlan = DETALLE_PLANES[suscripcion.plan];
+  const precioVigente = obtenerPrecioVigente(suscripcion, detallePlan);
+  const flowPlanId = precioVigente.flowPlanId;
   const flowPlanIdHosting = process.env.FLOW_PLAN_ID_HOSTING;
   if (!flowPlanId || !flowPlanIdHosting) {
     return { ok: false, motivo: 'sin_flow_plan_id' };
   }
 
-  const detallePlan = DETALLE_PLANES[suscripcion.plan];
   const montoHostingCobrado = Number.isFinite(valorUf) ? valorUf : 0;
 
   // Términos especiales (ver Suscripcion.exentoDePlan/exentoDeHosting/mesesGratisPlan
@@ -104,7 +107,7 @@ async function activarSuscripcionPorCobroFlow({ empresaId, valorUf, token }) {
         data: {
           suscripcionId: suscripcion.id,
           tipo: 'PRIMER_PAGO',
-          monto: detallePlan.montoMensual,
+          monto: precioVigente.monto,
           estado: 'EXITOSO',
           flowOrderId: token,
         },

@@ -869,6 +869,19 @@ model Suscripcion {
   exentoDePlan    Boolean @default(false)
   mesesGratisPlan Int     @default(0)
 
+  // Precio promocional por cliente (2026-10-05, Ahorróptica: $9.900 hasta el
+  // 31-dic-2026). El monto de una suscripción recurrente lo fija el Plan de
+  // Flow, no se puede variar por cliente -- por eso la promo vive en un Plan
+  // de Flow propio (precioPromoFlowPlanId). Aplica SOLO si el plan elegido
+  // coincide con precioPromoPlan y ahora <= precioPromoHasta (ver
+  // src/lib/precioSuscripcion.js). Al vencer, scripts/migrar-promo-vencida-
+  // flow.js pasa la suscripción al plan normal; si nadie lo corre el cliente
+  // sigue pagando el precio promo (falla hacia cobrar de menos, no de más).
+  precioPromoMonto      Int?
+  precioPromoFlowPlanId String?
+  precioPromoPlan       PlanSuscripcion?
+  precioPromoHasta      DateTime?
+
   fechaProximoCobro         DateTime
   fechaProximoCobroHosting  DateTime
 
