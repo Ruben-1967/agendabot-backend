@@ -55,6 +55,35 @@ function horaAMinutos(horaStr) {
   return h * 60 + m;
 }
 
+function primerNombreNormalizado(nombre) {
+  return (nombre || '')
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .toLowerCase()
+    .trim()
+    .split(/\s+/)[0] || '';
+}
+
+// RUT que se muestra para una cita. Si la cita no tiene su propio snapshot
+// (rutPaciente) cae al Cliente.rut -- pero SOLO si el paciente de la cita
+// parece ser la misma persona del Cliente (comparten el primer nombre).
+// Cuando el nombre es claramente otro (ej. un familiar que agenda con el
+// mismo teléfono: Cliente "Romilia Arias", cita de "Andrea Raasch"), ese
+// RUT pertenece a otra persona y se muestra vacío en vez de uno ajeno --
+// caso real Ahorróptica 2026-10-05, mismo RUT mostrado a 2 familiares.
+// Heurística por primer nombre: las variantes de escritura de una misma
+// persona ("Pia Cabrera" / "Pia cabrera sepulveda") siguen cayendo al RUT.
+function rutParaMostrar(cita) {
+  if (cita.rutPaciente) return cita.rutPaciente;
+  const rutCliente = descifrarSiCorresponde(cita.cliente?.rut) || null;
+  if (!rutCliente) return null;
+  if (cita.nombrePaciente && cita.cliente?.nombre) {
+    const mismaPersona = primerNombreNormalizado(cita.nombrePaciente) === primerNombreNormalizado(cita.cliente.nombre);
+    if (!mismaPersona) return null;
+  }
+  return rutCliente;
+}
+
 router.use(requireAuth);
 
 // ------------------------------------------------------------
@@ -219,7 +248,7 @@ const agendaHoy = await prisma.cita.findMany({
         profesional: cita.recurso?.nombre || 'Sin asignar',
         estado: cita.estado,
         telefono: cita.cliente?.telefono || null,
-        rut: cita.rutPaciente || descifrarSiCorresponde(cita.cliente?.rut) || null,
+        rut: rutParaMostrar(cita),
         notas: null,
       };
     });
@@ -1232,7 +1261,7 @@ router.get('/citas', requireRole('ADMIN', 'RECEPCION'), async (req, res) => {
       // bug real 2026-09-22 (mismo teléfono agendando para varias
       // personas). Citas viejas sin snapshot caen a Cliente.nombre/rut.
       nombre: c.nombrePaciente || c.cliente?.nombre || 'Sin asignar',
-      rut: c.rutPaciente || descifrarSiCorresponde(c.cliente?.rut) || null,
+      rut: rutParaMostrar(c),
       telefono: c.cliente?.telefono || null,
       servicioId: c.servicioId,
       servicio: c.servicio?.nombre || 'Sin especificar',
