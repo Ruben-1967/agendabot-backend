@@ -19,6 +19,7 @@
 const Anthropic = require('@anthropic-ai/sdk');
 const prisma = require('../lib/prisma');
 const { sincronizarLeadDesdeDemo } = require('./leadSync');
+const { PLANES } = require('./contratoHtml');
 const { procesarMensajeCatalogoDemo } = require('./catalogoDemoEngine');
 const {
   decodificarFilaHorario,
@@ -59,13 +60,20 @@ const PASOS = {
   CATALOGO_ESPERANDO_CONFIRMACION: 7,
 };
 
-const GRILLA_PLANES_TEXTO = `- Plan A: $9.900 CLP/mes — 100 citas incluidas, excedente $150 CLP/cita
-- Plan B: $19.900 CLP/mes — 300 citas incluidas, excedente $90 CLP/cita
-- Plan C: $49.900 CLP/mes — 700 citas incluidas, excedente $60 CLP/cita
+// Los precios salen SIEMPRE de PLANES (contratoHtml.js, fuente única que
+// también usan el contrato y el cobro en Flow) -- antes estaban escritos a
+// mano acá y quedaron en los valores viejos ($9.900/$19.900/$49.900, sin Plan
+// D) cuando cambiaron, así que la demo le cotizaba a un prospecto un precio
+// distinto del que ya le habían dicho (caso Parcelas San Ramón, 2026-10-06).
+const formatoCLPDemo = (monto) => `$${monto.toLocaleString('es-CL')}`;
+const GRILLA_PLANES_TEXTO = `${Object.values(PLANES)
+  .map((p) => `- ${p.etiqueta}: ${formatoCLPDemo(p.montoMensual)} CLP/mes — ${p.citasIncluidas.toLocaleString('es-CL')} citas incluidas, excedente ${formatoCLPDemo(p.precioCitaExcedente)} CLP/cita`)
+  .join('\n')}
 - Todos los planes incluyen, SIN costo adicional: 1 UF de hosting al año, recordatorios automáticos de
   confirmación (24h antes + reintentos) y promoción automática a la lista de espera cuando alguien cancela.
-  WhatsApp no cobra por los mensajes de servicio dentro de la ventana de conversación del cliente, así que el
-  costo real de operar es mínimo.`;
+  Aparte, Meta (WhatsApp) cobra por cada mensaje que envía el negocio desde octubre de 2026, con un tramo
+  gratis mensual por número -- eso no es de TotemSystem. Si preguntan cuánto sería en su caso, di que el
+  equipo comercial se lo calcula según su volumen de mensajes.`;
 
 function detectaIntencionReiniciar(texto, modoOperacion) {
   const pideReinicio = /reiniciar|reinicia|reiniciemos|comenzar de nuevo|empezar de nuevo|volver a empezar|volvamos a empezar|desde el inicio|desde cero|de nuevo|nuevamente|otra vez|iniciar (la )?demo/i.test(texto);
@@ -128,10 +136,10 @@ function textoPrecios(modoOperacion) {
     return `💳 Créditos prepagados: $149 CLP por mensaje enviado, mínimo 50 por compra. Pagas solo lo que usas.`;
   }
   return (
-    `💰 *Plan A:* $9.900/mes — 100 citas incluidas\n` +
-    `💰 *Plan B:* $19.900/mes — 300 citas incluidas\n` +
-    `💰 *Plan C:* $49.900/mes — 700 citas incluidas\n` +
-    `Los 3 incluyen 1 UF de hosting anual, recordatorios automáticos y lista de espera, sin costo extra.`
+    Object.values(PLANES)
+      .map((p) => `💰 *${p.etiqueta}:* ${formatoCLPDemo(p.montoMensual)}/mes — ${p.citasIncluidas.toLocaleString('es-CL')} citas incluidas\n`)
+      .join('') +
+    `Todos incluyen 1 UF de hosting anual, recordatorios automáticos y lista de espera, sin costo extra.`
   );
 }
 
