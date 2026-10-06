@@ -457,9 +457,17 @@ async function procesarMensajeDemo({ demoAsignada, telefonoCliente, mensaje, nom
   const paso = demoAsignada.paso || PASOS.INICIO;
   const historial = Array.isArray(demoAsignada.historialSimulacion) ? demoAsignada.historialSimulacion : [];
   const carritoActual = Array.isArray(demoAsignada.carritoDemoJson) ? demoAsignada.carritoDemoJson : [];
-  const serviciosBase = Array.isArray(empresaDemo.rubroTemplate.serviciosBase)
-    ? empresaDemo.rubroTemplate.serviciosBase
+  // Servicios de la demo: si la Empresa de la demo tiene Servicio propios
+  // (demo personalizada por un vendedor para un negocio puntual, ej. Parcelas
+  // San Ramón 2026-10-06 -- su rubro "Otro" no trae ninguno), se usan esos;
+  // si no, los del rubro, como siempre. Solo aplica a AGENDAMIENTO (el
+  // catálogo usa productos).
+  const serviciosPropios = modoOperacion === 'AGENDAMIENTO'
+    ? await prisma.servicio.findMany({ where: { empresaId: empresaDemo.id, activo: true }, select: { nombre: true }, orderBy: { nombre: 'asc' } })
     : [];
+  const serviciosBase = serviciosPropios.length > 0
+    ? serviciosPropios.map((s) => s.nombre)
+    : (Array.isArray(empresaDemo.rubroTemplate.serviciosBase) ? empresaDemo.rubroTemplate.serviciosBase : []);
 
   const horarioElegido = mensaje.type === 'interactive'
     ? decodificarFilaHorario(mensaje.interactive?.list_reply?.id)
