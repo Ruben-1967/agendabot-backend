@@ -12,6 +12,8 @@ const {
   codificarFilaHorario,
   decodificarFilaDia,
   codificarFilaDia,
+  decodificarFilaFranja,
+  codificarFilaFranja,
   codificarFilaProductoDemo,
   codificarFilaCantidadDemo,
   codificarFilaRubroGenerico,
@@ -26,6 +28,8 @@ const {
 } = require('./services/whatsapp');
 const { fechaLegibleDesdeISO } = require('./lib/formatoFechas');
 const { procesarMensajeEntrante, procesarSeleccionInteractiva, esComandoGlobalOPregunta } = require('./services/chatbotEngine');
+const { esConfirmacionDeAsistencia, mencionaFechaOHoraConcreta, respuestaDeAsistencia } = require('./lib/respuestaAsistencia');
+const { conLockDeConversacion } = require('./lib/conversacionLock');
 const { sendInstagramTextMessage, armarTextoConInteractivo } = require('./services/instagram');
 const { sendFacebookTextMessage, armarTextoConInteractivo: armarTextoConInteractivoFacebook } = require('./services/facebook');
 const { renderFormulario, PLANES } = require('./services/contratoHtml');
@@ -389,6 +393,23 @@ async function enviarRespuestaAgendamiento({ phoneNumberId, telefonoCliente, emp
       filas: interactivo.horas.map((hora) => ({
         id: codificarFilaHorario(interactivo.fecha, hora),
         titulo: hora,
+      })),
+    });
+  } else if (interactivo?.tipo === 'lista_franjas') {
+    // Día con más horas que filas posibles en una lista (10): primero se
+    // elige un RANGO ("09:00 a 11:15"), y al tocarlo se muestra la lista de
+    // horas de ese rango (ver armarRespuestaHorarios / chatbotEngine.js).
+    await sendWhatsAppInteractiveList({
+      phoneNumberId,
+      to: telefonoCliente,
+      accessToken,
+      textoCuerpo: respuestaTexto,
+      textoBoton: 'Ver rangos',
+      textoHeader: empresa.nombre?.slice(0, 60),
+      filas: interactivo.franjas.map((f) => ({
+        id: codificarFilaFranja(interactivo.fecha, f.desde, f.hasta),
+        titulo: `${f.desde} a ${f.hasta}`,
+        descripcion: `${f.horas.length} ${f.horas.length === 1 ? 'horario disponible' : 'horarios disponibles'}`,
       })),
     });
   } else if (interactivo?.tipo === 'horarios_por_bloque') {
@@ -1285,6 +1306,16 @@ app.post('/webhook/whatsapp', verificarFirmaWebhookWhatsApp, async (req, res) =>
       // Único otro tipo interactivo que este flujo entiende: el cliente
       // tocó un horario de la lista que le mostramos. Cualquier otro id
       // (ej. de una lista de otro flujo) se ignora silenciosamente.
+      const franjaElegida = decodificarFilaFranja(listReplyId);
+      if (franjaElegida) {
+        const { respuestaTexto: respuestaFranja, interactivo: interactivoFranja } = await procesarSeleccionInteractiva({
+          empresa, telefonoCliente, nombreContacto, canal: 'whatsapp',
+          tipoSeleccion: 'franja', valorDecodificado: franjaElegida,
+        });
+        await enviarRespuestaAgendamiento({ phoneNumberId, telefonoCliente, empresa, respuestaTexto: respuestaFranja, interactivo: interactivoFranja });
+        return;
+      }
+
       const horarioElegido = decodificarFilaHorario(listReplyId);
       if (!horarioElegido) {
         return;
@@ -1339,7 +1370,21 @@ app.post('/webhook/whatsapp', verificarFirmaWebhookWhatsApp, async (req, res) =>
         && textoEntrante.trim().length > 0 && textoEntrante.trim().length <= 40
         && !/[?¿]/.test(textoEntrante);
       const contieneNoSuelto = /(^|[^\p{L}])no([^\p{L}]|$)/iu.test(textoEntrante);
+      // "Ok mañana iré", "ahí estaré", "nos vemos"... -- ver
+      // lib/respuestaAsistencia.js. Con una cita pendiente cuenta como
+      // confirmación; sin ella, más abajo se responde un simple "te
+      // esperamos" (caso real Ahorróptica 2026-10-06: el bot le volvía a
+      // preguntar si quería agendar a quien respondía que asistiría).
+      // esAsistencia: el mensaje expresa que irá. esAsistenciaSimple: además NO
+      // nombra un día/hora concreta -- solo esa cuenta como confirmación (o
+      // como "te esperamos"): "iré el lunes en vez del martes" o "voy a las
+      // 5" pueden ser un cambio de hora, así que se deja al flujo general
+      // en vez de confirmar la cita pendiente a ciegas (revisión 2026-10-06).
+      const esAsistencia = mensaje.type === 'text' && esConfirmacionDeAsistencia(textoEntrante);
+      const esAsistenciaSimple = esAsistencia && !mencionaFechaOHoraConcreta(textoEntrante);
+      const dejarAlFlujoGeneral = esAsistencia && !esAsistenciaSimple;
       const pareceConfirmar = payloadBoton === 'CONFIRMAR_CITA'
+        || esAsistenciaSimple
         || (textoCorto && !contieneNoSuelto && /(^|[^\p{L}])(s[ií]|confirmo|confirmar|dale|ok|listo|correcto)([^\p{L}]|$)/iu.test(textoEntrante));
       const pareceCancelar = payloadBoton === 'CANCELAR_CITA'
         || (mensaje.type === 'text' && /^\s*no(\s+puedo|\s+podr[eé])?\s*[.!]?\s*$|^\s*(cancelar|anular)\s*[.!]?\s*$/i.test(textoEntrante));
@@ -1374,7 +1419,7 @@ app.post('/webhook/whatsapp', verificarFirmaWebhookWhatsApp, async (req, res) =>
           orderBy: { fechaHoraInicio: 'asc' },
         });
 
-        if (citaPendiente) {
+        if (citaPendiente && !dejarAlFlujoGeneral) {
           const accessTokenCita = empresa.whatsappToken || process.env.WHATSAPP_ACCESS_TOKEN;
 
           if (pareceConfirmar) {
@@ -1403,6 +1448,55 @@ app.post('/webhook/whatsapp', verificarFirmaWebhookWhatsApp, async (req, res) =>
 
           console.log(`Cita ${citaPendiente.id}: ${pareceConfirmar ? 'confirmada' : pareceCancelar ? 'cancelada' : 'recordatorio de tocar botón'} (${empresa.nombre}).`);
           return; // ya respondimos, no seguir al flujo normal de Claude
+        }
+
+        // Sin cita pendiente en el sistema (el recordatorio pudo salir de
+        // otro lado, o la cita está agendada fuera del bot): una simple
+        // confirmación de asistencia se responde con un "te esperamos" en
+        // vez de dejar que el pipeline general vuelva a ofrecer agendar. Se
+        // omite si el mensaje trae un día/hora concreta (puede ser alguien
+        // pidiendo agendar), si un humano está atendiendo la conversación, o
+        // si hay una reserva en curso reciente (podría ser respuesta a una
+        // pregunta del propio bot).
+        if (esAsistenciaSimple) {
+          // Dentro del mismo mutex por conversación que usa el motor del
+          // bot (conLockDeConversacion): la lectura + escritura de
+          // Conversacion.mensajes de abajo no debe pisar el turno de otro
+          // mensaje del mismo cliente que llegue casi al mismo tiempo.
+          const respondida = await conLockDeConversacion(`${empresa.id}:${telefonoCliente}:whatsapp`, async () => {
+            const convAsistencia = await prisma.conversacion.findFirst({
+              where: { empresaId: empresa.id, telefono: telefonoCliente, canal: 'whatsapp' },
+              select: { id: true, mensajes: true, reservaEnCurso: true, pausadaPorHumanoEn: true, actualizadoEn: true },
+            });
+            // "Reserva en curso reciente": mismas señales de progreso que usa
+            // el motor (intentarFastPathTexto, chatbotEngine.js) --
+            // incluye opcionesMostradas (lista de días/horas/servicios que
+            // el bot acaba de mostrar), no solo fecha/hora/nombre/RUT.
+            const reserva = convAsistencia?.reservaEnCurso || {};
+            const hayReservaReciente = Boolean(convAsistencia)
+              && (Date.now() - new Date(convAsistencia.actualizadoEn).getTime()) < 10 * 60 * 1000
+              && Boolean(
+                reserva.fecha || reserva.hora || reserva.nombre || reserva.rut || reserva.telefonoContacto
+                || (Array.isArray(reserva.opcionesMostradas) && reserva.opcionesMostradas.length > 0)
+              );
+
+            if (convAsistencia?.pausadaPorHumanoEn || hayReservaReciente) return false;
+
+            const accessTokenAsistencia = empresa.whatsappToken || process.env.WHATSAPP_ACCESS_TOKEN;
+            const textoAsistencia = respuestaDeAsistencia(textoEntrante);
+            await sendWhatsAppTextMessage({ phoneNumberId, to: telefonoCliente, accessToken: accessTokenAsistencia, text: textoAsistencia });
+            if (convAsistencia) {
+              const ahoraIso = new Date().toISOString();
+              const historial = Array.isArray(convAsistencia.mensajes) ? convAsistencia.mensajes : [];
+              await prisma.conversacion.update({
+                where: { id: convAsistencia.id },
+                data: { mensajes: [...historial, { rol: 'usuario', contenido: textoEntrante, timestamp: ahoraIso }, { rol: 'asistente', contenido: textoAsistencia, timestamp: ahoraIso }] },
+              });
+            }
+            console.log(`[ASISTENCIA] Respuesta "te esperamos" sin cita pendiente (${empresa.nombre}).`);
+            return true;
+          });
+          if (respondida) return;
         }
       }
     }

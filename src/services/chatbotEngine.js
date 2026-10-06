@@ -16,6 +16,7 @@ const {
   obtenerHorasDisponiblesPorBloqueParaServicio,
 } = require('./disponibilidad');
 const { siguientePaso, coincideConOpcionMostrada, PLANTILLAS_DETERMINISTAS, PASOS, reservaAbandonada } = require('./flujoReserva');
+const { MAX_FILAS_LISTA_INTERACTIVA } = require('./whatsapp');
 const { conLockDeConversacion } = require('../lib/conversacionLock');
 const { fechaLegibleDesdeISO } = require('../lib/formatoFechas');
 
@@ -100,11 +101,17 @@ function conOpcionesDelPipelineAgentico(reservaEnCurso, interactivo) {
     : base;
 
   if (interactivo.tipo === 'lista_horarios') {
-    return { ...conServicio, fecha: interactivo.fecha, opcionesMostradas: interactivo.horas.map((h) => ({ valor: h, etiquetas: [h] })) };
+    return { ...conServicio, fecha: interactivo.fecha, franjaElegida: null, opcionesMostradas: interactivo.horas.map((h) => ({ valor: h, etiquetas: [h] })) };
   }
   if (interactivo.tipo === 'horarios_por_bloque') {
     const horas = interactivo.bloques.flatMap((b) => b.horas);
-    return { ...conServicio, fecha: interactivo.fecha, opcionesMostradas: horas.map((h) => ({ valor: h, etiquetas: [h] })) };
+    return { ...conServicio, fecha: interactivo.fecha, franjaElegida: null, opcionesMostradas: horas.map((h) => ({ valor: h, etiquetas: [h] })) };
+  }
+  if (interactivo.tipo === 'lista_franjas') {
+    // Opciones = TODAS las horas del día (no solo las de un rango): así un
+    // cliente que prefiere escribir la hora en vez de tocar igual calza.
+    const horas = interactivo.franjas.flatMap((f) => f.horas);
+    return { ...conServicio, fecha: interactivo.fecha, franjaElegida: null, opcionesMostradas: horas.map((h) => ({ valor: h, etiquetas: [h] })) };
   }
   if (interactivo.tipo === 'lista_dias') {
     return {
@@ -370,6 +377,7 @@ function conServicioUnicoSembrado(reservaEnCurso, contexto) {
 
 function descripcionDeTap(tipoSeleccion, valorDecodificado) {
   if (tipoSeleccion === 'dia') return `Eligió el día ${valorDecodificado.fecha} de la lista.`;
+  if (tipoSeleccion === 'franja') return `Eligió el rango de horas ${valorDecodificado.desde} a ${valorDecodificado.hasta} del ${valorDecodificado.fecha} de la lista.`;
   if (tipoSeleccion === 'hora') return `Eligió la hora ${valorDecodificado.hora} del ${valorDecodificado.fecha} de la lista.`;
   if (tipoSeleccion === 'servicio') return `Eligió el servicio "${valorDecodificado.servicioNombre}" de la lista.`;
   if (tipoSeleccion === 'servicio_otro') return 'Tocó "Otro / no lo encuentro" en la lista de servicios.';
@@ -450,11 +458,27 @@ async function procesarSeleccionInteractivaSinLock({ empresa, telefonoCliente, n
     }
   } else if (tipoSeleccion === 'dia') {
     if (reservaEnCurso.fecha !== valorDecodificado.fecha) {
-      reservaEnCurso = { ...reservaEnCurso, fecha: valorDecodificado.fecha, hora: null, opcionesMostradas: null };
+      reservaEnCurso = { ...reservaEnCurso, fecha: valorDecodificado.fecha, hora: null, opcionesMostradas: null, franjaElegida: null };
+    } else if (reservaEnCurso.franjaElegida) {
+      // Tap repetido sobre el MISMO día (idempotente) después de haber
+      // elegido un rango: vuelve a mostrar la lista de rangos del día, no
+      // las horas del rango anterior.
+      reservaEnCurso = { ...reservaEnCurso, franjaElegida: null };
     }
+  } else if (tipoSeleccion === 'franja') {
+    // Rango horario tocado en la lista de rangos (días con más de 10
+    // horas, ver armarRespuestaHorarios): no cambia la hora todavía, solo
+    // deja anotado qué rango mostrar -- el paso PEDIR_HORA de más abajo
+    // arma la lista de horas de ESE rango.
+    reservaEnCurso = {
+      ...reservaEnCurso,
+      fecha: valorDecodificado.fecha,
+      hora: null,
+      franjaElegida: { desde: valorDecodificado.desde, hasta: valorDecodificado.hasta },
+    };
   } else if (tipoSeleccion === 'hora') {
     if (reservaEnCurso.fecha !== valorDecodificado.fecha || reservaEnCurso.hora !== valorDecodificado.hora) {
-      reservaEnCurso = { ...reservaEnCurso, fecha: valorDecodificado.fecha, hora: valorDecodificado.hora, opcionesMostradas: null };
+      reservaEnCurso = { ...reservaEnCurso, fecha: valorDecodificado.fecha, hora: valorDecodificado.hora, opcionesMostradas: null, franjaElegida: null };
     }
   } else if (tipoSeleccion === 'nombre') {
     // Viene del fast-path de texto (paso 8, ver intentarFastPathTexto) --
@@ -572,11 +596,25 @@ async function procesarSeleccionInteractivaSinLock({ empresa, telefonoCliente, n
           reservaEnCurso = { ...reservaEnCurso, fecha: null, opcionesMostradas: null };
           respuestaTexto = 'Ese día ya no tiene cupo disponible, ¿quieres que te muestre otro?';
         } else {
-          const armada = armarRespuestaHorarios(reservaEnCurso.fecha, horas, bloques);
-          respuestaTexto = armada.texto;
-          interactivo = armada.interactivo;
+          // Si el cliente ya tocó un RANGO de la lista de rangos, se
+          // muestra la lista de horas de ESE rango (nunca más de
+          // MAX_FILAS_LISTA_INTERACTIVA, ver dividirEnFranjas). Si el rango
+          // ya no calza con las horas reales (el día cambió entre medio),
+          // se vuelve a mostrar la lista completa del día.
+          const franja = reservaEnCurso.franjaElegida;
+          const horasDelRango = franja ? horas.filter((h) => h >= franja.desde && h <= franja.hasta).slice(0, MAX_FILAS_LISTA_INTERACTIVA) : [];
+          if (horasDelRango.length > 0) {
+            respuestaTexto = `Estos son los horarios disponibles entre las ${franja.desde} y las ${franja.hasta} del ${fechaLegibleDesdeISO(reservaEnCurso.fecha)}. Elige el que más te acomode 👇`;
+            interactivo = { tipo: 'lista_horarios', fecha: reservaEnCurso.fecha, horas: horasDelRango };
+          } else {
+            const armada = armarRespuestaHorarios(reservaEnCurso.fecha, horas, bloques);
+            respuestaTexto = armada.texto;
+            interactivo = armada.interactivo;
+          }
           reservaEnCurso = {
             ...reservaEnCurso,
+            // TODAS las horas del día (no solo las del rango mostrado) --
+            // permite que un cliente que prefiere escribir la hora igual calce.
             opcionesMostradas: horas.map((h) => ({ valor: h, etiquetas: [h] })),
           };
         }

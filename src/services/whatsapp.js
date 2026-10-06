@@ -408,6 +408,24 @@ function decodificarFilaDia(id) {
   return { fecha: partes[1] };
 }
 
+/**
+ * Codifica un RANGO horario de un día en el id de fila de la lista
+ * interactiva de rangos (se usa cuando un día tiene más horas que las 10
+ * filas que permite WhatsApp, ver armarRespuestaHorarios en claude.js).
+ * Formato: "franja|YYYY-MM-DD|HH:MM|HH:MM"
+ */
+function codificarFilaFranja(fecha, desde, hasta) {
+  return `franja|${fecha}|${desde}|${hasta}`;
+}
+
+function decodificarFilaFranja(id) {
+  if (typeof id !== 'string') return null;
+  const partes = id.split('|');
+  if (partes.length !== 4 || partes[0] !== 'franja') return null;
+  const [, fecha, desde, hasta] = partes;
+  return { fecha, desde, hasta };
+}
+
 function codificarFilaProductoDemo(productoId) {
   return `demoproducto|${productoId}`;
 }
@@ -527,6 +545,8 @@ module.exports = {
   decodificarFilaHorario,
   codificarFilaDia,
   decodificarFilaDia,
+  codificarFilaFranja,
+  decodificarFilaFranja,
   codificarFilaProductoDemo,
   decodificarFilaProductoDemo,
   codificarFilaCantidadDemo,

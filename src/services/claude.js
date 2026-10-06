@@ -91,25 +91,64 @@ const { MAX_FILAS_LISTA_INTERACTIVA } = require('./whatsapp');
  * @param {{horaInicio: string, horaFin: string, horas: string[]}[]} bloques
  * @returns {{texto: string, interactivo: Object}}
  */
+/**
+ * Divide los bloques reales de un día en RANGOS de a lo más
+ * MAX_FILAS_LISTA_INTERACTIVA horas cada uno, sin mezclar horas de bloques
+ * distintos (ej. mañana y tarde separados por un break). Dentro de un
+ * bloque se reparten de forma pareja (18 horas -> 2 rangos de 9, no 10 + 8).
+ *
+ * @param {{horas: string[]}[]} bloques
+ * @returns {{desde: string, hasta: string, horas: string[]}[]}
+ */
+function dividirEnFranjas(bloques) {
+  const franjas = [];
+  for (const bloque of bloques) {
+    const horas = bloque.horas;
+    if (horas.length === 0) continue;
+    const cantidad = Math.ceil(horas.length / MAX_FILAS_LISTA_INTERACTIVA);
+    const tamano = Math.ceil(horas.length / cantidad);
+    for (let i = 0; i < horas.length; i += tamano) {
+      const grupo = horas.slice(i, i + tamano);
+      franjas.push({ desde: grupo[0], hasta: grupo[grupo.length - 1], horas: grupo });
+    }
+  }
+  return franjas;
+}
+
 function armarRespuestaHorarios(fecha, horas, bloques) {
   const fechaLegible = fechaLegibleDesdeISO(fecha);
 
-  // Caso de siempre: un solo bloque real (sin break ese día) que cabe
-  // completo en la lista interactiva de WhatsApp — Meta limita esa lista a
-  // MAX_FILAS_LISTA_INTERACTIVA filas (ver whatsapp.js).
-  if (bloques.length <= 1 && horas.length <= MAX_FILAS_LISTA_INTERACTIVA) {
+  // Caso de siempre: todas las horas del día caben en UNA lista interactiva
+  // de WhatsApp — Meta limita esa lista a MAX_FILAS_LISTA_INTERACTIVA filas
+  // en total (ver whatsapp.js). Incluye el día con break (mañana y tarde)
+  // cuando entre los dos bloques no pasan de ese tope.
+  if (horas.length <= MAX_FILAS_LISTA_INTERACTIVA) {
     return {
       texto: `Estos son los horarios disponibles para el ${fechaLegible}: ${horas.join(', ')}. Elige el que más te acomode 👇`,
       interactivo: { tipo: 'lista_horarios', fecha, horas },
     };
   }
 
-  // Demasiadas horas para la lista interactiva, o hay más de un bloque real
-  // (ej. mañana y tarde separados por un break en el horario configurado)
-  // — en vez de truncar a 10 y esconder horas reales, se manda el listado
-  // completo en texto plano, un mensaje por bloque, sin lista interactiva.
-  // El corte de bloques sale directo del horario real configurado, no de
-  // un corte fijo a las 12:00. Pedido por Ahorróptica 2026-09-03.
+  // Más horas que filas posibles: en vez de truncar a 10 y esconder horas
+  // reales, o de mandar un texto largo para que el cliente teclee la hora
+  // (lo que se hacía desde 2026-09-03 y Ahorróptica pidió cambiar el
+  // 2026-10-06: quieren la lista tocable siempre), se muestra primero una
+  // lista de RANGOS ("09:00 a 11:15") y, al tocar uno, la lista de horas de
+  // ese rango. Nada queda oculto: todas las horas siguen siendo tocables, y
+  // el cliente que prefiera escribir la hora igual puede (ver
+  // opcionesMostradas en chatbotEngine.js).
+  const franjas = dividirEnFranjas(bloques);
+  if (franjas.length <= MAX_FILAS_LISTA_INTERACTIVA) {
+    return {
+      texto: `Hay ${horas.length} horarios disponibles para el ${fechaLegible}. Primero elige el rango de horas que más te acomode 👇`,
+      interactivo: { tipo: 'lista_franjas', fecha, franjas },
+    };
+  }
+
+  // Caso extremo (más de 100 horas en un día): se manda el listado completo
+  // en texto plano, un mensaje por bloque, sin lista interactiva. El corte de
+  // bloques sale directo del horario real configurado, no de un corte fijo a
+  // las 12:00. Pedido por Ahorróptica 2026-09-03.
   const bloquesEtiquetados = bloques.map((b) => ({
     ...b,
     etiqueta: Number(b.horaInicio.split(':')[0]) < 12 ? 'la mañana' : 'la tarde',

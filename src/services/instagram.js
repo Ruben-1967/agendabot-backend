@@ -29,6 +29,13 @@ function armarTextoConInteractivo(respuestaTexto, interactivo) {
     return `${respuestaTexto}\n\n${interactivo.horas.join(', ')}`;
   }
 
+  // Este canal no tiene listas tocables: los rangos se aplanan a texto con
+  // TODAS las horas (el cliente escribe la que prefiera).
+  if (interactivo.tipo === 'lista_franjas') {
+    const horas = interactivo.franjas.map((f) => f.horas.join(', ')).join('\n');
+    return `${respuestaTexto}\n\n${horas}\n\nEscríbeme la hora que prefieras.`;
+  }
+
   if (interactivo.tipo === 'horarios_por_bloque') {
     const bloques = interactivo.bloques
       .map((b) => `${b.etiqueta}: ${b.horas.join(', ')}`)
