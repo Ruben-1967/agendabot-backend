@@ -69,6 +69,7 @@ const { sendWhatsAppTemplateMessage } = require('../services/whatsapp');
 const { PLANTILLAS_DETERMINISTAS } = require('../services/flujoReserva');
 const { procesarMensajeEntrante, procesarSeleccionInteractiva } = require('../services/chatbotEngine');
 const { obtenerProximosDiasConDisponibilidad } = require('../services/disponibilidad');
+const { suscripcionesParaAvisoReajuste } = require('../lib/reajusteIPC');
 
 const HORAS_VENTANA_FALLAS = 24;
 const HORAS_ABANDONO = 3; // debe calzar con flujoReserva.js#HORAS_MAX_INACTIVIDAD_RESERVA
@@ -348,6 +349,29 @@ async function chequeoF_SimulacionConversacionSintetica() {
   return { ok: false, resumen: `Falló la simulación contra "${empresaDemo.nombre}": ${problemas.join('; ')}.` };
 }
 
+// G. Recordatorio del reajuste anual por IPC (cláusula 12 del contrato: en el
+//    mes de aniversario, con aviso previo de 30 días al cliente). No hay ningún
+//    mecanismo automático que reajuste ni avise al cliente (los planes de Flow
+//    tienen monto fijo), así que esto solo le avisa al administrador con
+//    tiempo. Ver src/lib/reajusteIPC.js.
+async function chequeoG_ReajusteAnualIPC() {
+  const suscripciones = await prisma.suscripcion.findMany({
+    where: { estado: 'ACTIVA', exentoDePlan: false, fechaActivacion: { not: null }, empresa: { esDemo: false } },
+    select: { fechaActivacion: true, empresa: { select: { nombre: true } } },
+  });
+  const proximas = suscripcionesParaAvisoReajuste(
+    suscripciones.map((s) => ({ empresaNombre: s.empresa.nombre, fechaActivacion: s.fechaActivacion })),
+  );
+  if (proximas.length === 0) {
+    return { ok: true, resumen: 'Ningún aniversario de contrato cerca: no hay aviso de reajuste por IPC pendiente.' };
+  }
+  const formato = (fecha) => fecha.toLocaleDateString('es-CL', { timeZone: 'UTC' });
+  const detalle = proximas
+    .map((p) => `${p.empresaNombre} (aniversario ${formato(p.aniversario)}, enviar el aviso antes del ${formato(p.fechaLimiteAviso)})`)
+    .join('; ');
+  return { ok: false, resumen: `Reajuste anual por IPC (cláusula 12) -- avisar por escrito al cliente con 30 días de anticipación: ${detalle}.` };
+}
+
 async function ejecutarChequeoSaludDiario() {
   const desde24h = new Date(Date.now() - HORAS_VENTANA_FALLAS * 60 * 60 * 1000);
   const resultados = {
@@ -357,6 +381,7 @@ async function ejecutarChequeoSaludDiario() {
     'D. Reservas abandonadas activas (informativo)': await chequeoD_ReservasAbandonadasActivas(),
     'E. Respuestas del bot con señales de problema (24h)': await chequeoE_RespuestasBotConSenalesDeProblema(desde24h),
     'F. Simulación de conversación sintética (proactivo)': await chequeoF_SimulacionConversacionSintetica(),
+    'G. Reajuste anual por IPC (aviso al cliente)': await chequeoG_ReajusteAnualIPC(),
   };
 
   const fallas = Object.entries(resultados).filter(([, r]) => !r.ok);
@@ -371,7 +396,7 @@ async function ejecutarChequeoSaludDiario() {
   // mensaje no llega un día, es señal de que el job mismo dejó de correr,
   // no solo de que todo esté bien.
   const estado = fallas.length === 0
-    ? 'Todo OK -- los 6 chequeos pasaron ✅'
+    ? `Todo OK -- los ${Object.keys(resultados).length} chequeos pasaron ✅`
     : `${fallas.length} punto(s) a revisar ⚠️`;
 
   console.log(fallas.length === 0
@@ -410,4 +435,4 @@ cron.schedule('0 8 * * *', () => {
 
 console.log('[CHEQUEO-SALUD-DIARIO] Job de chequeo diario programado (08:00 hora de Chile).');
 
-module.exports = { ejecutarChequeoSaludDiario };
+module.exports = { ejecutarChequeoSaludDiario, chequeoG_ReajusteAnualIPC };
