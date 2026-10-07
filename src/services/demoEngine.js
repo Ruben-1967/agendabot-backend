@@ -69,6 +69,7 @@ const formatoCLPDemo = (monto) => `$${monto.toLocaleString('es-CL')}`;
 const GRILLA_PLANES_TEXTO = `${Object.values(PLANES)
   .map((p) => `- ${p.etiqueta}: ${formatoCLPDemo(p.montoMensual)} CLP/mes — ${p.citasIncluidas.toLocaleString('es-CL')} citas incluidas, excedente ${formatoCLPDemo(p.precioCitaExcedente)} CLP/cita`)
   .join('\n')}
+- Todos los valores de los planes ya incluyen IVA (no se suma aparte).
 - Todos los planes incluyen, SIN costo adicional: 1 UF de hosting al año, recordatorios automáticos de
   confirmación (24h antes + reintentos) y promoción automática a la lista de espera cuando alguien cancela.
   Aparte, Meta (WhatsApp) cobra por cada mensaje que envía el negocio desde octubre de 2026, con un tramo
@@ -139,7 +140,7 @@ function textoPrecios(modoOperacion) {
     Object.values(PLANES)
       .map((p) => `💰 *${p.etiqueta}:* ${formatoCLPDemo(p.montoMensual)}/mes — ${p.citasIncluidas.toLocaleString('es-CL')} citas incluidas\n`)
       .join('') +
-    `Todos incluyen 1 UF de hosting anual, recordatorios automáticos y lista de espera, sin costo extra.`
+    `Valores con IVA incluido. Todos incluyen 1 UF de hosting anual, recordatorios automáticos y lista de espera, sin costo extra.`
   );
 }
 

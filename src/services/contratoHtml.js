@@ -190,9 +190,9 @@ function renderFormulario(empresa) {
     <div class="plan-card">
       <p class="tag">${nombreEmpresa}</p>
       <h2 id="sel-plan-name"></h2>
-      <div class="price-line"><span class="lbl">Mensualidad</span><span class="val" id="sel-monto"></span></div>
+      <div class="price-line"><span class="lbl">Mensualidad (IVA incluido)</span><span class="val" id="sel-monto"></span></div>
       <div class="price-line"><span class="lbl">Citas incluidas</span><span class="val" id="sel-citas"></span></div>
-      <div class="price-line"><span class="lbl">Excedente por cita</span><span class="val" id="sel-excedente"></span></div>
+      <div class="price-line"><span class="lbl">Excedente por cita (IVA incluido)</span><span class="val" id="sel-excedente"></span></div>
       <div class="price-line"><span class="lbl">Hosting (anual)</span><span class="val">1 UF<small> /año</small></span></div>
       <div class="price-line"><span class="lbl">Clientes y pacientes registrados</span><span class="val">Ilimitados</span></div>
       <div class="price-line"><span class="lbl">Servicios configurables</span><span class="val">Ilimitados</span></div>
@@ -232,7 +232,7 @@ function renderFormulario(empresa) {
         <div class="clause"><b>2. Objeto.</b> Agendamiento, chatbot IA, panel administrativo, panel profesional y administración de pacientes, según el plan elegido (A, B, C o D).</div>
         <div class="clause"><b>3. Plazo de implementación.</b> Aproximadamente 3 semanas desde la aceptación y la entrega de información por parte del cliente.</div>
         <div class="clause"><b>4. Duración.</b> Continua, sin permanencia mínima. Renovación automática mensual. Cualquiera de las partes puede terminar el contrato con 30 días de aviso previo.</div>
-        <div class="clause"><b>5. Precio.</b> El precio mensual corresponde al plan elegido: ${TEXTO_PLANES_CLAUSULA5}. Incluye hosting anual de 1 UF, facturado junto al primer pago y luego una vez al año. El cliente puede cambiar de plan en cualquier momento, avisando con al menos 5 días de anticipación al próximo ciclo de cobro.</div>
+        <div class="clause"><b>5. Precio.</b> El precio mensual corresponde al plan elegido: ${TEXTO_PLANES_CLAUSULA5}. Los valores de los planes incluyen IVA. Incluye hosting anual de 1 UF, facturado junto al primer pago y luego una vez al año. El cliente puede cambiar de plan en cualquier momento, avisando con al menos 5 días de anticipación al próximo ciclo de cobro.</div>
         <div class="clause"><b>6. Cuentas de terceros.</b> La Business Manager y el WhatsApp Business Account quedan a nombre del cliente. Multidigital opera como partner técnico delegado.</div>
         <div class="clause"><b>7. Datos y privacidad.</b> El tratamiento de datos personales y de salud se rige por la Ley 19.628. Multidigital actúa como encargado del tratamiento, implementando medidas de seguridad razonables. El cliente es responsable de obtener el consentimiento de sus propios pacientes.</div>
         <div class="clause"><b>8. Propiedad intelectual y de datos.</b> El software es propiedad de Multidigital. Los datos del cliente (pacientes, citas, recetas) le pertenecen al cliente y son exportables al término del contrato.</div>
