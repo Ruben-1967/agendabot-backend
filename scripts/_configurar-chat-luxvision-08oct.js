@@ -22,7 +22,7 @@ const DIRECCION = 'Loreto 28 esquina Bellavista, a pasos del Metro Bellas Artes,
 const SITIO_WEB = 'https://luxvision.cl';
 
 const INFORMACION_ADICIONAL = `Esta es la ÚNICA información que puedes citar sobre LuxVision.cl. Si te preguntan algo que no está aquí (modelos, precios o stock de un producto concreto, costos o plazos de despacho, condiciones de un cambio), NO lo inventes: dile que lo puede ver en la tienda online ${SITIO_WEB} o que lo confirma una persona del equipo.
-Quiénes somos: LuxVision Chile, con más de 15 años de experiencia y la confianza de más de 25 mil clientes. Óptica con tienda física en Recoleta y tienda online: monturas, lentes ópticos, lentes para niños, gafas de sol y lentes de contacto, con atención oftalmológica. Trabajamos con marcas como Ray Ban, Ralph Lauren, Vogue, Armani Exchange, Miraflex y Superflex, y con lentes de contacto Johnson & Johnson y Bausch & Lomb. También hacemos atención empresarial, con exhibición de más de 400 productos, y vendemos equipos e instrumentos para ópticas.
+Quiénes somos: LuxVision Chile, con más de 15 años de experiencia y la confianza de más de 25 mil clientes. Óptica con tienda física en Recoleta y tienda online, con una amplia oferta de armazones (monturas) para lentes ópticos, tanto económicos (línea de bajo costo) como de marca, además de lentes ópticos, lentes para niños, gafas de sol y lentes de contacto, con atención oftalmológica. Trabajamos con marcas como Ray Ban, Ralph Lauren, Vogue, Armani Exchange, Miraflex y Superflex, y con lentes de contacto Johnson & Johnson y Bausch & Lomb. También hacemos atención empresarial, con exhibición de más de 400 productos, y vendemos equipos e instrumentos para ópticas.
 Horario de la tienda: lunes a viernes de 10:00 a 13:30 y de 14:30 a 19:00; sábados de 10:00 a 14:00.
 Atención oftalmológica (examen visual): lunes, miércoles y viernes de 10:00 a 13:30 y de 14:30 a 19:00; sábados de 10:00 a 14:00. Se atiende por orden de llegada. Si el cliente prefiere asegurar un horario, también puede agendar una hora por este chat (las horas disponibles las muestra el sistema de agenda).
 Atención a domicilio: se evalúa caso a caso si conviene ir. Si preguntan, no lo prometas ni lo niegues: dile que una persona del equipo lo revisa y se lo confirma.
@@ -32,7 +32,7 @@ Cambios y devoluciones: según la política publicada en ${SITIO_WEB}.
 Promociones vigentes:
 - Por la compra de lentes ópticos multifocales o progresivos, de regalo unas gafas de sol ópticas para visión de lejos.
 - Solo para ópticas (profesionales): pantalla LED de optotipo a $49.900 con IVA incluido (precio normal $79.900). Incluye 1 año de página web y 2 correos corporativos pagando solo el hosting: 1 UF al año. Es para las primeras 20 unidades. Si preguntan por esta promo, ofrece que una persona del equipo continúe la conversación.
-Para comprar un producto, el cliente puede hacerlo directamente en ${SITIO_WEB}. Si pide ver ejemplos de monturas, puedes ofrecerle las fotos del catálogo visual.`;
+Para comprar un producto, el cliente puede hacerlo directamente en ${SITIO_WEB}. Si pide ver ejemplos de monturas, puedes ofrecerle las fotos del catálogo visual. Esas fotos son solo ejemplos (colecciones Lavanett, deportivos y lentes para niños), NO toda la oferta: aclara siempre que la oferta completa de armazones, económicos y de marca, está en ${SITIO_WEB}.`;
 
 async function main() {
   const antes = await prisma.empresa.findUnique({ where: { id: EMPRESA_ID } });
