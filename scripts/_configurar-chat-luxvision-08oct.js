@@ -41,6 +41,12 @@ async function main() {
     throw new Error(`El WhatsApp de esta Empresa no es el esperado (${antes.whatsappPhoneNumber}) -- no se toca nada.`);
   }
 
+  // Respaldo en pantalla de lo que se va a reemplazar (queda en el historial de la
+  // terminal por si hubiera que recuperar algo del texto anterior).
+  console.log('--- TEXTO ANTERIOR (informacionAdicional) ---');
+  console.log(antes.informacionAdicional || '(vacío)');
+  console.log(`--- DIRECCIÓN ANTERIOR: ${antes.direccion || '(vacía)'} ---\n`);
+
   const datos = {
     direccion: DIRECCION,
     sitioWeb: SITIO_WEB,
