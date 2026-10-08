@@ -22,9 +22,10 @@ const DIRECCION = 'Loreto 28 esquina Bellavista, a pasos del Metro Bellas Artes,
 const SITIO_WEB = 'https://luxvision.cl';
 
 const INFORMACION_ADICIONAL = `Esta es la ÚNICA información que puedes citar sobre LuxVision.cl. Si te preguntan algo que no está aquí (modelos, precios o stock de un producto concreto, costos o plazos de despacho, condiciones de un cambio), NO lo inventes: dile que lo puede ver en la tienda online ${SITIO_WEB} o que lo confirma una persona del equipo.
-Quiénes somos: LuxVision.cl, óptica con tienda online: monturas, lentes ópticos, lentes para niños, gafas de sol y lentes de contacto, con atención oftalmológica en la tienda. También vendemos equipos e instrumentos para ópticas.
+Quiénes somos: LuxVision Chile, con más de 15 años de experiencia y la confianza de más de 25 mil clientes. Óptica con tienda física en Recoleta y tienda online: monturas, lentes ópticos, lentes para niños, gafas de sol y lentes de contacto, con atención oftalmológica. Trabajamos con marcas como Ray Ban, Ralph Lauren, Vogue, Armani Exchange, Miraflex y Superflex, y con lentes de contacto Johnson & Johnson y Bausch & Lomb. También hacemos atención empresarial, con exhibición de más de 400 productos, y vendemos equipos e instrumentos para ópticas.
 Horario de la tienda: lunes a viernes de 10:00 a 13:30 y de 14:30 a 19:00; sábados de 10:00 a 19:00.
-Atención oftalmológica (examen visual): lunes, miércoles, viernes y sábados. Las horas disponibles para agendar las muestra el sistema de agenda; se pueden agendar por este chat. La atención es solo en la tienda, sin visitas a domicilio.
+Atención oftalmológica (examen visual): lunes, miércoles, viernes y sábados. Las horas disponibles para agendar las muestra el sistema de agenda; se pueden agendar por este chat.
+Si preguntan por atención o visitas a domicilio, no confirmes ni niegues: dile que una persona del equipo se lo confirma.
 Despacho: a todo Chile. Los costos y plazos dependen del destino y están publicados en ${SITIO_WEB}; no inventes valores.
 Medios de pago: tarjetas de débito y crédito, transferencias, abonos y saldos contra entrega.
 Cambios y devoluciones: según la política publicada en ${SITIO_WEB}.
