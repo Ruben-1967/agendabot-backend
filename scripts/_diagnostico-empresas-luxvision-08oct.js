@@ -22,7 +22,7 @@ async function main() {
   const empresas = await prisma.empresa.findMany({
     where: { nombre: { contains: 'luxvision', mode: 'insensitive' } },
     include: { rubroTemplate: { select: { nombre: true, modoOperacion: true } }, suscripcion: { select: { estado: true, plan: true, exentoDePlan: true } } },
-    orderBy: { createdAt: 'asc' },
+    orderBy: { creadoEn: 'asc' },
   });
   console.log(`Empresas "Luxvision": ${empresas.length}\n`);
 
@@ -38,7 +38,7 @@ async function main() {
       prisma.conversacion.findFirst({ where: { empresaId: e.id }, orderBy: { actualizadoEn: 'desc' }, select: { actualizadoEn: true, canal: true } }),
     ]);
     console.log(`=== ${e.nombre}${e.sucursal ? ' · ' + e.sucursal : ''} | id ${e.id}`);
-    console.log(`  creada ${fecha(e.createdAt)} | esDemo=${e.esDemo} | rubro="${e.rubroTemplate?.nombre}" (${e.rubroTemplate?.modoOperacion})`);
+    console.log(`  creada ${fecha(e.creadoEn)} | esDemo=${e.esDemo} | rubro="${e.rubroTemplate?.nombre}" (${e.rubroTemplate?.modoOperacion})`);
     console.log(`  WhatsApp: ${e.whatsappPhoneNumber || '(sin número)'} | Instagram: ${e.instagramCuentaId ? 'conectado' : 'no'}`);
     console.log(`  Suscripción: ${e.suscripcion ? `${e.suscripcion.estado} ${e.suscripcion.plan} exento=${e.suscripcion.exentoDePlan}` : '(ninguna)'}`);
     console.log(`  Usuarios del panel (${usuarios.length}): ${usuarios.map((u) => `${enmascarar(u.email)} [${u.rol}]`).join(', ') || '(ninguno)'}`);
