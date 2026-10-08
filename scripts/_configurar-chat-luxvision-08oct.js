@@ -23,9 +23,9 @@ const SITIO_WEB = 'https://luxvision.cl';
 
 const INFORMACION_ADICIONAL = `Esta es la ÚNICA información que puedes citar sobre LuxVision.cl. Si te preguntan algo que no está aquí (modelos, precios o stock de un producto concreto, costos o plazos de despacho, condiciones de un cambio), NO lo inventes: dile que lo puede ver en la tienda online ${SITIO_WEB} o que lo confirma una persona del equipo.
 Quiénes somos: LuxVision Chile, con más de 15 años de experiencia y la confianza de más de 25 mil clientes. Óptica con tienda física en Recoleta y tienda online: monturas, lentes ópticos, lentes para niños, gafas de sol y lentes de contacto, con atención oftalmológica. Trabajamos con marcas como Ray Ban, Ralph Lauren, Vogue, Armani Exchange, Miraflex y Superflex, y con lentes de contacto Johnson & Johnson y Bausch & Lomb. También hacemos atención empresarial, con exhibición de más de 400 productos, y vendemos equipos e instrumentos para ópticas.
-Horario de la tienda: lunes a viernes de 10:00 a 13:30 y de 14:30 a 19:00; sábados de 10:00 a 19:00.
-Atención oftalmológica (examen visual): lunes, miércoles, viernes y sábados. Las horas disponibles para agendar las muestra el sistema de agenda; se pueden agendar por este chat.
-Si preguntan por atención o visitas a domicilio, no confirmes ni niegues: dile que una persona del equipo se lo confirma.
+Horario de la tienda: lunes a viernes de 10:00 a 13:30 y de 14:30 a 19:00; sábados de 10:00 a 14:00.
+Atención oftalmológica (examen visual): lunes, miércoles y viernes de 10:00 a 13:30 y de 14:30 a 19:00; sábados de 10:00 a 14:00. Se atiende por orden de llegada. Si el cliente prefiere asegurar un horario, también puede agendar una hora por este chat (las horas disponibles las muestra el sistema de agenda).
+Atención a domicilio: se evalúa caso a caso si conviene ir. Si preguntan, no lo prometas ni lo niegues: dile que una persona del equipo lo revisa y se lo confirma.
 Despacho: a todo Chile. Los costos y plazos dependen del destino y están publicados en ${SITIO_WEB}; no inventes valores.
 Medios de pago: tarjetas de débito y crédito, transferencias, abonos y saldos contra entrega.
 Cambios y devoluciones: según la política publicada en ${SITIO_WEB}.
@@ -62,6 +62,28 @@ async function main() {
   console.log(`  direccion: ${antes.direccion ? 'tenía una (reemplazada)' : 'vacía'} -> "${DIRECCION}"`);
   console.log(`  sitioWeb: ${antes.sitioWeb || 'vacío'} -> ${SITIO_WEB}`);
   console.log(`  informacionAdicional: ${antes.informacionAdicional ? antes.informacionAdicional.length + ' caracteres (reemplazada)' : 'vacía'} -> ${INFORMACION_ADICIONAL.length} caracteres`);
+
+  // Es el negocio del propio dueño: no paga plan ni hosting. Misma lógica que
+  // PATCH /admin-vendedores/suscripciones/:empresaId/terminos-especiales: con las
+  // dos exenciones y la suscripción aún PENDIENTE_PAGO, pasa directo a ACTIVA (no
+  // hay ningún cobro que esperar). Si ya hubiera una suscripción recurrente en
+  // Flow NO se cancela acá: se avisa.
+  const suscripcion = await prisma.suscripcion.findUnique({ where: { empresaId: EMPRESA_ID } });
+  if (!suscripcion) {
+    console.log('\nSuscripción: la empresa no tiene ninguna, nada que exentar.');
+  } else {
+    if (suscripcion.tokenFlow || suscripcion.flowSubscriptionIdHosting) {
+      console.log('\n⚠️  Esta suscripción tiene una suscripción recurrente en Flow: NO se toca nada de pago. Cancélala desde el panel de vendedores si corresponde.');
+    } else {
+      const datosSuscripcion = { exentoDePlan: true, exentoDeHosting: true };
+      if (suscripcion.estado === 'PENDIENTE_PAGO') {
+        datosSuscripcion.estado = 'ACTIVA';
+        datosSuscripcion.fechaActivacion = new Date();
+      }
+      await prisma.suscripcion.update({ where: { empresaId: EMPRESA_ID }, data: datosSuscripcion });
+      console.log(`\n✅ Suscripción: ${suscripcion.estado} -> ${datosSuscripcion.estado || suscripcion.estado} | exentoDePlan=true | exentoDeHosting=true (sin cobro, el aviso rojo de "pendiente de pago" debería desaparecer)`);
+    }
+  }
 
   const servicios = await prisma.servicio.findMany({ where: { empresaId: EMPRESA_ID }, select: { nombre: true, activo: true } });
   const recursos = await prisma.recursoAgendable.findMany({ where: { empresaId: EMPRESA_ID }, select: { nombre: true } });
