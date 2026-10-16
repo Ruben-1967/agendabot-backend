@@ -43,7 +43,7 @@ async function main() {
   console.log(`Conversaciones: ${convs.length}`);
   for (const c of convs) console.log(`  · ***${String(c.telefono).slice(-4)} ${c.canal} ${c.actualizadoEn.toISOString()} (${Array.isArray(c.mensajes) ? c.mensajes.length : 0} mensajes)`);
 
-  console.log(`\nURL de webhook que debería estar configurada en la app: ${process.env.BACKEND_URL ? process.env.BACKEND_URL + '/webhook' : '(BACKEND_URL no definida aquí)'}`);
+  console.log(`\nURL de webhook que debería estar configurada en la app: ${process.env.BACKEND_URL ? process.env.BACKEND_URL + '/webhook/whatsapp' : '(BACKEND_URL no definida aquí)'}`);
 }
 
 main()
