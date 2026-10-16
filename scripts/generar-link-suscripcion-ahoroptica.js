@@ -21,7 +21,9 @@
 require('dotenv').config();
 
 const EMPRESA_ID = 'ahoroptica-lautaro-seed-id';
-const MONTO_ESPERADO = 9900;
+// $9.900 neto + IVA 19 % = $11.781 (los precios son "+ IVA" desde 2026-10-16; ver ajustar-promo-ahoroptica-con-iva.js).
+// Se puede forzar otro monto con MONTO_ESPERADO=... si el acuerdo cambia.
+const MONTO_ESPERADO = Number(process.env.MONTO_ESPERADO) || 11781;
 
 async function main() {
   if (!process.env.BACKEND_URL) throw new Error('Falta BACKEND_URL en el entorno');
@@ -36,7 +38,7 @@ async function main() {
 
   console.log(`Monto que se va a cobrar: $${data.monto}`);
   if (data.monto !== MONTO_ESPERADO) {
-    throw new Error(`El monto es $${data.monto}, no $${MONTO_ESPERADO} -- NO se muestra el link. ¿Se aplicó configurar-promo-ahoroptica-flow.js con APLICAR=1?`);
+    throw new Error(`El monto es $${data.monto}, no $${MONTO_ESPERADO} -- NO se muestra el link. ¿Se aplicó ajustar-promo-ahoroptica-con-iva.js con APLICAR=1?`);
   }
   if (!data.url) throw new Error('La respuesta no trae url de registro de tarjeta');
 
