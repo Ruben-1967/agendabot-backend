@@ -81,7 +81,7 @@ async function main() {
   }
 
   console.log('Confirmando el número con Meta...');
-  const urlNumero = `https://graph.facebook.com/${GRAPH_API_VERSION}/${encodeURIComponent(phoneNumberId)}?fields=display_phone_number,verified_name`;
+  const urlNumero = `https://graph.facebook.com/${GRAPH_API_VERSION}/${encodeURIComponent(phoneNumberId)}?fields=display_phone_number,verified_name,status`;
   const respuestaNumero = await fetch(urlNumero, { headers: { Authorization: `Bearer ${accessToken}` } });
   const datosNumero = await respuestaNumero.json();
 
@@ -89,7 +89,7 @@ async function main() {
     console.error('No se pudo confirmar el número de WhatsApp con Meta:', JSON.stringify(datosNumero));
     process.exit(1);
   }
-  console.log('Número confirmado:', datosNumero.display_phone_number, `(${datosNumero.verified_name || 'sin nombre verificado'})`);
+  console.log('Número confirmado:', datosNumero.display_phone_number, `(${datosNumero.verified_name || 'sin nombre verificado'}) -- status Meta: ${datosNumero.status || 'desconocido'}`);
 
   // Verificar el número en Meta Business Manager (SMS/llamada) NO es lo
   // mismo que registrarlo para Cloud API — sin este paso, el número queda
@@ -98,24 +98,38 @@ async function main() {
   // WhatsApp". Reportado 2026-09-04 (Alejandro Barber, +56949528788) — el
   // Embedded Signup oficial hace este paso solo (vía el wizard de Meta),
   // el Plan B manual no, así que hay que hacerlo explícito acá.
-  if (!pin) {
-    console.error('Falta PIN (6 dígitos) — necesario para registrar el número en Cloud API.');
-    process.exit(1);
-  }
-  console.log('Registrando el número para Cloud API...');
-  const urlRegistro = `https://graph.facebook.com/${GRAPH_API_VERSION}/${encodeURIComponent(phoneNumberId)}/register`;
-  const respuestaRegistro = await fetch(urlRegistro, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ messaging_product: 'whatsapp', pin }),
-  });
-  const datosRegistro = await respuestaRegistro.json();
+  // OMITIR_REGISTRO=1 (2026-10-16): para un número que YA quedó registrado en
+  // Cloud API por otra vía (ej. migrado desde el administrador de WhatsApp de
+  // Meta, estado "Conectado"). Volver a llamar a /register con un PIN que no
+  // sea el vigente falla o pisa el PIN, así que en ese caso se salta, pero solo
+  // si Meta confirma que el número está CONNECTED.
+  const omitirRegistro = process.env.OMITIR_REGISTRO === '1';
+  if (omitirRegistro) {
+    if (datosNumero.status !== 'CONNECTED') {
+      console.error(`OMITIR_REGISTRO=1 exige que Meta reporte el número como CONNECTED (reporta: ${datosNumero.status || 'desconocido'}). No se hace nada.`);
+      process.exit(1);
+    }
+    console.log('OMITIR_REGISTRO=1: el número ya está CONNECTED en Meta, se salta el registro.');
+  } else {
+    if (!pin) {
+      console.error('Falta PIN (6 dígitos) — necesario para registrar el número en Cloud API (o usa OMITIR_REGISTRO=1 si ya está CONNECTED).');
+      process.exit(1);
+    }
+    console.log('Registrando el número para Cloud API...');
+    const urlRegistro = `https://graph.facebook.com/${GRAPH_API_VERSION}/${encodeURIComponent(phoneNumberId)}/register`;
+    const respuestaRegistro = await fetch(urlRegistro, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ messaging_product: 'whatsapp', pin }),
+    });
+    const datosRegistro = await respuestaRegistro.json();
 
-  if (!respuestaRegistro.ok || !datosRegistro.success) {
-    console.error('No se pudo registrar el número para Cloud API:', JSON.stringify(datosRegistro));
-    process.exit(1);
+    if (!respuestaRegistro.ok || !datosRegistro.success) {
+      console.error('No se pudo registrar el número para Cloud API:', JSON.stringify(datosRegistro));
+      process.exit(1);
+    }
+    console.log('Número registrado y activo en Cloud API.');
   }
-  console.log('Número registrado y activo en Cloud API.');
 
   console.log('Suscribiendo la app a los webhooks de la WABA...');
   const urlSuscripcion = `https://graph.facebook.com/${GRAPH_API_VERSION}/${encodeURIComponent(wabaId)}/subscribed_apps`;
