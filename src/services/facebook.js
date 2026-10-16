@@ -87,7 +87,12 @@ async function sendFacebookTextMessage({ paginaId, to, text, accessToken }) {
 
   if (!response.ok) {
     console.error('Error enviando mensaje de Messenger:', JSON.stringify(data, null, 2));
-    throw new Error(`Messenger API error: ${data.error?.message || response.statusText}`);
+    const errorApi = new Error(`Messenger API error: ${data.error?.message || response.statusText}`);
+    // Código de Meta (p. ej. 190 = token inválido, 100/2534014 = el usuario ya no existe): sirve para no reintentar
+    // eternamente un envío que nunca va a funcionar (ver jobs/pausaCoexistence.js).
+    errorApi.codigoMeta = data.error?.code;
+    errorApi.subcodigoMeta = data.error?.error_subcode;
+    throw errorApi;
   }
 
   return data;

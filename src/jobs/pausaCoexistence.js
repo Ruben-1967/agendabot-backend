@@ -121,6 +121,14 @@ async function enviarAlertaUrgenteInterna(conversacion, empresa) {
   }
 }
 
+// Errores de Meta que no se arreglan reintentando: token inválido o vencido (190), la persona ya no existe o no se
+// puede contactar (100 con subcódigo 2534014, 551). Reintentarlos cada minuto llenaba el registro de errores y,
+// peor, cortaba el resto del proceso de esa conversación (la alerta interna nunca salía).
+function esErrorPermanenteDeEnvio(error) {
+  const codigo = error?.codigoMeta;
+  return codigo === 190 || codigo === 551 || (codigo === 100 && error?.subcodigoMeta === 2534014);
+}
+
 function obtenerTimestampUltimoMensajeCliente(mensajes) {
   const lista = Array.isArray(mensajes) ? mensajes : [];
   const mensajesDelCliente = lista.filter((m) => m.rol === 'usuario');
@@ -166,48 +174,58 @@ async function procesarPausasCoexistence() {
       // branchea por canal, a diferencia de la alerta interna de arriba.
       if (minutosDesdePausa >= MINUTOS_CONTENCION && !conversacion.contencionEnviadaEn) {
         let contencionEnviada = false;
+        try {
 
-        if (conversacion.canal === 'instagram') {
-          // instagramToken llega anidado (Conversacion -> Empresa), la
-          // extensión de Prisma no lo descifra automáticamente ahí.
-          const accessTokenInstagram = descifrarSiCorresponde(empresa.instagramToken);
-          if (accessTokenInstagram && empresa.instagramCuentaId) {
-            await sendInstagramTextMessage({
-              igCuentaId: empresa.instagramCuentaId,
-              to: conversacion.telefono,
-              accessToken: accessTokenInstagram,
-              text: TEXTO_CONTENCION,
-            });
-            contencionEnviada = true;
+          if (conversacion.canal === 'instagram') {
+            // instagramToken llega anidado (Conversacion -> Empresa), la
+            // extensión de Prisma no lo descifra automáticamente ahí.
+            const accessTokenInstagram = descifrarSiCorresponde(empresa.instagramToken);
+            if (accessTokenInstagram && empresa.instagramCuentaId) {
+              await sendInstagramTextMessage({
+                igCuentaId: empresa.instagramCuentaId,
+                to: conversacion.telefono,
+                accessToken: accessTokenInstagram,
+                text: TEXTO_CONTENCION,
+              });
+              contencionEnviada = true;
+            }
+          } else if (conversacion.canal === 'facebook') {
+            // facebookToken llega anidado (Conversacion -> Empresa), la
+            // extensión de Prisma no lo descifra automáticamente ahí.
+            const accessTokenFacebook = descifrarSiCorresponde(empresa.facebookToken);
+            if (accessTokenFacebook && empresa.facebookPaginaId) {
+              await sendFacebookTextMessage({
+                paginaId: empresa.facebookPaginaId,
+                to: conversacion.telefono,
+                accessToken: accessTokenFacebook,
+                text: TEXTO_CONTENCION,
+              });
+              contencionEnviada = true;
+            }
+          } else {
+            // whatsappToken llega anidado (Conversacion -> Empresa), la
+            // extensión de Prisma no lo descifra automáticamente ahí.
+            const accessToken = descifrarSiCorresponde(empresa.whatsappToken) || process.env.WHATSAPP_ACCESS_TOKEN;
+            if (accessToken && empresa.whatsappNumeroId) {
+              await sendWhatsAppTextMessage({
+                phoneNumberId: empresa.whatsappNumeroId,
+                to: conversacion.telefono,
+                accessToken,
+                text: TEXTO_CONTENCION,
+              });
+              contencionEnviada = true;
+            }
           }
-        } else if (conversacion.canal === 'facebook') {
-          // facebookToken llega anidado (Conversacion -> Empresa), la
-          // extensión de Prisma no lo descifra automáticamente ahí.
-          const accessTokenFacebook = descifrarSiCorresponde(empresa.facebookToken);
-          if (accessTokenFacebook && empresa.facebookPaginaId) {
-            await sendFacebookTextMessage({
-              paginaId: empresa.facebookPaginaId,
-              to: conversacion.telefono,
-              accessToken: accessTokenFacebook,
-              text: TEXTO_CONTENCION,
-            });
-            contencionEnviada = true;
-          }
-        } else {
-          // whatsappToken llega anidado (Conversacion -> Empresa), la
-          // extensión de Prisma no lo descifra automáticamente ahí.
-          const accessToken = descifrarSiCorresponde(empresa.whatsappToken) || process.env.WHATSAPP_ACCESS_TOKEN;
-          if (accessToken && empresa.whatsappNumeroId) {
-            await sendWhatsAppTextMessage({
-              phoneNumberId: empresa.whatsappNumeroId,
-              to: conversacion.telefono,
-              accessToken,
-              text: TEXTO_CONTENCION,
-            });
-            contencionEnviada = true;
+        } catch (errorEnvio) {
+          // Un fallo al avisar al CLIENTE no debe impedir la alerta interna al negocio (paso 3).
+          if (esErrorPermanenteDeEnvio(errorEnvio)) {
+            await prisma.conversacion.update({ where: { id: conversacion.id }, data: { contencionEnviadaEn: new Date() } });
+            const pistaToken = errorEnvio.codigoMeta === 190 ? ` Hay que volver a conectar el canal ${conversacion.canal} de "${empresa.nombre}" (su token ya no es válido).` : '';
+            console.warn(`[PAUSA-COEXISTENCE] No se puede enviar la contención por ${conversacion.canal} a ${conversacion.telefono} (${empresa.nombre}), código ${errorEnvio.codigoMeta}: no se reintenta.${pistaToken}`);
+          } else {
+            console.warn(`[PAUSA-COEXISTENCE] Falló el envío de la contención a ${conversacion.telefono} (${empresa.nombre}); se reintenta en la próxima pasada: ${errorEnvio.message}`);
           }
         }
-
         if (contencionEnviada) {
           const mensajesActualizados = [
             ...(Array.isArray(conversacion.mensajes) ? conversacion.mensajes : []),
