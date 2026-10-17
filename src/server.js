@@ -490,6 +490,14 @@ app.post('/webhook/whatsapp', verificarFirmaWebhookWhatsApp, async (req, res) =>
     const value = change?.value;
     const mensaje = value?.messages?.[0];
 
+    // Rastro de CADA mensaje entrante (sin teléfono ni texto del cliente):
+    // antes un mensaje normal no dejaba ninguna línea en los logs, así que
+    // cuando un número nuevo "no respondía" (Multidigital, 2026-10-17) no había
+    // forma de saber si Meta no avisaba o si fallaba algo adentro.
+    if (mensaje) {
+      console.log(`[WEBHOOK WHATSAPP] mensaje entrante phone_number_id=${value.metadata?.phone_number_id} tipo=${mensaje.type} id=${mensaje.id}`);
+    }
+
     // Diagnóstico de Embedded Signup: Meta documenta que dispara el webhook
     // "account_update" cuando un cliente completa el flujo de conexión de
     // WhatsApp — independiente del postMessage del navegador (que se probó
