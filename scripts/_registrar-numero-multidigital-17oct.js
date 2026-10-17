@@ -23,6 +23,11 @@ const prisma = require('../src/lib/prisma');
 const EMPRESA_ID = 'b087c530-5f89-4ecd-8cfb-9fda7069a426';
 const GRAPH = 'v21.0';
 const PIN = (process.env.PIN || '').trim();
+// TOKEN_REGISTRO (opcional): token de una app que sea de la MISMA cartera dueña de la
+// cuenta de WhatsApp (Multidigital), solo para el registro. Con el token de
+// "AgendaBot Producción" (app de otra cartera, Luxvision Chile) Meta rechaza el
+// registro con (#10) aunque los permisos estén bien (verificado 2026-10-17).
+const TOKEN_REGISTRO = (process.env.TOKEN_REGISTRO || '').replace(/\s+/g, '');
 
 const limpiar = (txt) => String(txt || '').replace(/EAA[A-Za-z0-9]+/g, '***');
 
@@ -57,7 +62,7 @@ async function main() {
   }
   console.log('✅ Número registrado en Cloud API.');
 
-  const despues = await graph(`${e.whatsappNumeroId}?fields=status,platform_type,health_status`, e.whatsappToken);
+  const despues = await graph(`${e.whatsappNumeroId}?fields=status,platform_type,health_status`, tokenParaRegistro);
   console.log('Estado DESPUÉS:', JSON.stringify(despues.data));
   console.log('\nAhora escríbele un mensaje al número desde otro teléfono y revisa los logs: [WEBHOOK WHATSAPP] mensaje entrante.');
 }
