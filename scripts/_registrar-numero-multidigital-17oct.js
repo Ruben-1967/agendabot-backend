@@ -48,8 +48,9 @@ async function main() {
   console.log('health_status ANTES:', JSON.stringify(antes.data.health_status));
   if (antes.data.is_pin_enabled) console.log('⚠️  El número ya tiene un PIN de verificación en dos pasos: el que escribas debe ser ESE mismo.');
 
-  console.log('\nRegistrando el número en Cloud API (esto saca la sesión de WhatsApp del celular)...');
-  const reg = await graph(`${e.whatsappNumeroId}/register`, e.whatsappToken, {
+  const tokenParaRegistro = TOKEN_REGISTRO || e.whatsappToken;
+  console.log(`\nRegistrando el número en Cloud API (esto saca la sesión de WhatsApp del celular)... [token ${TOKEN_REGISTRO ? 'de TOKEN_REGISTRO' : 'guardado en la Empresa'}]`);
+  const reg = await graph(`${e.whatsappNumeroId}/register`, tokenParaRegistro, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ messaging_product: 'whatsapp', pin: PIN }),
