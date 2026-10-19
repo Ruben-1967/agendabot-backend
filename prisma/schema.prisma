@@ -869,6 +869,12 @@ model Suscripcion {
   exentoDePlan    Boolean @default(false)
   mesesGratisPlan Int     @default(0)
 
+  // Cobro anclado al día 1 (decisión 2026-10-19, Ahorróptica): el cliente paga
+  // el mes en curso al registrar la tarjeta y la suscripción recurrente de Flow
+  // arranca para que su primer cobro caiga el día 1 del mes siguiente (ver
+  // src/lib/cicloCobro.js). false = comportamiento de siempre (30 días de trial).
+  cobroDia1 Boolean @default(false)
+
   // Precio promocional por cliente (2026-10-05, Ahorróptica: $9.900 hasta el
   // 31-dic-2026). El monto de una suscripción recurrente lo fija el Plan de
   // Flow, no se puede variar por cliente -- por eso la promo vive en un Plan

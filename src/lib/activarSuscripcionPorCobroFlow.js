@@ -16,6 +16,7 @@ const prisma = require('./prisma');
 const flowClient = require('../services/flowClient');
 const { PLANES: DETALLE_PLANES } = require('../services/contratoHtml');
 const { obtenerPrecioVigente } = require('./precioSuscripcion');
+const { diasHastaProximoDia1 } = require('./cicloCobro');
 
 const DIAS_TRIAL_PLAN = 30;
 const DIAS_TRIAL_HOSTING = 365;
@@ -61,9 +62,13 @@ async function activarSuscripcionPorCobroFlow({ empresaId, valorUf, token }) {
   // a cobrar solo cuando el trial termina, sin necesidad de un job que lo
   // "gradúe" a cobro normal.
   const planExento = suscripcion.exentoDePlan;
+  const ahora = new Date();
+  // cobroDia1 (ver src/lib/cicloCobro.js): el primer cobro recurrente cae el
+  // día 1 del mes siguiente en vez de 30 días después. Los meses de gracia
+  // tienen prioridad: si los hay, se respetan tal cual.
   const diasTrialPlan = suscripcion.mesesGratisPlan > 0
     ? suscripcion.mesesGratisPlan * DIAS_POR_MES_GRATIS
-    : DIAS_TRIAL_PLAN;
+    : suscripcion.cobroDia1 ? diasHastaProximoDia1(ahora) : DIAS_TRIAL_PLAN;
 
   const subscripcionPlan = planExento ? null : await flowClient.crearSuscripcionFlow({
     planId: flowPlanId,
@@ -76,7 +81,6 @@ async function activarSuscripcionPorCobroFlow({ empresaId, valorUf, token }) {
     trialPeriodDays: DIAS_TRIAL_HOSTING,
   });
 
-  const ahora = new Date();
   const fechaProximoCobro = new Date(ahora);
   fechaProximoCobro.setDate(fechaProximoCobro.getDate() + diasTrialPlan);
   const fechaProximoCobroHosting = new Date(ahora);
