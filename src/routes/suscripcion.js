@@ -21,6 +21,7 @@ const { obtenerValorUfHoy } = require('../lib/uf');
 const { activarSuscripcionPorCobroFlow } = require('../lib/activarSuscripcionPorCobroFlow');
 const { PLANES: DETALLE_PLANES } = require('../services/contratoHtml'); // fuente única de montoMensual/citasIncluidas/precioCitaExcedente por plan
 const { obtenerPrecioVigente } = require('../lib/precioSuscripcion');
+const { estadoImpagoParaPanel } = require('../lib/impagos');
 
 /**
  * GET /suscripcion/estado
@@ -36,7 +37,7 @@ router.get('/estado', requireAuth, requireRole('ADMIN'), async (req, res) => {
         id: true,
         nombre: true,
         pruebahasta: true,
-        suscripcion: { select: { plan: true, estado: true, fechaProximoCobro: true } },
+        suscripcion: { select: { plan: true, estado: true, fechaProximoCobro: true, impagoDesde: true, corteImpagoEn: true, avisosImpagoEnviados: true } },
       },
     });
 
@@ -77,6 +78,8 @@ router.get('/estado', requireAuth, requireRole('ADMIN'), async (req, res) => {
       enPrueba: enPruebaVigente,
       vencido: !empresa.suscripcion && empresa.pruebahasta && hoy >= empresa.pruebahasta,
       avisoPagoNivel,
+      // Franja de impago del panel (ver estadoImpagoParaPanel): null o { etapa, fechaCorte }.
+      impago: estadoImpagoParaPanel(empresa.suscripcion, process.env.BLOQUEO_IMPAGO_ACTIVO === 'true'),
     });
   } catch (error) {
     console.error('Error en GET /suscripcion/estado:', error);

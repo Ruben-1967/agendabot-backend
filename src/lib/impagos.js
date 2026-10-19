@@ -57,7 +57,26 @@ function accionImpago(s, ahora = new Date()) {
   return null;
 }
 
+/**
+ * Qué ve el administrador en el panel (franja de aviso) según el impago. Devuelve
+ * null si no hay nada que mostrar. Para que la franja nunca diga algo distinto de
+ * lo que pasa de verdad:
+ *   - AVISO / ULTIMO_AVISO solo aparecen una vez que el aviso 1 ya salió por
+ *     correo (corteImpagoEn fijado), con la misma fecha de corte del correo;
+ *   - PAUSADO solo si el corte real está encendido (BLOQUEO_IMPAGO_ACTIVO).
+ * @param {{estado: string, impagoDesde: Date|null, corteImpagoEn: Date|null, avisosImpagoEnviados: number}} s
+ */
+function estadoImpagoParaPanel(s, bloqueoActivo) {
+  if (!s || !s.impagoDesde) return null;
+  if (s.estado === 'PAUSADA_POR_IMPAGO') {
+    return bloqueoActivo ? { etapa: 'PAUSADO', fechaCorte: s.corteImpagoEn || null } : null;
+  }
+  if (!s.corteImpagoEn || s.avisosImpagoEnviados < 1) return null;
+  return { etapa: s.avisosImpagoEnviados >= 2 ? 'ULTIMO_AVISO' : 'AVISO', fechaCorte: s.corteImpagoEn };
+}
+
 module.exports = {
+  estadoImpagoParaPanel,
   ACCION,
   DIAS_HASTA_CORTE,
   DIAS_AVISO_2_ANTES_DEL_CORTE,

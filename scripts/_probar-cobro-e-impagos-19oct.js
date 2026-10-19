@@ -9,7 +9,7 @@
 
 const assert = require('node:assert/strict');
 const { diasHastaProximoCobro } = require('../src/lib/cicloCobro');
-const { ACCION, accionImpago, calcularCorteImpago, corteTrasAviso2 } = require('../src/lib/impagos');
+const { ACCION, accionImpago, calcularCorteImpago, corteTrasAviso2, estadoImpagoParaPanel } = require('../src/lib/impagos');
 const { esPostPermitido } = require('../src/lib/estadoServicio');
 
 let n = 0;
@@ -76,6 +76,20 @@ ok('desfase de 1 segundo antes del plazo: igual se actúa ese día (tolerancia)'
 assert.equal(corteTrasAviso2(corte, dias(5)).getTime(), corte.getTime());
 assert.equal(corteTrasAviso2(corte, dias(12)).getTime(), dias(15).getTime());
 ok('aviso 2 tardío: el corte se corre para dar al menos 3 días de margen');
+
+// --- Franja del panel ---
+const sp = (o) => ({ estado: 'ACTIVA', impagoDesde: t0, corteImpagoEn: corte, avisosImpagoEnviados: 1, ...o });
+assert.equal(estadoImpagoParaPanel(null, true), null);
+assert.equal(estadoImpagoParaPanel({ ...sp(), impagoDesde: null }, true), null);
+ok('panel: sin impago, sin franja');
+assert.equal(estadoImpagoParaPanel(sp({ avisosImpagoEnviados: 0, corteImpagoEn: null }), true), null);
+ok('panel: impago detectado pero aviso 1 aún no enviado, sin franja (el panel no se adelanta al correo)');
+assert.deepEqual(estadoImpagoParaPanel(sp(), true), { etapa: 'AVISO', fechaCorte: corte });
+assert.deepEqual(estadoImpagoParaPanel(sp({ avisosImpagoEnviados: 2 }), false), { etapa: 'ULTIMO_AVISO', fechaCorte: corte });
+ok('panel: aviso 1 -> AVISO, aviso 2 -> ULTIMO_AVISO, con la misma fecha de corte del correo');
+assert.deepEqual(estadoImpagoParaPanel(sp({ estado: 'PAUSADA_POR_IMPAGO', avisosImpagoEnviados: 3 }), true), { etapa: 'PAUSADO', fechaCorte: corte });
+assert.equal(estadoImpagoParaPanel(sp({ estado: 'PAUSADA_POR_IMPAGO', avisosImpagoEnviados: 3 }), false), null);
+ok('panel: PAUSADO solo si el corte real está encendido');
 
 // --- POST permitidos con el servicio pausado ---
 const permitidos = ['/auth/login', '/suscripcion/elegir-plan', '/billetera/comprar', '/empresa/whatsapp/conectar', '/disponibilidad/abc/validar', '/clientes/1/fusionar-en/2', '/agenda/citas/9/reagendar', '/conversaciones/e/c/mensaje'];
