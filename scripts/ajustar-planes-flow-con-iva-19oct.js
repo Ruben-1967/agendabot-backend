@@ -70,12 +70,23 @@ async function main() {
   const suscriptoresHosting = await prisma.suscripcion.count({ where: { flowSubscriptionIdHosting: { not: null } } });
   // El hosting se calcula desde la UF de hoy (1 UF + IVA), NO desde el monto actual: así correr el
   // script dos veces (por ejemplo tras un fallo a medias) nunca multiplica el IVA otra vez.
-  const montoHostingNuevo = conIva(await obtenerValorUfHoy());
+  // Si mindicador.cl está caído, se puede dar la UF a mano (UF_MANUAL=41100, sin puntos) o reintentar
+  // más tarde; en DRY-RUN igual se muestran los planes A-D y el hosting queda marcado sin calcular.
+  let montoHostingNuevo = null;
+  let motivoSinUf = null;
+  try {
+    montoHostingNuevo = conIva(process.env.UF_MANUAL ? Number(process.env.UF_MANUAL) : await obtenerValorUfHoy());
+    if (!Number.isFinite(montoHostingNuevo) || montoHostingNuevo <= 0) throw new Error('UF_MANUAL inválida');
+  } catch (errUf) {
+    montoHostingNuevo = null;
+    motivoSinUf = `no se pudo obtener la UF (${errUf.message}); reintentar o usar UF_MANUAL=<valor>`;
+  }
   objetivos.push({ etiqueta: 'Hosting anual', planId: process.env.FLOW_PLAN_ID_HOSTING, objetivo: () => montoHostingNuevo, suscriptores: suscriptoresHosting, netoEsperado: null });
 
   const filas = [];
   for (const o of objetivos) {
     if (!o.planId) { filas.push({ ...o, error: 'sin FLOW_PLAN_ID en el entorno' }); continue; }
+    if (o.etiqueta === 'Hosting anual' && montoHostingNuevo === null) { filas.push({ ...o, error: motivoSinUf }); continue; }
     const info = await flowGet('/plans/get', { planId: o.planId });
     if (info.code && info.message) { filas.push({ ...o, error: `Flow: ${info.message}` }); continue; }
     const actual = Number(info.amount);
