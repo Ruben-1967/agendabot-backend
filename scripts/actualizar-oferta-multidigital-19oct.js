@@ -4,7 +4,7 @@
  * la oferta de entrada, según lo aprobado el 2026-10-19:
  *   - ya no es "landing" sino un sitio web de una página con hasta 7 secciones;
  *   - se suma el plan anual: $95.000 + IVA al año (20% menos, ahorra $23.800).
- * Incluye la permanencia definida el 19-oct: sin permanencia, baja libre, mantiene el hosting 1 año. Solo reemplaza esas frases exactas dentro
+ * Incluye la permanencia definida el 19-oct: sin permanencia, baja libre; el sitio deja de publicarse y hosting/correos siguen hasta 1 año desde la contratación. Solo reemplaza esas frases exactas dentro
  * de informacionAdicional; no toca nada más ni manda mensajes. DRY-RUN por defecto.
  *
  * Uso (Shell de Render, producción):
@@ -23,7 +23,7 @@ const CAMBIOS = [
   },
   {
     antes: 'Valor: $9.900 al mes + IVA.',
-    despues: 'Valor: $9.900 al mes + IVA, o pago anual de $95.000 + IVA al año (20% menos: ahorra $23.800, equivale a $7.917 al mes + IVA). Sin permanencia: puede darse de baja cuando quiera y, si se va, mantiene el hosting por 1 año. No incluye tienda online, selector de lentes ni prueba virtual: eso es aparte.',
+    despues: 'Valor: $9.900 al mes + IVA, o pago anual de $95.000 + IVA al año (20% menos: ahorra $23.800, equivale a $7.917 al mes + IVA). Sin permanencia: puede darse de baja cuando quiera; si se va, el sitio deja de publicarse, pero el hosting y los correos siguen activos hasta completar 1 año desde la contratación. No incluye tienda online, selector de lentes ni prueba virtual: eso es aparte.',
   },
 ];
 
