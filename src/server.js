@@ -59,6 +59,8 @@ const conversacionesRouter = require('./routes/conversaciones');
 const suscripcionRouter = require('./routes/suscripcion');
 const websiteLeadsRouter = require('./routes/websiteLeads');
 const { iniciarJobBloqueoVencidas } = require('./jobs/bloquearEmpresasVencidas');
+const { iniciarJobImpagos } = require('./jobs/impagos');
+const { serviciosPausadosPorImpago } = require('./lib/estadoServicio');
 
 // Job de opt-in de campañas (node-cron autoprogramado dentro de este mismo
 // proceso — ver src/jobs/enviarPreguntaOptIn.js). Requerirlo una sola vez
@@ -69,6 +71,7 @@ require('./jobs/cierreRankingMensual');
 require('./jobs/pausaCoexistence');
 require('./jobs/chequeoSaludDiario');
 iniciarJobBloqueoVencidas();
+iniciarJobImpagos();
 
 const app = express();
 app.set('trust proxy', 1);
@@ -1076,6 +1079,18 @@ app.post('/webhook/whatsapp', verificarFirmaWebhookWhatsApp, async (req, res) =>
       return;
     }
     // ---- fin corte de servicio por prueba vencida ----
+
+    // Corte por impago (suscripción PAUSADA_POR_IMPAGO tras dos avisos): el bot
+    // deja de responder. A diferencia del corte por prueba vencida, acá NO se
+    // manda ningún texto automático: en Coexistence el personal sigue hablando
+    // con los pacientes por la app, y un "canal no disponible" automático
+    // interrumpiría esas conversaciones. Solo con BLOQUEO_IMPAGO_ACTIVO='true'
+    // -- ver src/lib/estadoServicio.js.
+    if (await serviciosPausadosPorImpago(empresa.id)) {
+      console.log(`[IMPAGO] Servicio pausado por impago, el bot no responde (empresa ${empresa.id}).`);
+      return;
+    }
+    // ---- fin corte por impago ----
 
     // ------------------------------------------------------------
     // Opt-in de campañas embebido en la conversación: intercepta el clic

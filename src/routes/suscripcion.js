@@ -426,7 +426,14 @@ router.post('/flow-webhook-plan', async (req, res) => {
           where: { id: suscripcion.id },
           data: {
             intentosFallidosConsecutivos: intentos,
-            estado: intentos >= 3 ? 'PAUSADA_POR_IMPAGO' : suscripcion.estado,
+            // Política de impago (ver src/lib/impagos.js): el primer fallo abre el
+            // período de aviso; ya no se pausa por contar 3 fallos -- el corte lo
+            // decide src/jobs/impagos.js por fecha, después de avisar dos veces.
+            // Un aviso de fallo atrasado o repetido de un cobro viejo no debe reabrir
+            // el impago de quien pagó hace poco (los avisos son correos reales).
+            ...(suscripcion.impagoDesde || (suscripcion.fechaUltimoPago && ahora - suscripcion.fechaUltimoPago < 2 * 86400000)
+              ? {}
+              : { impagoDesde: ahora }),
           },
         });
         await tx.pago.create({
@@ -459,6 +466,10 @@ router.post('/flow-webhook-plan', async (req, res) => {
         data: {
           estado: 'ACTIVA',
           intentosFallidosConsecutivos: 0,
+          // Pago exitoso: se limpia el impago y el servicio vuelve solo si estaba pausado.
+          impagoDesde: null,
+          corteImpagoEn: null,
+          avisosImpagoEnviados: 0,
           fechaUltimoPago: ahora,
           [proximaFecha]: nuevaFecha,
         },

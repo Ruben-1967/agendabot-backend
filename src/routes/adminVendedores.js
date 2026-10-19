@@ -252,7 +252,10 @@ router.post('/suscripciones/:empresaId/marcar-activa', requireAuth, requireRolVe
 
     const actualizada = await prisma.suscripcion.update({
       where: { empresaId },
-      data: { estado: 'ACTIVA', fechaActivacion: new Date() },
+      // También limpia cualquier impago en curso (ver src/lib/impagos.js): si venía
+      // PAUSADA_POR_IMPAGO y se reactiva a mano, no debe quedar el ciclo de avisos
+      // a medias ni "muerto" (un fallo futuro no abriría un impago nuevo).
+      data: { estado: 'ACTIVA', fechaActivacion: new Date(), impagoDesde: null, corteImpagoEn: null, avisosImpagoEnviados: 0 },
     });
 
     // Si venía de avisos/bloqueo por prueba vencida (ver

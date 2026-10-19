@@ -1,5 +1,6 @@
 const jwt = require('jsonwebtoken');
 const prisma = require('../lib/prisma');
+const { MENSAJE_PAUSADA, esPostPermitido, serviciosPausadosPorImpago } = require('../lib/estadoServicio');
 
 const JWT_SECRET = process.env.JWT_SECRET;
 
@@ -43,6 +44,21 @@ async function requireAuth(req, res, next) {
     }
 
     req.usuario = payload;
+
+    // Corte por impago (ver src/lib/estadoServicio.js): con la suscripción
+    // pausada se puede ver y editar pero no CREAR registros nuevos (POST). Falla
+    // "abierto": un error al consultar el estado nunca debe tumbar el login ni
+    // el panel de un cliente que paga.
+    if (req.method === 'POST' && payload.rol !== 'VENDEDOR' && payload.empresaId) {
+      try {
+        const ruta = req.originalUrl.split('?')[0];
+        if (!esPostPermitido(ruta) && await serviciosPausadosPorImpago(payload.empresaId)) {
+          return res.status(403).json({ error: MENSAJE_PAUSADA, codigo: 'PAUSADA_POR_IMPAGO' });
+        }
+      } catch (errEstado) {
+        console.error('[requireAuth] No se pudo verificar el estado de la suscripción (se deja pasar):', errEstado.message);
+      }
+    }
     next();
   } catch (error) {
     return res.status(401).json({ error: 'Token inválido o expirado' });
