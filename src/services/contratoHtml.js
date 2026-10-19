@@ -1,3 +1,5 @@
+const { conIva } = require('../lib/iva');
+
 // Genera el HTML de la página de selección de plan + aceptación de contrato,
 // con la identidad visual de MultiDigital (acordeón de cláusulas, paleta
 // teal/brass, tipografía Fraunces + Inter + IBM Plex Mono).
@@ -18,6 +20,12 @@ const PLANES = {
   PLAN_D: { etiqueta: 'Plan D', montoMensual: 149900, citasIncluidas: 2500, precioCitaExcedente: 55 },
 };
 
+// Todos los precios de PLANES son NETOS; lo que se cobra es neto + IVA (ver
+// src/lib/iva.js). montoMensualConIva viaja también al HTML del formulario.
+for (const plan of Object.values(PLANES)) {
+  plan.montoMensualConIva = conIva(plan.montoMensual);
+}
+
 function formatoCLPServidor(monto) {
   return '$' + monto.toLocaleString('es-CL');
 }
@@ -27,7 +35,7 @@ function formatoCLPServidor(monto) {
 // cambiaron los precios (el contrato firmado seguía mostrando los 3 planes
 // viejos, sin Plan D, mientras Flow ya cobraba los montos nuevos).
 const TEXTO_PLANES_CLAUSULA5 = Object.values(PLANES)
-  .map((p) => `${p.etiqueta} (${formatoCLPServidor(p.montoMensual)}/mes, ${p.citasIncluidas.toLocaleString('es-CL')} citas incluidas, excedente ${formatoCLPServidor(p.precioCitaExcedente)}/cita)`)
+  .map((p) => `${p.etiqueta} (${formatoCLPServidor(p.montoMensual)} + IVA/mes, ${p.citasIncluidas.toLocaleString('es-CL')} citas incluidas, excedente ${formatoCLPServidor(p.precioCitaExcedente)} + IVA/cita)`)
   .join(', ');
 
 function renderFormulario(empresa) {
@@ -190,9 +198,9 @@ function renderFormulario(empresa) {
     <div class="plan-card">
       <p class="tag">${nombreEmpresa}</p>
       <h2 id="sel-plan-name"></h2>
-      <div class="price-line"><span class="lbl">Mensualidad (IVA incluido)</span><span class="val" id="sel-monto"></span></div>
+      <div class="price-line"><span class="lbl">Mensualidad (+ IVA)</span><span class="val" id="sel-monto"></span></div>
       <div class="price-line"><span class="lbl">Citas incluidas</span><span class="val" id="sel-citas"></span></div>
-      <div class="price-line"><span class="lbl">Excedente por cita (IVA incluido)</span><span class="val" id="sel-excedente"></span></div>
+      <div class="price-line"><span class="lbl">Excedente por cita (+ IVA)</span><span class="val" id="sel-excedente"></span></div>
       <div class="price-line"><span class="lbl">Hosting (anual)</span><span class="val">1 UF<small> /año</small></span></div>
       <div class="price-line"><span class="lbl">Clientes y pacientes registrados</span><span class="val">Ilimitados</span></div>
       <div class="price-line"><span class="lbl">Servicios configurables</span><span class="val">Ilimitados</span></div>
@@ -232,7 +240,7 @@ function renderFormulario(empresa) {
         <div class="clause"><b>2. Objeto.</b> Agendamiento, chatbot IA, panel administrativo, panel profesional y administración de pacientes, según el plan elegido (A, B, C o D).</div>
         <div class="clause"><b>3. Plazo de implementación.</b> Aproximadamente 3 semanas desde la aceptación y la entrega de información por parte del cliente.</div>
         <div class="clause"><b>4. Duración.</b> Continua, sin permanencia mínima. Renovación automática mensual. Cualquiera de las partes puede terminar el contrato con 30 días de aviso previo.</div>
-        <div class="clause"><b>5. Precio.</b> El precio mensual corresponde al plan elegido: ${TEXTO_PLANES_CLAUSULA5}. Los valores de los planes incluyen IVA. Incluye hosting anual de 1 UF, facturado junto al primer pago y luego una vez al año. El cliente puede cambiar de plan en cualquier momento, avisando con al menos 5 días de anticipación al próximo ciclo de cobro.</div>
+        <div class="clause"><b>5. Precio.</b> El precio mensual corresponde al plan elegido: ${TEXTO_PLANES_CLAUSULA5}. Todos los valores se expresan netos y a ellos se suma el IVA (19 %) al facturar. Incluye hosting anual de 1 UF + IVA, facturado junto al primer pago y luego una vez al año. El cliente puede cambiar de plan en cualquier momento, avisando con al menos 5 días de anticipación al próximo ciclo de cobro.</div>
         <div class="clause"><b>6. Cuentas de terceros.</b> La Business Manager y el WhatsApp Business Account quedan a nombre del cliente. Multidigital opera como partner técnico delegado.</div>
         <div class="clause"><b>7. Datos y privacidad.</b> El tratamiento de datos personales y de salud se rige por la Ley 19.628. Multidigital actúa como encargado del tratamiento, implementando medidas de seguridad razonables. El cliente es responsable de obtener el consentimiento de sus propios pacientes.</div>
         <div class="clause"><b>8. Propiedad intelectual y de datos.</b> El software es propiedad de Multidigital. Los datos del cliente (pacientes, citas, recetas) le pertenecen al cliente y son exportables al término del contrato.</div>
@@ -287,7 +295,7 @@ function renderFormulario(empresa) {
       <div class="plan-option \${clave === planActual ? 'active' : ''}" onclick="elegirPlan('\${clave}')">
         \${clave === 'PLAN_B' ? '<div class="plan-badge">Más elegido</div>' : ''}
         <div class="name">\${p.etiqueta}</div>
-        <div class="price">\${formatoCLP(p.montoMensual)}/mes</div>
+        <div class="price">\${formatoCLP(p.montoMensual)} + IVA/mes</div>
       </div>
     \`).join('');
   }
@@ -302,12 +310,12 @@ function renderFormulario(empresa) {
   function pintarDetalle(){
     const p = PLANES[planActual];
     document.getElementById('sel-plan-name').textContent = p.etiqueta;
-    document.getElementById('sel-monto').innerHTML = formatoCLP(p.montoMensual) + '<small> /mes</small>';
+    document.getElementById('sel-monto').innerHTML = formatoCLP(p.montoMensual) + '<small> + IVA /mes (total ' + formatoCLP(p.montoMensualConIva) + ')</small>';
     document.getElementById('sel-citas').innerHTML = p.citasIncluidas + '<small> /mes</small>';
-    document.getElementById('sel-excedente').innerHTML = formatoCLP(p.precioCitaExcedente) + '<small> /cita</small>';
+    document.getElementById('sel-excedente').innerHTML = formatoCLP(p.precioCitaExcedente) + '<small> + IVA /cita</small>';
     document.getElementById('sel-first-charge').innerHTML =
-      'Primer cobro hoy: <b>1 UF + ' + formatoCLP(p.montoMensual) + '</b> — desde el mes 2 se factura solo la mensualidad.';
-    document.getElementById('subscribe-btn').textContent = 'Confirmar suscripción — ' + formatoCLP(p.montoMensual) + '/mes';
+      'Primer cobro hoy: <b>1 UF + ' + formatoCLP(p.montoMensual) + '</b> + IVA — desde el mes 2 se factura solo la mensualidad (' + formatoCLP(p.montoMensualConIva) + ' con IVA).';
+    document.getElementById('subscribe-btn').textContent = 'Confirmar suscripción — ' + formatoCLP(p.montoMensual) + ' + IVA/mes';
   }
 
   function toggleAccordion(){
@@ -374,7 +382,7 @@ function renderFormulario(empresa) {
       errorBox.classList.add('show');
       btn.disabled = false;
       btn.classList.add('enabled');
-      btn.textContent = 'Confirmar suscripción — ' + formatoCLP(PLANES[planActual].montoMensual) + '/mes';
+      btn.textContent = 'Confirmar suscripción — ' + formatoCLP(PLANES[planActual].montoMensual) + ' + IVA/mes';
     }
   }
 

@@ -31,7 +31,7 @@ const NOMBRE_ADMIN = process.env.NOMBRE_ADMIN || 'Rubén González';
 const INFORMACION_ADICIONAL = `Esta es la ÚNICA información que puedes citar sobre Multidigital. Si te preguntan algo que no está aquí (permanencia, condiciones del contrato, plazos de entrega, precios de otros servicios), NO lo inventes: dile que una persona del equipo se lo confirma y ofrece que continúe la conversación.
 Quiénes somos: Multidigital, empresa chilena de servicios digitales para pymes. Sitio web: https://multidigital.cl
 Oferta de entrada: página web (landing) a la medida con 2 correos corporativos @tuempresa.cl. Valor: $9.900 al mes + IVA. El hosting cuesta 1 UF al año (+ IVA); el primer año tiene 50% de descuento. La UF cambia cada día: hoy es aproximadamente $41.100, solo como referencia.
-Otros servicios: TotemSystem (asistente de agendamiento por WhatsApp con inteligencia artificial, desde $14.900 al mes IVA incluido), materiales gráficos y comercio electrónico. Para detalles o cotizaciones de cualquiera de ellos, una persona del equipo continúa la conversación.
+Otros servicios: TotemSystem (asistente de agendamiento por WhatsApp con inteligencia artificial, desde $14.900 al mes + IVA), materiales gráficos y comercio electrónico. Para detalles o cotizaciones de cualquiera de ellos, una persona del equipo continúa la conversación.
 Este chat NO agenda citas ni reuniones: si el cliente quiere contratar, cotizar o conversar con alguien, ofrécele que una persona del equipo le responderá por este mismo chat (usa escalar_a_humano si lo pide).
 Sé breve, cordial y no presiones. Si el cliente dice que no le interesa, agradécele y no insistas.`;
 

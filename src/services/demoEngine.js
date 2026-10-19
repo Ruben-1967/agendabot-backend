@@ -67,10 +67,10 @@ const PASOS = {
 // distinto del que ya le habían dicho (caso Parcelas San Ramón, 2026-10-06).
 const formatoCLPDemo = (monto) => `$${monto.toLocaleString('es-CL')}`;
 const GRILLA_PLANES_TEXTO = `${Object.values(PLANES)
-  .map((p) => `- ${p.etiqueta}: ${formatoCLPDemo(p.montoMensual)} CLP/mes — ${p.citasIncluidas.toLocaleString('es-CL')} citas incluidas, excedente ${formatoCLPDemo(p.precioCitaExcedente)} CLP/cita`)
+  .map((p) => `- ${p.etiqueta}: ${formatoCLPDemo(p.montoMensual)} + IVA CLP/mes — ${p.citasIncluidas.toLocaleString('es-CL')} citas incluidas, excedente ${formatoCLPDemo(p.precioCitaExcedente)} + IVA CLP/cita`)
   .join('\n')}
-- Todos los valores de los planes ya incluyen IVA (no se suma aparte).
-- Todos los planes incluyen, SIN costo adicional: 1 UF de hosting al año, recordatorios automáticos de
+- Todos los valores de los planes son NETOS: al facturar se les suma el IVA (19%). Si el prospecto pregunta el total, calcúlalo (ej. $14.900 + IVA = $17.731).
+- Todos los planes incluyen: hosting anual de 1 UF + IVA (se factura junto al primer pago y luego una vez al año), recordatorios automáticos de
   confirmación (24h antes + reintentos) y promoción automática a la lista de espera cuando alguien cancela.
   Aparte, Meta (WhatsApp) cobra por cada mensaje que envía el negocio desde octubre de 2026, con un tramo
   gratis mensual por número -- eso no es de TotemSystem. Si preguntan cuánto sería en su caso, di que el
@@ -138,9 +138,9 @@ function textoPrecios(modoOperacion) {
   }
   return (
     Object.values(PLANES)
-      .map((p) => `💰 *${p.etiqueta}:* ${formatoCLPDemo(p.montoMensual)}/mes — ${p.citasIncluidas.toLocaleString('es-CL')} citas incluidas\n`)
+      .map((p) => `💰 *${p.etiqueta}:* ${formatoCLPDemo(p.montoMensual)} + IVA/mes — ${p.citasIncluidas.toLocaleString('es-CL')} citas incluidas\n`)
       .join('') +
-    `Valores con IVA incluido. Todos incluyen 1 UF de hosting anual, recordatorios automáticos y lista de espera, sin costo extra.`
+    `Valores netos, se suma el IVA al facturar. Todos incluyen hosting anual de 1 UF + IVA (facturado junto al primer pago y luego una vez al año), recordatorios automáticos y lista de espera.`
   );
 }
 

@@ -26,6 +26,7 @@ require('dotenv').config();
 const prisma = require('../src/lib/prisma');
 const flowClient = require('../src/services/flowClient');
 const { PLANES: DETALLE_PLANES } = require('../src/services/contratoHtml');
+const { conIva } = require('../src/lib/iva');
 
 const MS_DIA = 24 * 60 * 60 * 1000;
 
@@ -41,7 +42,9 @@ async function main() {
   for (const s of candidatas) {
     const letra = s.plan.replace('PLAN_', '');
     const flowPlanIdNormal = process.env[`FLOW_PLAN_ID_${letra}`];
-    const montoNormal = DETALLE_PLANES[s.plan]?.montoMensual;
+    // Precio normal = neto + IVA (el plan de Flow normal ya cobra con IVA, ver src/lib/iva.js).
+    const montoNeto = DETALLE_PLANES[s.plan]?.montoMensual;
+    const montoNormal = montoNeto ? conIva(montoNeto) : undefined;
     const diasTrial = Math.max(1, Math.ceil((new Date(s.fechaProximoCobro) - ahora) / MS_DIA));
 
     console.log(`- empresa ${s.empresaId}: ${s.plan}, promo $${s.precioPromoMonto} venció ${s.precioPromoHasta.toISOString()}`);

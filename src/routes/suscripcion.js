@@ -18,6 +18,7 @@ const { requireAuth, requireRole, JWT_SECRET } = require('../middleware/auth');
 const flowClient = require('../services/flowClient');
 const { obtenerUrlPanelPrincipal } = require('../lib/urlPanel');
 const { obtenerValorUfHoy } = require('../lib/uf');
+const { conIva } = require('../lib/iva');
 const { activarSuscripcionPorCobroFlow } = require('../lib/activarSuscripcionPorCobroFlow');
 const { PLANES: DETALLE_PLANES } = require('../services/contratoHtml'); // fuente única de montoMensual/citasIncluidas/precioCitaExcedente por plan
 const { obtenerPrecioVigente } = require('../lib/precioSuscripcion');
@@ -178,7 +179,7 @@ router.post('/elegir-plan', async (req, res) => {
           empresaId,
           plan: planEnum,
           estado: 'PENDIENTE_PAGO',
-          montoMensualActual: detallePlan.montoMensual,
+          montoMensualActual: conIva(detallePlan.montoMensual),
           citasIncluidas: detallePlan.citasIncluidas,
           precioCitaExcedente: detallePlan.precioCitaExcedente,
           fechaProximoCobro,
@@ -270,7 +271,8 @@ async function manejarCallbackTarjeta(req, res) {
     // mesesGratisPlan): lo que esté exento (o en período de gracia) no entra
     // al primer cobro combinado — nunca se le pide plata por algo que no
     // corresponde cobrarle.
-    const valorUf = suscripcion.exentoDeHosting ? 0 : await obtenerValorUfHoy();
+    // 1 UF + IVA: el hosting también se publica neto (ver src/lib/iva.js).
+    const valorUf = suscripcion.exentoDeHosting ? 0 : conIva(await obtenerValorUfHoy());
     const cobraPlanAhora = !suscripcion.exentoDePlan && suscripcion.mesesGratisPlan === 0;
     const precioVigente = obtenerPrecioVigente({ ...suscripcion, plan: planEnum }, detallePlan);
     const montoCombinado = (cobraPlanAhora ? precioVigente.monto : 0) + valorUf;

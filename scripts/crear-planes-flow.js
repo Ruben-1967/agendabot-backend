@@ -19,6 +19,7 @@ require('dotenv').config();
 const { crearPlanFlow } = require('../src/services/flowClient');
 const { PLANES: DETALLE_PLANES } = require('../src/services/contratoHtml');
 const { obtenerValorUfHoy } = require('../src/lib/uf');
+const { conIva } = require('../src/lib/iva');
 
 const YA_CONFIGURADOS = ['FLOW_PLAN_ID_A', 'FLOW_PLAN_ID_B', 'FLOW_PLAN_ID_C', 'FLOW_PLAN_ID_HOSTING']
   .filter((v) => process.env[v]);
@@ -45,11 +46,11 @@ async function main() {
 
   for (const [planEnum, detalle] of Object.entries(DETALLE_PLANES)) {
     const letra = planEnum.replace('PLAN_', ''); // PLAN_A -> A
-    console.log(`Creando ${planEnum} ($${detalle.montoMensual}/mes)...`);
+    console.log(`Creando ${planEnum} ($${detalle.montoMensual} + IVA = $${conIva(detalle.montoMensual)}/mes)...`);
     const plan = await crearPlanFlow({
       planId: `agendabot-plan-${letra.toLowerCase()}`,
       nombre: `AgendaBot ${detalle.etiqueta}`,
-      montoClp: detalle.montoMensual,
+      montoClp: conIva(detalle.montoMensual), // Flow cobra el monto tal cual: neto + IVA
       interval: 3, // mensual
       urlCallback,
     });
@@ -61,7 +62,7 @@ async function main() {
   const planHosting = await crearPlanFlow({
     planId: 'agendabot-hosting-anual',
     nombre: 'AgendaBot Hosting anual (1 UF)',
-    montoClp: valorUf,
+    montoClp: conIva(valorUf), // 1 UF + IVA
     interval: 4, // anual
     urlCallback,
   });

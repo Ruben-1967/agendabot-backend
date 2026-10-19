@@ -14,6 +14,7 @@ const { obtenerCalidadWhatsApp } = require('../services/whatsapp');
 const { conversionesDelMesPorVendedor } = require('../services/rankingService');
 const { obtenerCupoMaximo } = require('../services/distribucionLeadsService');
 const flowClient = require('../services/flowClient');
+const { conIva } = require('../lib/iva');
 
 const router = express.Router();
 
@@ -580,7 +581,9 @@ router.get('/excedente-citas', requireAuth, requireRolVendedorAdmin, async (req,
           citasIncluidas: s.citasIncluidas,
           exceso,
           precioCitaExcedente: s.precioCitaExcedente,
-          montoSugerido: exceso * s.precioCitaExcedente,
+          // precioCitaExcedente es NETO (+ IVA): el monto a cobrar lleva IVA.
+          montoSugeridoNeto: exceso * s.precioCitaExcedente,
+          montoSugerido: conIva(exceso * s.precioCitaExcedente),
           inicioCiclo,
         });
       }

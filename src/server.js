@@ -33,6 +33,7 @@ const { conLockDeConversacion } = require('./lib/conversacionLock');
 const { sendInstagramTextMessage, armarTextoConInteractivo } = require('./services/instagram');
 const { sendFacebookTextMessage, armarTextoConInteractivo: armarTextoConInteractivoFacebook } = require('./services/facebook');
 const { renderFormulario, PLANES } = require('./services/contratoHtml');
+const { conIva } = require('./lib/iva');
 const authRouter = require('./routes/auth');
 const campanasRouter = require('./routes/campanas');
 const productosRouter = require('./routes/productos');
@@ -1828,7 +1829,7 @@ app.post('/contrato/:empresaId/aceptar', async (req, res) => {
       where: { empresaId: empresa.id },
       update: {
         plan,
-        montoMensualActual: planInfo.montoMensual,
+        montoMensualActual: conIva(planInfo.montoMensual),
         citasIncluidas: planInfo.citasIncluidas,
         precioCitaExcedente: planInfo.precioCitaExcedente,
       },
@@ -1836,7 +1837,7 @@ app.post('/contrato/:empresaId/aceptar', async (req, res) => {
         empresaId: empresa.id,
         plan,
         estado: 'PENDIENTE_PAGO',
-        montoMensualActual: planInfo.montoMensual,
+        montoMensualActual: conIva(planInfo.montoMensual),
         citasIncluidas: planInfo.citasIncluidas,
         precioCitaExcedente: planInfo.precioCitaExcedente,
         fechaProximoCobro: hoy,

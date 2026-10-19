@@ -28,7 +28,7 @@ function armarCorreo(tipo, { nombreEmpresa, monto, fechaCorte }) {
       asunto: `No pudimos cobrar tu suscripción de TotemSystem (${nombreEmpresa})`,
       html: `
         <h2>No pudimos cobrar tu mensualidad</h2>
-        <p>Intentamos cobrar la mensualidad de <b>${empresa}</b> (${formatoMonto(monto)}) y el pago fue rechazado.</p>
+        <p>Intentamos cobrar la mensualidad de <b>${empresa}</b> (${formatoMonto(monto)} con IVA) y el pago fue rechazado.</p>
         <p><b>Tu servicio sigue funcionando con normalidad.</b> Si el pago no se regulariza antes del <b>${corte}</b>, el servicio se pausará.</p>
         ${contacto}`,
     };
@@ -38,7 +38,7 @@ function armarCorreo(tipo, { nombreEmpresa, monto, fechaCorte }) {
       asunto: `Último aviso: tu servicio de TotemSystem se pausará el ${corte}`,
       html: `
         <h2>Tu servicio se pausará el ${corte}</h2>
-        <p>Seguimos sin poder cobrar la mensualidad de <b>${empresa}</b> (${formatoMonto(monto)}).</p>
+        <p>Seguimos sin poder cobrar la mensualidad de <b>${empresa}</b> (${formatoMonto(monto)} con IVA).</p>
         <p>Si no se regulariza antes del <b>${corte}</b>:</p>
         <ul>
           <li>El asistente de WhatsApp dejará de responder a tus clientes.</li>
@@ -53,7 +53,7 @@ function armarCorreo(tipo, { nombreEmpresa, monto, fechaCorte }) {
     asunto: `Pausamos tu servicio de TotemSystem por pago pendiente (${nombreEmpresa})`,
     html: `
       <h2>Tu servicio está pausado</h2>
-      <p>No logramos cobrar la mensualidad de <b>${empresa}</b> (${formatoMonto(monto)}) y venció el plazo del ${corte}.</p>
+      <p>No logramos cobrar la mensualidad de <b>${empresa}</b> (${formatoMonto(monto)} con IVA) y venció el plazo del ${corte}.</p>
       <ul>
         <li>El asistente de WhatsApp está pausado.</li>
         <li>Puedes seguir entrando al panel para ver y editar tus clientes, pero no crear registros nuevos.</li>

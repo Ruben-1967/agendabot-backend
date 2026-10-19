@@ -11,6 +11,9 @@ const assert = require('node:assert/strict');
 const { diasHastaProximoCobro } = require('../src/lib/cicloCobro');
 const { ACCION, accionImpago, calcularCorteImpago, corteTrasAviso2, estadoImpagoParaPanel } = require('../src/lib/impagos');
 const { esPostPermitido } = require('../src/lib/estadoServicio');
+const { conIva } = require('../src/lib/iva');
+const { PLANES } = require('../src/services/contratoHtml');
+const { obtenerPrecioVigente } = require('../src/lib/precioSuscripcion');
 
 let n = 0;
 const ok = (txt) => { n++; console.log(`✅ ${txt}`); };
@@ -76,6 +79,20 @@ ok('desfase de 1 segundo antes del plazo: igual se actúa ese día (tolerancia)'
 assert.equal(corteTrasAviso2(corte, dias(5)).getTime(), corte.getTime());
 assert.equal(corteTrasAviso2(corte, dias(12)).getTime(), dias(15).getTime());
 ok('aviso 2 tardío: el corte se corre para dar al menos 3 días de margen');
+
+// --- IVA: todo se cobra neto + 19% ---
+assert.equal(conIva(9900), 11781);
+assert.deepEqual(Object.values(PLANES).map((p) => p.montoMensualConIva), [17731, 29631, 71281, 178381]);
+ok('IVA: $9.900 -> $11.781; planes A/B/C/D -> $17.731, $29.631, $71.281, $178.381');
+process.env.FLOW_PLAN_ID_A = 'plan-a-test';
+const normal = obtenerPrecioVigente({ plan: 'PLAN_A' }, PLANES.PLAN_A, new Date('2026-11-01T15:00:00Z'));
+assert.deepEqual(normal, { monto: 17731, flowPlanId: 'plan-a-test', esPromo: false });
+ok('precio vigente de un plan normal = neto + IVA');
+const promo = obtenerPrecioVigente({ plan: 'PLAN_A', precioPromoMonto: 11781, precioPromoFlowPlanId: 'promo-iva', precioPromoPlan: 'PLAN_A', precioPromoHasta: new Date('2027-01-01T02:59:59Z') }, PLANES.PLAN_A, new Date('2026-11-01T15:00:00Z'));
+assert.deepEqual(promo, { monto: 11781, flowPlanId: 'promo-iva', esPromo: true });
+ok('la promo de Ahorróptica sigue en $11.781 (ya incluye IVA, no se suma otra vez)');
+assert.equal(conIva(5 * 130), 774);
+ok('excedente sugerido: 5 citas x $130 neto = $650 -> $774 con IVA');
 
 // --- Franja del panel ---
 const sp = (o) => ({ estado: 'ACTIVA', impagoDesde: t0, corteImpagoEn: corte, avisosImpagoEnviados: 1, ...o });

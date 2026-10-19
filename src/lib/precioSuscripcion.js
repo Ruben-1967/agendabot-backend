@@ -15,6 +15,8 @@
  * @param {Date} [ahora]
  * @returns {{ monto: number, flowPlanId: string|undefined, esPromo: boolean }}
  */
+const { conIva } = require('./iva');
+
 function obtenerPrecioVigente(suscripcion, detallePlan, ahora = new Date()) {
   const promoVigente = Boolean(
     suscripcion.precioPromoMonto
@@ -29,7 +31,9 @@ function obtenerPrecioVigente(suscripcion, detallePlan, ahora = new Date()) {
   }
 
   const letraPlan = suscripcion.plan.replace('PLAN_', '');
-  return { monto: detallePlan.montoMensual, flowPlanId: process.env[`FLOW_PLAN_ID_${letraPlan}`], esPromo: false };
+  // detallePlan.montoMensual es NETO (ver src/lib/iva.js): lo que se cobra lleva IVA.
+  // El precio promocional, en cambio, ya se guarda con IVA incluido (ej. $11.781).
+  return { monto: conIva(detallePlan.montoMensual), flowPlanId: process.env[`FLOW_PLAN_ID_${letraPlan}`], esPromo: false };
 }
 
 module.exports = { obtenerPrecioVigente };

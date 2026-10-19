@@ -33,6 +33,7 @@ const { listarLeadsConSLA } = require('../services/slaService');
 const { intentarRepoblarCupo } = require('../services/distribucionLeadsService');
 const { conversionesEnRangoPorVendedor } = require('../services/rankingService');
 const { PLANES: DETALLE_PLANES } = require('../services/contratoHtml');
+const { conIva } = require('../lib/iva');
 const { horaChileAFechaUTC, hoyISOEnChile } = require('../lib/horaChile');
 
 const router = express.Router();
@@ -443,7 +444,7 @@ router.patch('/clientes-convertidos/:empresaId/plan', requireAuth, requireRole('
       where: { empresaId },
       data: {
         plan: planEnum,
-        montoMensualActual: detallePlan.montoMensual,
+        montoMensualActual: conIva(detallePlan.montoMensual),
         citasIncluidas: detallePlan.citasIncluidas,
         precioCitaExcedente: detallePlan.precioCitaExcedente,
       },
@@ -803,7 +804,7 @@ router.post('/convertir-a-cliente-real', requireAuth, requireRole('VENDEDOR'), a
             empresaId: empresaReal.id,
             plan: planEnum,
             estado: 'PENDIENTE_PAGO',
-            montoMensualActual: detallePlan.montoMensual,
+            montoMensualActual: conIva(detallePlan.montoMensual),
             citasIncluidas: detallePlan.citasIncluidas,
             precioCitaExcedente: detallePlan.precioCitaExcedente,
             fechaProximoCobro,
@@ -878,7 +879,7 @@ router.post('/convertir-a-cliente-real', requireAuth, requireRole('VENDEDOR'), a
       ok: true,
       empresaId: empresaReal.id,
       plan,
-      montoMensualActual: detallePlan.montoMensual,
+      montoMensualActual: conIva(detallePlan.montoMensual),
       whatsappEnviado,
       // Siempre se devuelve, aunque el envío automático haya reportado éxito:
       // que la API de Meta no tire error no garantiza que el mensaje se vea
