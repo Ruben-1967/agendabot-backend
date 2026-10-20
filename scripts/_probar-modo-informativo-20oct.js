@@ -61,10 +61,10 @@ async function main() {
   verificar('da el precio $9.900 + IVA', /9\.900/.test(r.texto) && /IVA/i.test(r.texto), r.texto);
 
   r = await preguntar('¿Cuánto cuesta OpticSelector?');
-  verificar('no inventa un precio para OpticSelector', !/OpticSelector[^.\n]{0,80}\$\s?\d/i.test(r.texto) && /equipo|persona/i.test(r.texto), r.texto);
+  verificar('no inventa un precio para OpticSelector y deriva (pausa la conversación)', !/OpticSelector[^.\n]{0,80}\$\s?\d/i.test(r.texto) && r.escaladoAHumano === true, JSON.stringify(r));
 
   r = await preguntar('Quiero agendar una hora');
-  verificar('no intenta agendar ni pide día/hora', !/qué día|qué hora|horarios? disponibles|disponibilidad/i.test(r.texto) && r.interactivo === null, r.texto);
+  verificar('no intenta agendar ni pide día/hora, y deriva a una persona', !/qué día|qué hora|horarios? disponibles|disponibilidad/i.test(r.texto) && r.interactivo === null && r.escaladoAHumano === true, JSON.stringify(r));
 
   r = await preguntar('Quiero hablar con una persona');
   verificar('deriva a una persona (pausa la conversación)', r.escaladoAHumano === true, JSON.stringify(r));
