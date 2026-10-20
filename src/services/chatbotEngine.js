@@ -211,6 +211,38 @@ async function procesarMensajeEntranteSinLock({ empresa, telefonoCliente, textoE
     return { respuestaTexto: null, interactivo: null, cliente };
   }
 
+  // 2.2. Modo informativo (Empresa.modoInformativo, ej. Multidigital): el negocio
+  // no agenda por el chat. Se salta TODO lo de agendamiento de más abajo (interceptor
+  // de "qué servicios", fast-path de texto, reservaEnCurso, pipeline de citas) y se
+  // responde con el camino corto de claude.js#generarRespuestaInformativa. Mismo
+  // guardado de la conversación y misma pausa al escalar que el camino normal.
+  if (empresa.modoInformativo) {
+    let respuestaInfo;
+    let escaladoInfo = false;
+    if (FRASES_SALUDO.has(normalizarTexto(textoEntrante))) {
+      const nombreSaludo = empresa.sucursal ? `${empresa.nombre} (${empresa.sucursal})` : empresa.nombre;
+      respuestaInfo = `¡Hola! 👋 Bienvenido/a a ${nombreSaludo}. ¿En qué te puedo ayudar hoy?`;
+    } else {
+      const resultadoInfo = await generarRespuestaChatbot({
+        empresa, cliente, historial: historialPrevio, mensajeEntrante: textoEntrante, reservaEnCurso: null,
+      });
+      respuestaInfo = resultadoInfo.texto;
+      escaladoInfo = !!resultadoInfo.escaladoAHumano;
+    }
+    const mensajesInfo = [
+      ...historialPrevio,
+      { rol: 'usuario', contenido: textoEntrante, timestamp: new Date().toISOString() },
+      { rol: 'asistente', contenido: respuestaInfo, timestamp: new Date().toISOString() },
+    ];
+    const pausaInfo = escaladoInfo ? { escaladoAHumano: true, pausadaPorHumanoEn: new Date() } : {};
+    await prisma.conversacion.upsert({
+      where: { id: conversacion?.id || '00000000-0000-0000-0000-000000000000' },
+      update: { mensajes: mensajesInfo, clienteId: cliente.id, reservaEnCurso: null, ...pausaInfo },
+      create: { empresaId: empresa.id, clienteId: cliente.id, telefono: telefonoCliente, canal, mensajes: mensajesInfo, reservaEnCurso: null, ...pausaInfo },
+    });
+    return { respuestaTexto: respuestaInfo, interactivo: null, cliente };
+  }
+
   let respuestaTexto;
   let interactivo = null;
   // Estado de la reserva en curso -- se va enriqueciendo a lo largo de este
@@ -432,6 +464,14 @@ async function procesarSeleccionInteractivaSinLock({ empresa, telefonoCliente, n
       },
     });
     return { respuestaTexto: null, interactivo: null, cliente };
+  }
+
+  // Modo informativo: no hay agendamiento. Un tap de una lista vieja (mostrada antes
+  // de activar el modo) nunca debe iniciar una reserva: se trata como "Otro" y se
+  // deriva a una persona.
+  if (empresa.modoInformativo && tipoSeleccion !== 'servicio_otro') {
+    tipoSeleccion = 'servicio_otro';
+    valorDecodificado = {};
   }
 
   const contexto = await contextoFlujoReserva(empresa);

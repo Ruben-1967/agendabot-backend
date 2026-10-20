@@ -627,6 +627,12 @@ ${JSON.stringify(reservaEnCurso || {}, null, 2)}`;
  * @returns {Promise<{texto: string, interactivo: Object|null}>}
  */
 async function generarRespuestaChatbotSinCorregirVoseo({ empresa, cliente, historial, mensajeEntrante, reservaEnCurso }) {
+  // Modo informativo (empresas que no agendan, ej. Multidigital): camino corto y
+  // aparte, sin nada de la lógica de citas de más abajo. Ver generarRespuestaInformativa.
+  if (empresa.modoInformativo) {
+    return generarRespuestaInformativa({ empresa, historial, mensajeEntrante });
+  }
+
   // Preferimos los Servicio reales que la empresa cargó en el panel de
   // Configuración de agenda. Si todavía no cargó ninguno (empresa nueva sin
   // configurar), caemos al listado genérico sugerido por el rubro, para no
@@ -1123,6 +1129,87 @@ ${empresa.requiereRut ? '- Este negocio además EXIGE RUT y teléfono de contact
   );
   const pasoFallback = siguientePaso(reservaEnCurso, { hayAmbiguedadDeServicio, requiereRut: !!empresa.requiereRut });
   return { texto: PLANTILLAS_DETERMINISTAS[pasoFallback], interactivo: null };
+}
+
+/**
+ * Modo informativo (Empresa.modoInformativo): el negocio no agenda por el chat, solo
+ * informa y deriva a una persona. A diferencia del camino de agendamiento, acá el modelo
+ * SÍ puede listar los productos/servicios que figuren en informacionAdicional (esa es
+ * la fuente del catálogo), y solo tiene una herramienta: escalar_a_humano. No hay
+ * herramientas de disponibilidad ni lista de servicios, así que no puede iniciar nada
+ * de agendar. Se llama desde generarRespuestaChatbotSinCorregirVoseo (el voseo se
+ * corrige igual en generarRespuestaChatbot).
+ */
+async function generarRespuestaInformativa({ empresa, historial, mensajeEntrante }) {
+  const identidad = construirBloqueIdentidad(empresa).replace(
+    'Eres el asistente de agendamiento de',
+    'Eres el asistente de atención e información de'
+  );
+  const bloques = [];
+  if (empresa.sitioWeb) bloques.push(`Sitio web del negocio: ${empresa.sitioWeb}`);
+  if (empresa.direccion) bloques.push(`Dirección del negocio: ${empresa.direccion}`);
+  bloques.push(
+    empresa.informacionAdicional
+      ? `INFORMACIÓN DEL NEGOCIO (es la ÚNICA fuente válida; puedes citarla y listar de ella todos los productos o servicios, con sus precios solo si están indicados, tal cual aparecen):\n${empresa.informacionAdicional}`
+      : '(El negocio no cargó información todavía: no inventes nada, ofrece derivar con una persona.)'
+  );
+
+  const systemPrompt = `${identidad}
+
+Este negocio NO agenda citas ni reuniones por este chat: tu trabajo es informar y derivar a una persona del equipo.
+
+${bloques.join('\n\n')}
+
+Instrucciones:
+- Sé breve, cordial y directo: estás en un chat de WhatsApp, no escribas párrafos largos.
+- Si el cliente saluda, preséntate brevemente y pregúntale en qué lo puedes ayudar.
+- Si pregunta qué servicios, productos o soluciones ofrece el negocio, enumera TODOS los que figuren en la información, en una lista corta con guiones, y pregunta cuál le interesa. Nunca agregues ni inventes otros.
+- Si pregunta por un producto en particular, respóndele solo con lo que dice la información.
+- Si pregunta algo que NO está en la información (precios de otros productos, plazos, condiciones, detalles), no lo inventes: llama a escalar_a_humano. Esa herramienta avisa al equipo y pausa el chat para que una persona le responda; nunca prometas "una persona te contactará" sin llamarla.
+- Si el cliente quiere contratar, cotizar, agendar una reunión o hablar con alguien, o pide una persona, usa escalar_a_humano.
+- NUNCA ofrezcas agendar, ni pidas día, hora, RUT ni nombre completo, ni muestres horarios.
+- Si dice que no le interesa, agradécele y no insistas.
+- No des información médica ni de salud como si fueras un profesional.`;
+
+  const herramientas = construirTools(empresa, false, false).filter((t) => t.name === 'escalar_a_humano');
+  const messages = [
+    ...historial.map((m) => ({ role: m.rol === 'asistente' ? 'assistant' : 'user', content: m.contenido })),
+    { role: 'user', content: mensajeEntrante },
+  ];
+  // Mismo resguardo que el camino de agendamiento: si el texto promete "te paso con una
+  // persona" sin llamar a la herramienta, la conversación nunca se pausa de verdad.
+  const pareceOfertaDeHumanoInventada = (texto) =>
+    /te (paso|comunico|conecto|derivo)\s+(con|a)\s+(un|una|el|la)?\s*(ejecutivo|persona|agente|humano)/i.test(texto || '')
+    || /(una\s+)?persona\s+del\s+equipo\s+(te\s+|se\s+|le\s+)?(contact|confirm|escrib|respond|llam|ayud)/i.test(texto || '')
+    || /alguien\s+del\s+equipo\s+(te\s+|se\s+|le\s+)?(contact|confirm|escrib|respond|llam|ayud)/i.test(texto || '');
+
+  let forzar = false;
+  for (let intentos = 0; intentos < 2; intentos++) {
+    const response = await anthropic.messages.create({
+      model: MODEL,
+      max_tokens: 1500,
+      system: systemPrompt,
+      tools: herramientas,
+      ...(forzar ? { tool_choice: { type: 'tool', name: 'escalar_a_humano' } } : {}),
+      messages,
+    });
+    forzar = false;
+
+    if (response.content.some((b) => b.type === 'tool_use' && b.name === 'escalar_a_humano')) {
+      return { texto: '¡Dale! En un momento te contactamos directamente 🙌', interactivo: null, escaladoAHumano: true };
+    }
+    const textBlock = response.content.find((b) => b.type === 'text');
+    const texto = textBlock ? textBlock.text : '';
+    if (!texto) {
+      console.error('[claude.js] Modo informativo sin texto -- stop_reason:', response.stop_reason, '| usage:', JSON.stringify(response.usage));
+    }
+    if (pareceOfertaDeHumanoInventada(texto)) {
+      forzar = true;
+      continue;
+    }
+    return { texto: texto || 'Disculpa, ¿puedes repetir tu mensaje?', interactivo: null };
+  }
+  return { texto: '¡Dale! En un momento te contactamos directamente 🙌', interactivo: null, escaladoAHumano: true };
 }
 
 // Red de seguridad determinística contra voseo. Confirmado en producción

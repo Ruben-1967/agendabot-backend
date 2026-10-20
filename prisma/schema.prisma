@@ -94,6 +94,11 @@ model Empresa {
   notaAgendamiento  String?
   informacionAdicional String? @db.Text
   requiereRut       Boolean @default(false)
+  // Modo informativo (2026-10-20, Multidigital): el bot SOLO informa y deriva a
+  // una persona; no agenda, no muestra la lista de servicios de agendar ni pide
+  // día/hora. Su catálogo se lee de informacionAdicional. false = comportamiento
+  // de siempre (todas las empresas existentes quedan igual).
+  modoInformativo   Boolean @default(false)
   tonoComunicacion  String? @default("Neutral")
   sitioWeb        String?
   // Minutos desde que un cliente pide hablar con una persona hasta que se
