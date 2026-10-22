@@ -1474,6 +1474,45 @@ app.post('/webhook/whatsapp', verificarFirmaWebhookWhatsApp, async (req, res) =>
           return; // ya respondimos, no seguir al flujo normal de Claude
         }
 
+        // Botón del recordatorio tocado cuando la cita YA no está PENDIENTE
+        // (caso real Ahorróptica, 2026-10-22: paciente con la cita ya
+        // CONFIRMADA volvió a tocar "Sí, confirmo" y, al no haber cita
+        // pendiente, el payload cayó al pipeline general, que le mostró horas
+        // disponibles). Solo aplica a un payload exacto de botón -- los
+        // textos libres de asistencia los resuelve el bloque de más abajo.
+        if (payloadBoton === 'CONFIRMAR_CITA' || payloadBoton === 'CANCELAR_CITA') {
+          const citaConfirmada = await prisma.cita.findFirst({
+            where: {
+              empresaId: empresa.id,
+              estado: 'CONFIRMADA',
+              confirmacionIntentos: { gt: 0 },
+              fechaHoraInicio: { gte: new Date() },
+              cliente: { telefono: telefonoCliente },
+            },
+            orderBy: { fechaHoraInicio: 'asc' },
+          });
+          if (citaConfirmada) {
+            const accessTokenCita = empresa.whatsappToken || process.env.WHATSAPP_ACCESS_TOKEN;
+            if (payloadBoton === 'CANCELAR_CITA') {
+              await prisma.cita.update({ where: { id: citaConfirmada.id }, data: { estado: 'CANCELADA', canceladaPorNoConfirmar: false } });
+              await sendWhatsAppTextMessage({
+                phoneNumberId, to: telefonoCliente, accessToken: accessTokenCita,
+                text: 'Entendido, cancelamos tu cita. Escríbenos cuando quieras agendar otra 🙌',
+              });
+            } else {
+              const fechaCita = citaConfirmada.fechaHoraInicio;
+              const diaCita = fechaCita.toLocaleDateString('es-CL', { weekday: 'long', day: 'numeric', month: 'long', timeZone: 'America/Santiago' });
+              const horaCita = fechaCita.toLocaleTimeString('es-CL', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'America/Santiago' });
+              await sendWhatsAppTextMessage({
+                phoneNumberId, to: telefonoCliente, accessToken: accessTokenCita,
+                text: `Tu cita del ${diaCita} a las ${horaCita} ya está confirmada ✅ Te esperamos.`,
+              });
+            }
+            console.log(`Cita ${citaConfirmada.id}: botón ${payloadBoton} sobre cita ya confirmada (${empresa.nombre}).`);
+            return;
+          }
+        }
+
         // Sin cita pendiente en el sistema (el recordatorio pudo salir de
         // otro lado, o la cita está agendada fuera del bot): una simple
         // confirmación de asistencia se responde con un "te esperamos" en
