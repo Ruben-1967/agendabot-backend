@@ -152,6 +152,21 @@ async function registrarTarjetaFlow({ customerId, empresaId, plan }) {
 }
 
 /**
+ * Igual que crearClienteFlow/registrarTarjetaFlow, pero para clientes que no
+ * son una Empresa del panel (suscripción web de Multidigital, ver
+ * src/routes/suscripcionWeb.js): el externalId y la url de retorno los arma
+ * quien llama.
+ */
+async function crearClienteFlowExterno({ externalId, nombre, email }) {
+  return requestFlowPost('/customer/create', { name: nombre, email, externalId });
+}
+
+async function registrarTarjetaFlowConRetorno({ customerId, urlReturn }) {
+  const resultado = await requestFlowPost('/customer/register', { customerId, url_return: urlReturn });
+  return { ...resultado, url: `${resultado.url}?token=${resultado.token}` };
+}
+
+/**
  * Consulta si el registro de tarjeta (iniciado con registrarTarjetaFlow)
  * quedó exitoso. NO usar `status` para decidir esto — confirmado contra una
  * respuesta real de sandbox que status:'1' ya viene con la tarjeta
@@ -282,6 +297,8 @@ module.exports = {
   crearPlanFlow,
   crearClienteFlow,
   registrarTarjetaFlow,
+  crearClienteFlowExterno,
+  registrarTarjetaFlowConRetorno,
   consultarEstadoRegistroFlow,
   cobrarCollectFlow,
   crearSuscripcionFlow,

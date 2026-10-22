@@ -251,6 +251,7 @@ app.use('/lista-espera', listaEsperaRouter);
 app.use('/conversaciones', conversacionesRouter);
 app.use('/disponibilidad', require('./routes/disponibilidad'));
 app.use('/suscripcion', suscripcionRouter);
+app.use('/web', require('./routes/suscripcionWeb')); // suscripción Multidigital sitio web + correos (Flow)
 app.use('/website-leads', websiteLeadsRouter);
 app.use('/admin-vendedores', require('./routes/adminVendedores'));
 app.use('/admin-vendedores/catalogo-demo', require('./routes/catalogoDemoAdmin'));
