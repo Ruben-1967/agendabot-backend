@@ -1533,3 +1533,66 @@ model ConfiguracionSLA {
   diasAgingAmarillo          Int
   diasAgingRojo              Int
 }
+
+// ------------------------------------------------------------
+// SUSCRIPCIÓN WEB (Multidigital: sitio web + correos), cobro automático en Flow.
+// Independiente de Empresa/Suscripcion (TotemSystem): estos clientes no tienen
+// cuenta en el panel. Cada fila nace con un link único (`ref`) que se le envía
+// al cliente; al abrirlo acepta el contrato (clickwrap), registra su tarjeta
+// en Flow y quedan creadas 2 suscripciones: el plan (mensual o anual) y el
+// hosting anual (1 UF + IVA) que parte en el primer aniversario.
+// Ver src/routes/suscripcionWeb.js. Migración: scripts/_migracion-suscripcion-web-22oct.sql
+// ------------------------------------------------------------
+model SuscripcionWeb {
+  id                  String   @id @default(uuid())
+  ref                 String   @unique // va en el link /web/suscribir/:ref
+  nombreCliente       String   // referencial, lo carga Multidigital al crear el link
+  emailCliente        String
+  dominio             String?
+  plan                String   // "MENSUAL" | "ANUAL"
+  montoConIva         Int      // lo que cobra Flow por período del plan
+  // null = cobrar el primer período apenas registre la tarjeta; con fecha =
+  // el primer período ya se pagó por fuera (ej. transferencia) y Flow parte ese día.
+  fechaPrimerCobro    DateTime?
+  // Base del aniversario del hosting: la fecha de la transferencia si se
+  // indicó al crear el link, o el día en que se activa si se cobra al registrar.
+  fechaInicioContrato DateTime?
+  estado              String   @default("PENDIENTE") // PENDIENTE | ACEPTADA | ACTIVA | CANCELADA
+
+  // Aceptación del contrato (Ley 19.799)
+  razonSocial         String?
+  rut                 String?
+  domicilio           String?
+  emailAceptacion     String?
+  nombreQuienAcepta   String?
+  versionContrato     String?
+  fechaAceptacion     DateTime?
+  ipAceptacion        String?
+  userAgentAceptacion String?
+
+  // Flow
+  flowCustomerId            String?   @unique
+  flowSubscriptionId        String?   @unique
+  flowSubscriptionIdHosting String?   @unique
+  tarjetaTipo               String?
+  tarjetaUltimos4           String?
+  fechaUltimoPago           DateTime?
+
+  creadoEn      DateTime @default(now())
+  actualizadoEn DateTime @updatedAt
+
+  pagos PagoWeb[]
+}
+
+model PagoWeb {
+  id               String         @id @default(uuid())
+  suscripcionWeb   SuscripcionWeb @relation(fields: [suscripcionWebId], references: [id])
+  suscripcionWebId String
+  tipo             String   // "PLAN" | "HOSTING"
+  monto            Int
+  estado           String   // "EXITOSO" | "FALLIDO"
+  flowToken        String   @unique // idempotencia: Flow puede reenviar el mismo aviso
+  fecha            DateTime @default(now())
+
+  @@index([suscripcionWebId])
+}
