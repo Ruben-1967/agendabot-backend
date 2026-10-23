@@ -1190,6 +1190,39 @@ ${comunes.join('\n')}
 - NUNCA ofrezcas agendar, ni pidas día, RUT ni muestres horarios (sí puedes preguntar en qué horario le acomoda que lo llamen, si eligió la llamada).`;
 }
 
+// Segundo paso del ciclo de herramientas: con escalar_a_humano ya llamado (y el chat por
+// pausarse), se le pide al modelo SOLO el mensaje de cierre del guion. Sin herramientas
+// disponibles para esta respuesta (tool_choice none). Si falla, devuelve '' y se usa el
+// cierre por defecto: el lead igual queda derivado.
+async function pedirCierreDelGuion(systemPrompt, herramientas, messages, contenidoAsistente, toolUseId) {
+  try {
+    const response = await anthropic.messages.create({
+      model: MODEL,
+      max_tokens: 300,
+      system: systemPrompt,
+      tools: herramientas,
+      tool_choice: { type: 'none' },
+      messages: [
+        ...messages,
+        { role: 'assistant', content: contenidoAsistente },
+        {
+          role: 'user',
+          content: [{
+            type: 'tool_result',
+            tool_use_id: toolUseId,
+            content: 'Equipo avisado; el chat queda en manos de una persona. Escribe ahora SOLO el mensaje de cierre del guion para la persona (el que corresponda a lo que eligió, con su nombre si lo sabes).',
+          }],
+        },
+      ],
+    });
+    const bloque = response.content.find((b) => b.type === 'text');
+    return bloque ? bloque.text.trim() : '';
+  } catch (error) {
+    console.error('[claude.js] No se pudo obtener el cierre del guion:', error.message);
+    return '';
+  }
+}
+
 async function generarRespuestaInformativa({ empresa, historial, mensajeEntrante, ahora = new Date() }) {
   const identidad = construirBloqueIdentidad(empresa).replace(
     'Eres el asistente de agendamiento de',
@@ -1247,8 +1280,14 @@ ${empresa.guionAtencion ? '' : 'Instrucciones:\n'}${instruccionesModoInformativo
 
     const textBlock = response.content.find((b) => b.type === 'text');
     const texto = textBlock ? textBlock.text.trim() : '';
-    if (response.content.some((b) => b.type === 'tool_use' && b.name === 'escalar_a_humano')) {
-      const cierre = empresa.guionAtencion ? (texto || textoPrevio) : '';
+    const usoHerramienta = response.content.find((b) => b.type === 'tool_use' && b.name === 'escalar_a_humano');
+    if (usoHerramienta) {
+      let cierre = empresa.guionAtencion ? (texto || textoPrevio) : '';
+      if (empresa.guionAtencion && !cierre) {
+        // A veces el modelo solo llama la herramienta, sin texto (visto en prueba 2026-10-23,
+        // camino de la llamada): se le devuelve el resultado y se le pide el cierre del guion.
+        cierre = await pedirCierreDelGuion(systemPrompt, herramientas, messages, response.content, usoHerramienta.id);
+      }
       return { texto: cierre || CIERRE_POR_DEFECTO, interactivo: null, escaladoAHumano: true };
     }
     if (!texto) {
