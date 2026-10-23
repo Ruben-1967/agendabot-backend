@@ -1260,7 +1260,12 @@ ${empresa.guionAtencion ? '' : 'Instrucciones:\n'}${instruccionesModoInformativo
     // textos SIN "?": la apertura ("si prefieres, te llamamos... ¿Qué prefieres?") y las
     // preguntas ("¿a qué hora te llamamos?") usan los mismos verbos y no son un cierre.
     || (!!empresa.guionAtencion && !/\?/.test(texto || '')
-      && /\bte\s+(contact|llam|escrib)(amos|aremos)\b|\bte\s+vamos\s+a\s+(contactar|llamar|escribir)|\bte\s+estaremos\s+(contactando|llamando|escribiendo)|\bnos\s+(comunicamos|comunicaremos|pondremos\s+en\s+contacto)\b/i.test(texto || ''));
+      && /\bte\s+(contact|llam|escrib)(amos|aremos)\b|\bte\s+vamos\s+a\s+(contactar|llamar|escribir)|\bte\s+estaremos\s+(contactando|llamando|escribiendo)|\bnos\s+(comunicamos|comunicaremos|pondremos\s+en\s+contacto)\b/i.test(texto || ''))
+    // Promesas en tercera persona, vistas en producción el 2026-10-23 sin que se pausara
+    // el chat: "ya avisamos a nuestro equipo, en breve te contactan", "le paso el horario
+    // a nuestro equipo para que te llamen".
+    || (!!empresa.guionAtencion && !/\?/.test(texto || '')
+      && /\bte\s+(contact|llam|escrib)(an|ar[aá]n)\b|\bpara\s+que\s+te\s+(contacten|llamen|escriban)\b|\b(ya\s+)?(avis[eé]|avisamos|le\s+paso|les\s+paso|paso\s+(el|tu|los)[^.!\n]{0,40}?)\s+(a|al)\s+(nuestro\s+|el\s+)?equipo\b/i.test(texto || ''));
 
   // Con guion, al derivar se manda el cierre que escribió el modelo (con el nombre de
   // la persona); si al forzar la herramienta no vino texto, el del intento anterior.
