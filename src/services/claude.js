@@ -1178,6 +1178,7 @@ function instruccionesModoInformativo(empresa, ahora) {
 ${empresa.guionAtencion}
 
 Saludo que corresponde a la hora actual en Chile: "${saludoSegunHoraChile(ahora)}". Úsalo tal cual en tu primer mensaje de la conversación (no lo repitas después).
+Fecha de hoy en Chile: ${new Intl.DateTimeFormat('es-CL', { timeZone: 'America/Santiago', day: 'numeric', month: 'long', year: 'numeric' }).format(ahora)}. Si una promoción del guion o de la información tiene una fecha de término que ya pasó, NO la menciones ni la ofrezcas.
 
 Instrucciones:
 - Si es el inicio de la conversación (aunque la persona solo salude o escriba un mensaje automático del anuncio), responde con la apertura del guion. NO muestres el catálogo completo de entrada.
