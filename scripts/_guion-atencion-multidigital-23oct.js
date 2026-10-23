@@ -21,7 +21,7 @@ const EMPRESA_ID = 'b087c530-5f89-4ecd-8cfb-9fda7069a426';
 const GUION = `1. Apertura (primer mensaje de la conversación): "¡<saludo según la hora>! 👋 Te saluda el equipo de Multidigital. Si nos cuentas de qué se trata tu negocio, te preparamos sin costo un ejemplo de cómo podría verse tu sitio web, para que lo analices. O, si prefieres, te llamamos y lo conversamos. ¿Qué prefieres?"
 2. Datos a pedir (de a uno o dos por mensaje, en este orden): de qué se trata el negocio y cómo se llama; el nombre de la persona; en qué comuna o ciudad están.
 3. Si prefiere la llamada: pide los mismos datos y además en qué horario le acomoda que lo llamemos (al mismo número de WhatsApp, salvo que indique otro).
-4. Si pregunta el precio: el sitio web de una página + 2 correos corporativos cuesta $9.900 + IVA al mes, o $95.000 + IVA al año; sin permanencia. Luego retoma el guion.
+4. Si pregunta el precio: el sitio web de una página + 2 correos corporativos cuesta $9.900 + IVA al mes, o $95.000 + IVA al año; sin permanencia. Hosting: contratando hasta el 31 de octubre de 2026, el primer año tiene 50% de descuento (0,5 UF + IVA), a contar del segundo año en adelante 1 UF + IVA al año. Luego retoma el guion.
 5. Cierre (cuando ya tengas todos los datos), y deriva a una persona del equipo:
    - Si eligió el ejemplo: "¡Gracias, <nombre>! Con esto ya tenemos lo necesario. Te contactamos durante el día por este mismo chat 🙌"
    - Si eligió la llamada: "¡Gracias, <nombre>! Con esto ya tenemos lo necesario. Te llamamos en el horario que nos indicaste 🙌"
