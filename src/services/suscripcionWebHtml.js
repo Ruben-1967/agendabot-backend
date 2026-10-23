@@ -89,7 +89,7 @@ function renderSuscribir(sw, { error, valores = {} } = {}) {
   <ul>
     <li>${textoPrimerCargo(sw)}</li>
     <li>Luego se cobra automáticamente cada ${esAnual ? 'año' : 'mes'} con la tarjeta que registres.</li>
-    <li>Hosting: contratando hasta el 31 de octubre de 2026, el primer año tiene 50% de descuento (0,5 UF + IVA); a contar del segundo año en adelante, 1 UF + IVA al año.</li>
+    <li>Hosting: 1 UF + IVA al año, salvo condiciones especiales acordadas contigo.</li>
     <li>Sin permanencia: te das de baja cuando quieras, avisándonos por escrito.</li>
   </ul>
 </div>
