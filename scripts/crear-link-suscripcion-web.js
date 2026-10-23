@@ -2,6 +2,7 @@
 /**
  * Crea el link de suscripción de un cliente de Multidigital (sitio web +
  * correos), ver src/routes/suscripcionWeb.js. Imprime el link para enviárselo.
+ * Lo mismo se puede hacer desde el panel: Panel de Vendedores -> Clientes Web.
  *
  * Uso:
  *   node scripts/crear-link-suscripcion-web.js --nombre "Nexia Prevención" --email jose@ejemplo.cl \
@@ -16,10 +17,8 @@
  */
 
 require('dotenv').config();
-const crypto = require('crypto');
 const prisma = require('../src/lib/prisma');
-const { conIva } = require('../src/lib/iva');
-const { PRECIOS_NETOS_WEB: PRECIOS_NETOS } = require('../src/lib/preciosWeb');
+const { crearLinkSuscripcionWeb, sumarMeses } = require('../src/lib/linkSuscripcionWeb');
 
 function leerArgs(argv) {
   const args = {};
@@ -31,60 +30,20 @@ function leerArgs(argv) {
   return args;
 }
 
-// "2026-10-22" -> mediodía de Chile, para que ningún cambio de huso mueva el día.
-function fechaChile(texto) {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(texto)) throw new Error(`Fecha inválida: ${texto} (usar AAAA-MM-DD)`);
-  return new Date(`${texto}T12:00:00-03:00`);
-}
-
-// Suma meses de calendario sin desbordar (31-ene + 1 mes -> 28/29-feb).
-function sumarMeses(fecha, meses) {
-  const r = new Date(fecha);
-  const dia = r.getUTCDate();
-  r.setUTCDate(1);
-  r.setUTCMonth(r.getUTCMonth() + meses);
-  const ultimo = new Date(Date.UTC(r.getUTCFullYear(), r.getUTCMonth() + 1, 0)).getUTCDate();
-  r.setUTCDate(Math.min(dia, ultimo));
-  return r;
-}
-
 async function main() {
   const args = leerArgs(process.argv.slice(2));
   const plan = String(args.plan || '').toUpperCase();
-  if (!args.nombre || !args.email || !PRECIOS_NETOS[plan]) {
-    console.error('Uso: --nombre "..." --email ... --plan MENSUAL|ANUAL [--dominio ...] [--pagado-el AAAA-MM-DD]');
-    process.exit(1);
-  }
-  if (!process.env.BACKEND_URL) throw new Error('Falta BACKEND_URL para armar el link.');
-
-  let fechaInicioContrato = null;
-  let fechaPrimerCobro = null;
-  if (args['pagado-el']) {
-    fechaInicioContrato = fechaChile(args['pagado-el']);
-    fechaPrimerCobro = sumarMeses(fechaInicioContrato, plan === 'ANUAL' ? 12 : 1);
-    if (fechaPrimerCobro <= new Date()) throw new Error('Con esa fecha de pago, el primer cobro ya habría pasado. Revisa --pagado-el.');
-  }
-
-  const sw = await prisma.suscripcionWeb.create({
-    data: {
-      ref: crypto.randomBytes(12).toString('base64url'),
-      nombreCliente: args.nombre,
-      emailCliente: String(args.email).trim().toLowerCase(),
-      dominio: args.dominio || null,
-      plan,
-      montoConIva: conIva(PRECIOS_NETOS[plan]),
-      fechaPrimerCobro,
-      fechaInicioContrato,
-    },
+  const { suscripcionWeb: sw, link } = await crearLinkSuscripcionWeb({
+    nombre: args.nombre, email: args.email, plan, dominio: args.dominio, pagadoEl: args['pagado-el'],
   });
 
   const fmt = (f) => f.toLocaleDateString('es-CL', { timeZone: 'America/Santiago' });
   console.log(`\nCliente: ${sw.nombreCliente} (${sw.emailCliente})`);
   console.log(`Plan ${plan}: $${sw.montoConIva.toLocaleString('es-CL')} IVA incluido`);
-  console.log(fechaPrimerCobro
-    ? `Primer cargo automático: ${fmt(fechaPrimerCobro)} · Hosting desde: ${fmt(sumarMeses(fechaInicioContrato, 12))}`
+  console.log(sw.fechaPrimerCobro
+    ? `Primer cargo automático: ${fmt(sw.fechaPrimerCobro)} · Hosting desde: ${fmt(sumarMeses(sw.fechaInicioContrato, 12))}`
     : 'Primer cargo: al registrar la tarjeta');
-  console.log(`\nLink: ${process.env.BACKEND_URL}/web/suscribir/${sw.ref}\n`);
+  console.log(`\nLink: ${link}\n`);
 }
 
 main()

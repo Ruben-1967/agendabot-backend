@@ -1587,6 +1587,65 @@ model SuscripcionWeb {
   actualizadoEn DateTime @updatedAt
 
   pagos PagoWeb[]
+  clienteWeb ClienteWeb?
+}
+
+// ------------------------------------------------------------
+// CLIENTES WEB (Multidigital: sitio web + correos) -- panel de administración
+// (2026-10-23). Una ficha por negocio interesado o cliente, con su etapa en el
+// embudo y una cuenta corriente de cargos (lo que debe) y pagos (lo que pagó:
+// transferencia, abono, efectivo o Flow). Saldo = cargos - pagos.
+// Los pagos de Flow entran solos (ver /web/flow-webhook) si la ficha está
+// vinculada a una SuscripcionWeb. Rutas: src/routes/clientesWeb.js.
+// Migración: scripts/_migracion-clientes-web-23oct.sql
+// ------------------------------------------------------------
+model ClienteWeb {
+  id                 String   @id @default(uuid())
+  // INTERESADO | EJEMPLO_ENVIADO | EN_ESPERA | ABONO | ACTIVO | BAJA
+  etapa              String   @default("INTERESADO")
+  negocio            String
+  rubro              String?
+  contactoNombre     String?
+  telefono           String?  // solo dígitos, ej. 56912345678
+  email              String?
+  comuna             String?
+  dominio            String?
+  linkMuestra        String?
+  fechaEjemplo       DateTime? // cuándo se le envió la muestra
+  plan               String?   // "MENSUAL" | "ANUAL"
+  condiciones        String?  @db.Text // lo acordado: precio, promo de hosting, abonos, etc.
+  notas              String?  @db.Text
+  origen             String   @default("MANUAL") // "MANUAL" | "BOT"
+  preferencia        String?  // lo que eligió en el bot: "EJEMPLO" | "LLAMADA"
+  horarioLlamada     String?
+  fechaActivacion    DateTime?
+  fechaBaja          DateTime?
+  suscripcionWebId   String?  @unique
+  suscripcionWeb     SuscripcionWeb? @relation(fields: [suscripcionWebId], references: [id])
+  creadoEn           DateTime @default(now())
+  actualizadoEn      DateTime @updatedAt
+
+  movimientos MovimientoClienteWeb[]
+
+  @@index([etapa])
+  @@index([telefono])
+}
+
+model MovimientoClienteWeb {
+  id           String     @id @default(uuid())
+  clienteWeb   ClienteWeb @relation(fields: [clienteWebId], references: [id], onDelete: Cascade)
+  clienteWebId String
+  tipo         String     // "CARGO" | "PAGO"
+  // MENSUALIDAD | ANUALIDAD | HOSTING | DOMINIO | CAMBIO | CORREO_EXTRA | OTRO
+  concepto     String
+  monto        Int        // pesos, IVA incluido
+  medio        String?    // solo PAGO: TRANSFERENCIA | FLOW | EFECTIVO | OTRO
+  fecha        DateTime   @default(now())
+  nota         String?
+  pagoWebId    String?    @unique // si vino de Flow (idempotencia)
+  creadoEn     DateTime   @default(now())
+
+  @@index([clienteWebId])
 }
 
 model PagoWeb {

@@ -26,6 +26,7 @@ const prisma = require('../lib/prisma');
 const flowClient = require('../services/flowClient');
 const { normalizarRut } = require('../lib/rut');
 const { renderSuscribir, renderResultado } = require('../services/suscripcionWebHtml');
+const { registrarPagoFlowEnClienteWeb } = require('./clientesWeb');
 
 // Va guardada en cada aceptación: si el contrato cambia, se sube la versión
 // (y el comentario de cabecera de contrato-sitio-web.html en norman-landing).
@@ -316,14 +317,25 @@ router.post('/flow-webhook', async (req, res) => {
     const fechaPago = estadoFlow.fechaPago ? new Date(estadoFlow.fechaPago) : new Date();
 
     const previo = await prisma.pagoWeb.findUnique({ where: { flowToken: token } });
-    if (previo && (previo.estado === 'EXITOSO' || !exitoso)) return res.status(200).send('OK'); // aviso repetido
+    if (previo && (previo.estado === 'EXITOSO' || !exitoso)) {
+      // Aviso repetido. Si el pago ya era exitoso se reintenta anotarlo en la ficha del
+      // panel (idempotente): cubre el caso en que la primera vez falló algo pasajero.
+      if (previo.estado === 'EXITOSO') {
+        await registrarPagoFlowEnClienteWeb({
+          suscripcionWebId: sw.id, pagoWebId: previo.id, tipo: previo.tipo, monto: previo.monto,
+          planSuscripcion: sw.plan, fecha: previo.fecha,
+        });
+      }
+      return res.status(200).send('OK');
+    }
 
-    await prisma.$transaction(async (tx) => {
+    const pago = await prisma.$transaction(async (tx) => {
+      let registro;
       if (previo) {
         // Mismo token avisado antes como fallido y ahora pagado.
-        await tx.pagoWeb.update({ where: { id: previo.id }, data: { estado: 'EXITOSO', monto: Number(estadoFlow.monto) || previo.monto } });
+        registro = await tx.pagoWeb.update({ where: { id: previo.id }, data: { estado: 'EXITOSO', monto: Number(estadoFlow.monto) || previo.monto } });
       } else {
-        await tx.pagoWeb.create({
+        registro = await tx.pagoWeb.create({
           data: {
             suscripcionWebId: sw.id,
             tipo,
@@ -336,7 +348,16 @@ router.post('/flow-webhook', async (req, res) => {
       if (exitoso) {
         await tx.suscripcionWeb.update({ where: { id: sw.id }, data: { fechaUltimoPago: isNaN(fechaPago) ? new Date() : fechaPago } });
       }
+      return registro;
     });
+
+    // Panel Clientes Web: el cobro queda en la cuenta de la ficha vinculada (si hay).
+    if (exitoso) {
+      await registrarPagoFlowEnClienteWeb({
+        suscripcionWebId: sw.id, pagoWebId: pago.id, tipo, monto: pago.monto,
+        planSuscripcion: sw.plan, fecha: isNaN(fechaPago) ? new Date() : fechaPago,
+      });
+    }
 
     const log = exitoso ? console.log : console.warn;
     log(`[web/flow-webhook] Cobro ${tipo} ${exitoso ? 'EXITOSO' : 'FALLIDO'} para ${sw.razonSocial || sw.nombreCliente} (${sw.id}), $${estadoFlow.monto}`);
