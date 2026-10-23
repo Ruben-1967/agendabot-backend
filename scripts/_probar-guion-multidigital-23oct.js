@@ -81,6 +81,7 @@ async function main() {
   ({ r } = await conversar(['Hola', '¿Cuánto cuesta?']));
   verificar('da $9.900 + IVA', /9\.900/.test(r.texto) && /IVA/i.test(r.texto), r.texto);
   verificar('no deriva por preguntar el precio', !r.escaladoAHumano, '');
+  verificar('menciona la promo del hosting (50% hasta el 31 de octubre)', /50\s?%/.test(r.texto) && /31 de octubre/i.test(r.texto), r.texto);
 
   console.log('\n6) Pide hablar con una persona');
   ({ r } = await conversar(['Hola', 'Quiero hablar con una persona']));
