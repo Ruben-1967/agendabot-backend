@@ -22,7 +22,9 @@ const GUION = `1. Apertura (primer mensaje de la conversación): "¡<saludo seg�
 2. Datos a pedir (de a uno o dos por mensaje, en este orden): de qué se trata el negocio y cómo se llama; el nombre de la persona; en qué comuna o ciudad están.
 3. Si prefiere la llamada: pide los mismos datos y además en qué horario le acomoda que lo llamemos (al mismo número de WhatsApp, salvo que indique otro).
 4. Si pregunta el precio: el sitio web de una página + 2 correos corporativos cuesta $9.900 + IVA al mes, o $95.000 + IVA al año; sin permanencia. Luego retoma el guion.
-5. Cierre (cuando ya tengas todos los datos): "¡Gracias, <nombre>! Con esto ya tenemos lo necesario. Te contactamos durante el día por este mismo chat 🙌", y deriva a una persona del equipo.
+5. Cierre (cuando ya tengas todos los datos), y deriva a una persona del equipo:
+   - Si eligió el ejemplo: "¡Gracias, <nombre>! Con esto ya tenemos lo necesario. Te contactamos durante el día por este mismo chat 🙌"
+   - Si eligió la llamada: "¡Gracias, <nombre>! Con esto ya tenemos lo necesario. Te llamamos en el horario que nos indicaste 🙌"
 Trata siempre de "tú" (nunca "usted" ni voseo).`;
 
 async function main() {

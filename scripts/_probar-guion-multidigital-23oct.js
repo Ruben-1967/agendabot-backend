@@ -75,6 +75,7 @@ async function main() {
   const pidioHorario = llamada.historial.some((m) => m.rol === 'asistente' && /horario|hora/i.test(m.contenido));
   verificar('pregunta en qué horario llamarlo', pidioHorario, '');
   verificar('termina derivando a una persona', llamada.r.escaladoAHumano === true, llamada.r.texto);
+  verificar('el cierre habla de la llamada en su horario (no "durante el día por este chat")', /Pedro/.test(llamada.r.texto) && /llamamos/i.test(llamada.r.texto) && /horario/i.test(llamada.r.texto), llamada.r.texto);
 
   console.log('\n5) Pregunta el precio en medio del guion');
   ({ r } = await conversar(['Hola', '¿Cuánto cuesta?']));
