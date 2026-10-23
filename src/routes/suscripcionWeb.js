@@ -29,7 +29,7 @@ const { renderSuscribir, renderResultado } = require('../services/suscripcionWeb
 
 // Va guardada en cada aceptación: si el contrato cambia, se sube la versión
 // (y el comentario de cabecera de contrato-sitio-web.html en norman-landing).
-const VERSION_CONTRATO = 'web-correos-v4';
+const VERSION_CONTRATO = 'web-correos-v5';
 
 const DIA_MS = 24 * 60 * 60 * 1000;
 
