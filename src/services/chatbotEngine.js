@@ -19,6 +19,7 @@ const { siguientePaso, coincideConOpcionMostrada, PLANTILLAS_DETERMINISTAS, PASO
 const { MAX_FILAS_LISTA_INTERACTIVA } = require('./whatsapp');
 const { conLockDeConversacion } = require('../lib/conversacionLock');
 const { fechaLegibleDesdeISO } = require('../lib/formatoFechas');
+const { registrarLeadDesdeBot, correspondeRegistrarLead } = require('../lib/leadClienteWeb');
 
 // Frases genéricas que preguntan por la lista de servicios, normalizadas
 // (sin tildes, minúsculas, sin signos de puntuación). Si el mensaje del
@@ -242,6 +243,11 @@ async function procesarMensajeEntranteSinLock({ empresa, telefonoCliente, textoE
       update: { mensajes: mensajesInfo, clienteId: cliente.id, reservaEnCurso: null, ...pausaInfo },
       create: { empresaId: empresa.id, clienteId: cliente.id, telefono: telefonoCliente, canal, mensajes: mensajesInfo, reservaEnCurso: null, ...pausaInfo },
     });
+    // Panel Clientes Web (Multidigital): al derivar, el interesado entra solo al panel.
+    // Sin await: no demora la respuesta; registrarLeadDesdeBot nunca lanza.
+    if (escaladoInfo && correspondeRegistrarLead(empresa)) {
+      registrarLeadDesdeBot({ empresa, telefono: telefonoCliente, canal, mensajes: mensajesInfo });
+    }
     return { respuestaTexto: respuestaInfo, interactivo: null, cliente };
   }
 

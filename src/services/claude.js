@@ -1191,6 +1191,43 @@ ${comunes.join('\n')}
 - NUNCA ofrezcas agendar, ni pidas día, RUT ni muestres horarios (sí puedes preguntar en qué horario le acomoda que lo llamen, si eligió la llamada).`;
 }
 
+/**
+ * Extrae los datos de un interesado de la conversación del guion de atención (panel
+ * Clientes Web, ver src/lib/leadClienteWeb.js). Usa una herramienta con esquema para
+ * que la respuesta sea JSON confiable. Devuelve {} si no hay nada que extraer.
+ * Solo extrae lo que la persona dijo: nunca inventa.
+ */
+async function extraerDatosLeadWeb(mensajes) {
+  const transcripcion = mensajes
+    .map((m) => `${m.rol === 'asistente' ? 'Bot' : 'Cliente'}: ${m.contenido}`)
+    .join('\n')
+    .slice(-6000);
+  const response = await anthropic.messages.create({
+    model: MODEL,
+    max_tokens: 400,
+    system: 'Extraes datos de contacto de una conversación de WhatsApp entre un bot y una persona interesada en un sitio web. Usa SOLO lo que la persona escribió; si un dato no aparece, déjalo vacío. Nunca inventes.',
+    tools: [{
+      name: 'guardar_lead',
+      description: 'Guarda los datos del interesado.',
+      input_schema: {
+        type: 'object',
+        properties: {
+          negocio: { type: 'string', description: 'Nombre del negocio, tal como lo dijo' },
+          rubro: { type: 'string', description: 'De qué se trata el negocio (ej. peluquería, taller mecánico)' },
+          contactoNombre: { type: 'string', description: 'Nombre de la persona' },
+          comuna: { type: 'string', description: 'Comuna o ciudad' },
+          preferencia: { type: 'string', enum: ['EJEMPLO', 'LLAMADA', ''], description: 'Qué eligió: el ejemplo gratis o una llamada' },
+          horarioLlamada: { type: 'string', description: 'Horario en que pidió que lo llamen, si eligió llamada' },
+        },
+      },
+    }],
+    tool_choice: { type: 'tool', name: 'guardar_lead' },
+    messages: [{ role: 'user', content: `Conversación:\n${transcripcion}` }],
+  });
+  const uso = response.content.find((b) => b.type === 'tool_use');
+  return uso ? uso.input : {};
+}
+
 // Segundo paso del ciclo de herramientas: con escalar_a_humano ya llamado (y el chat por
 // pausarse), se le pide al modelo SOLO el mensaje de cierre del guion. Sin herramientas
 // disponibles para esta respuesta (tool_choice none). Si falla, devuelve '' y se usa el
@@ -1379,4 +1416,5 @@ module.exports = {
   armarRespuestaProximosDias,
   extraerRutYTelefono,
   saludoSegunHoraChile,
+  extraerDatosLeadWeb,
 };
