@@ -1140,7 +1140,57 @@ ${empresa.requiereRut ? '- Este negocio además EXIGE RUT y teléfono de contact
  * de agendar. Se llama desde generarRespuestaChatbotSinCorregirVoseo (el voseo se
  * corrige igual en generarRespuestaChatbot).
  */
-async function generarRespuestaInformativa({ empresa, historial, mensajeEntrante }) {
+// "Buenos días/tardes/noches" según la hora de Chile -- lo calcula el código, no el
+// modelo (que no sabe la hora). Se usa en el guion de atención del modo informativo.
+function saludoSegunHoraChile(ahora = new Date()) {
+  const hora = Number(new Intl.DateTimeFormat('en-US', { timeZone: 'America/Santiago', hour: 'numeric', hourCycle: 'h23' }).format(ahora));
+  if (hora >= 5 && hora < 12) return 'Buenos días';
+  if (hora >= 12 && hora < 20) return 'Buenas tardes';
+  return 'Buenas noches';
+}
+
+// Instrucciones del modo informativo. Con guionAtencion, el guion manda: no se parte
+// mostrando el catálogo y se piden los datos que el guion indique antes de derivar.
+function instruccionesModoInformativo(empresa, ahora) {
+  const comunes = [
+    '- Sé breve, cordial y directo: estás en un chat de WhatsApp, no escribas párrafos largos.',
+    '- Si pregunta por un producto en particular, respóndele solo con lo que dice la información.',
+    '- Si pregunta algo que NO está en la información (precios de otros productos, plazos, condiciones, detalles), no lo inventes: llama a escalar_a_humano. Esa herramienta avisa al equipo y pausa el chat para que una persona le responda; nunca prometas "una persona te contactará" sin llamarla.',
+    '- Si dice que no le interesa, agradécele y no insistas.',
+    '- No des información médica ni de salud como si fueras un profesional.',
+  ];
+  if (!empresa.guionAtencion) {
+    // Mismo texto y orden que antes del guion (2026-10-23): sin guion no cambia nada.
+    const [breve, producto, noInventes, noInteresa, medica] = comunes;
+    return [
+      breve,
+      '- Si el cliente saluda, preséntate brevemente y pregúntale en qué lo puedes ayudar.',
+      '- Si pregunta qué servicios, productos o soluciones ofrece el negocio, enumera TODOS los que figuren en la información, en una lista corta con guiones, y pregunta cuál le interesa. Nunca agregues ni inventes otros.',
+      producto,
+      noInventes,
+      '- Si el cliente quiere contratar, cotizar, agendar una reunión o hablar con alguien, o pide una persona, usa escalar_a_humano.',
+      '- NUNCA ofrezcas agendar, ni pidas día, hora, RUT ni nombre completo, ni muestres horarios.',
+      noInteresa,
+      medica,
+    ].join('\n');
+  }
+  return `GUION DE ATENCIÓN (tiene prioridad sobre todo lo demás; síguelo con cada persona que escriba, venga o no de un anuncio):
+${empresa.guionAtencion}
+
+Saludo que corresponde a la hora actual en Chile: "${saludoSegunHoraChile(ahora)}". Úsalo tal cual en tu primer mensaje de la conversación (no lo repitas después).
+
+Instrucciones:
+- Si es el inicio de la conversación (aunque la persona solo salude o escriba un mensaje automático del anuncio), responde con la apertura del guion. NO muestres el catálogo completo de entrada.
+- Pide los datos del guion de a uno o dos por mensaje, nunca todos juntos como formulario. No vuelvas a pedir un dato que la persona ya dio.
+- Si en medio del guion hace una pregunta, respóndela corto con la información y retoma el guion.
+- Solo si pregunta explícitamente qué otros productos o servicios ofrecen, enuméralos de la información en una lista corta.
+- Cuando ya tengas todos los datos que pide el guion, escribe el mensaje de cierre del guion usando su nombre Y llama a escalar_a_humano en esa misma respuesta.
+- Si la persona quiere contratar o cotizar, primero completa los datos del guion; solo si pide explícitamente hablar con una persona, llama a escalar_a_humano de inmediato.
+${comunes.join('\n')}
+- NUNCA ofrezcas agendar, ni pidas día, RUT ni muestres horarios (sí puedes preguntar en qué horario le acomoda que lo llamen, si eligió la llamada).`;
+}
+
+async function generarRespuestaInformativa({ empresa, historial, mensajeEntrante, ahora = new Date() }) {
   const identidad = construirBloqueIdentidad(empresa).replace(
     'Eres el asistente de agendamiento de',
     'Eres el asistente de atención e información de'
@@ -1160,16 +1210,7 @@ Este negocio NO agenda citas ni reuniones por este chat: tu trabajo es informar 
 
 ${bloques.join('\n\n')}
 
-Instrucciones:
-- Sé breve, cordial y directo: estás en un chat de WhatsApp, no escribas párrafos largos.
-- Si el cliente saluda, preséntate brevemente y pregúntale en qué lo puedes ayudar.
-- Si pregunta qué servicios, productos o soluciones ofrece el negocio, enumera TODOS los que figuren en la información, en una lista corta con guiones, y pregunta cuál le interesa. Nunca agregues ni inventes otros.
-- Si pregunta por un producto en particular, respóndele solo con lo que dice la información.
-- Si pregunta algo que NO está en la información (precios de otros productos, plazos, condiciones, detalles), no lo inventes: llama a escalar_a_humano. Esa herramienta avisa al equipo y pausa el chat para que una persona le responda; nunca prometas "una persona te contactará" sin llamarla.
-- Si el cliente quiere contratar, cotizar, agendar una reunión o hablar con alguien, o pide una persona, usa escalar_a_humano.
-- NUNCA ofrezcas agendar, ni pidas día, hora, RUT ni nombre completo, ni muestres horarios.
-- Si dice que no le interesa, agradécele y no insistas.
-- No des información médica ni de salud como si fueras un profesional.`;
+${empresa.guionAtencion ? '' : 'Instrucciones:\n'}${instruccionesModoInformativo(empresa, ahora)}`;
 
   const herramientas = construirTools(empresa, false, false).filter((t) => t.name === 'escalar_a_humano');
   const messages = [
@@ -1181,8 +1222,17 @@ Instrucciones:
   const pareceOfertaDeHumanoInventada = (texto) =>
     /te (paso|comunico|conecto|derivo)\s+(con|a)\s+(un|una|el|la)?\s*(ejecutivo|persona|agente|humano)/i.test(texto || '')
     || /(una\s+)?persona\s+del\s+equipo\s+(te\s+|se\s+|le\s+)?(contact|confirm|escrib|respond|llam|ayud)/i.test(texto || '')
-    || /alguien\s+del\s+equipo\s+(te\s+|se\s+|le\s+)?(contact|confirm|escrib|respond|llam|ayud)/i.test(texto || '');
+    || /alguien\s+del\s+equipo\s+(te\s+|se\s+|le\s+)?(contact|confirm|escrib|respond|llam|ayud)/i.test(texto || '')
+    // Cierre del guion ("te contactamos durante el día") sin llamar la herramienta. Solo
+    // textos SIN "?": la apertura ("si prefieres, te llamamos... ¿Qué prefieres?") y las
+    // preguntas ("¿a qué hora te llamamos?") usan los mismos verbos y no son un cierre.
+    || (!!empresa.guionAtencion && !/\?/.test(texto || '')
+      && /\bte\s+(contact|llam|escrib)(amos|aremos)\b|\bte\s+vamos\s+a\s+(contactar|llamar|escribir)|\bte\s+estaremos\s+(contactando|llamando|escribiendo)|\bnos\s+(comunicamos|comunicaremos|pondremos\s+en\s+contacto)\b/i.test(texto || ''));
 
+  // Con guion, al derivar se manda el cierre que escribió el modelo (con el nombre de
+  // la persona); si al forzar la herramienta no vino texto, el del intento anterior.
+  const CIERRE_POR_DEFECTO = '¡Dale! En un momento te contactamos directamente 🙌';
+  let textoPrevio = '';
   let forzar = false;
   for (let intentos = 0; intentos < 2; intentos++) {
     const response = await anthropic.messages.create({
@@ -1195,21 +1245,23 @@ Instrucciones:
     });
     forzar = false;
 
-    if (response.content.some((b) => b.type === 'tool_use' && b.name === 'escalar_a_humano')) {
-      return { texto: '¡Dale! En un momento te contactamos directamente 🙌', interactivo: null, escaladoAHumano: true };
-    }
     const textBlock = response.content.find((b) => b.type === 'text');
-    const texto = textBlock ? textBlock.text : '';
+    const texto = textBlock ? textBlock.text.trim() : '';
+    if (response.content.some((b) => b.type === 'tool_use' && b.name === 'escalar_a_humano')) {
+      const cierre = empresa.guionAtencion ? (texto || textoPrevio) : '';
+      return { texto: cierre || CIERRE_POR_DEFECTO, interactivo: null, escaladoAHumano: true };
+    }
     if (!texto) {
       console.error('[claude.js] Modo informativo sin texto -- stop_reason:', response.stop_reason, '| usage:', JSON.stringify(response.usage));
     }
     if (pareceOfertaDeHumanoInventada(texto)) {
+      textoPrevio = texto;
       forzar = true;
       continue;
     }
     return { texto: texto || 'Disculpa, ¿puedes repetir tu mensaje?', interactivo: null };
   }
-  return { texto: '¡Dale! En un momento te contactamos directamente 🙌', interactivo: null, escaladoAHumano: true };
+  return { texto: (empresa.guionAtencion && textoPrevio) || CIERRE_POR_DEFECTO, interactivo: null, escaladoAHumano: true };
 }
 
 // Red de seguridad determinística contra voseo. Confirmado en producción
@@ -1281,4 +1333,5 @@ module.exports = {
   armarRespuestaHorarios,
   armarRespuestaProximosDias,
   extraerRutYTelefono,
+  saludoSegunHoraChile,
 };

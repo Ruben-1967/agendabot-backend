@@ -99,6 +99,11 @@ model Empresa {
   // día/hora. Su catálogo se lee de informacionAdicional. false = comportamiento
   // de siempre (todas las empresas existentes quedan igual).
   modoInformativo   Boolean @default(false)
+  // Guion de atención (2026-10-23, Multidigital): solo con modoInformativo. Pasos que
+  // el bot sigue con todo contacto (ej. ofrecer un ejemplo gratis o una llamada y
+  // pedir rubro, nombre y ubicación antes de derivar), en vez de partir mostrando
+  // el catálogo. null = modo informativo de siempre. Ver claude.js#generarRespuestaInformativa.
+  guionAtencion     String? @db.Text
   tonoComunicacion  String? @default("Neutral")
   sitioWeb        String?
   // Minutos desde que un cliente pide hablar con una persona hasta que se

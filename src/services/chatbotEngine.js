@@ -219,7 +219,9 @@ async function procesarMensajeEntranteSinLock({ empresa, telefonoCliente, textoE
   if (empresa.modoInformativo) {
     let respuestaInfo;
     let escaladoInfo = false;
-    if (FRASES_SALUDO.has(normalizarTexto(textoEntrante))) {
+    // Con guion de atención, el saludo también lo responde el guion (apertura con
+    // "Buenos días/tardes/noches"), no este texto fijo.
+    if (!empresa.guionAtencion && FRASES_SALUDO.has(normalizarTexto(textoEntrante))) {
       const nombreSaludo = empresa.sucursal ? `${empresa.nombre} (${empresa.sucursal})` : empresa.nombre;
       respuestaInfo = `¡Hola! 👋 Bienvenido/a a ${nombreSaludo}. ¿En qué te puedo ayudar hoy?`;
     } else {
