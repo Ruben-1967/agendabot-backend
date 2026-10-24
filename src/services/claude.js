@@ -201,6 +201,35 @@ const MODEL = 'claude-sonnet-5';
 // Es un techo, no un gasto: se cobra solo lo que el modelo usa.
 const MAX_TOKENS_RESPUESTA = 4000;
 
+// Prompt caching (2026-10-24). Las instrucciones (tools + system) son iguales en cada
+// mensaje de un mismo negocio: solo cambian la fecha (una vez al día) y, en el guion, el
+// saludo según la hora. Se marcan 2 puntos de caché: el system (cachea tools + system) y
+// el último mensaje (cachea el historial, que en el turno siguiente es el mismo prefijo).
+// Lo leído del caché se cobra ~0,1x; escribirlo, 1,25x. Dura 5 min desde el último uso.
+// Mínimo cacheable en Sonnet 5: 1024 tokens (los prompts de acá pasan de 3.000).
+const CACHE_EFIMERO = { type: 'ephemeral' };
+function sistemaConCache(systemPrompt) {
+  return [{ type: 'text', text: systemPrompt, cache_control: CACHE_EFIMERO }];
+}
+// Copia de messages con el punto de caché en el último bloque. No toca el array original
+// (los ciclos de herramientas siguen agregándole turnos) y solo hay un punto por llamada.
+function mensajesConCache(messages) {
+  if (!messages.length) return messages;
+  const ultimo = messages[messages.length - 1];
+  const bloques = typeof ultimo.content === 'string'
+    ? [{ type: 'text', text: ultimo.content }]
+    : ultimo.content.map((b) => ({ ...b }));
+  if (!bloques.length) return messages;
+  bloques[bloques.length - 1] = { ...bloques[bloques.length - 1], cache_control: CACHE_EFIMERO };
+  return [...messages.slice(0, -1), { ...ultimo, content: bloques }];
+}
+// LOG_CACHE=1 (ej. en la Shell de staging) muestra cuánto se leyó/escribió del caché.
+function registrarUsoCache(etiqueta, response) {
+  if (process.env.LOG_CACHE !== '1') return;
+  const u = response.usage || {};
+  console.log(`[CACHE ${etiqueta}] leído=${u.cache_read_input_tokens || 0} escrito=${u.cache_creation_input_tokens || 0} sin caché=${u.input_tokens || 0}`);
+}
+
 // Texto fijo de la pregunta de servicios (nunca lo redacta el modelo, ver
 // mostrar_lista_servicios más abajo) y su variante para cuando ya se
 // preguntó antes en la misma conversación sin que el cliente eligiera del
@@ -913,11 +942,12 @@ ${empresa.requiereRut ? '- Este negocio además EXIGE RUT y teléfono de contact
       // cayendo en el mensaje genérico de abajo. Con 1500 volvió a pasar en el
       // modo informativo (ver MAX_TOKENS_RESPUESTA).
       max_tokens: MAX_TOKENS_RESPUESTA,
-      system: systemPrompt,
+      system: sistemaConCache(systemPrompt),
       tools,
       ...(forzarHerramienta ? { tool_choice: { type: 'tool', name: forzarHerramienta } } : {}),
-      messages,
+      messages: mensajesConCache(messages),
     });
+    registrarUsoCache('agenda', response);
     forzarHerramienta = null;
 
     if (response.stop_reason !== 'tool_use') {
@@ -1307,10 +1337,10 @@ async function pedirCierreDelGuion(systemPrompt, herramientas, messages, conteni
     const response = await anthropic.messages.create({
       model: MODEL,
       max_tokens: MAX_TOKENS_RESPUESTA,
-      system: systemPrompt,
+      system: sistemaConCache(systemPrompt),
       tools: herramientas,
       tool_choice: { type: 'none' },
-      messages: [
+      messages: mensajesConCache([
         ...messages,
         { role: 'assistant', content: contenidoAsistente },
         {
@@ -1321,8 +1351,9 @@ async function pedirCierreDelGuion(systemPrompt, herramientas, messages, conteni
             content: 'Equipo avisado; el chat queda en manos de una persona. Escribe ahora SOLO el mensaje de cierre del guion para la persona (el que corresponda a lo que eligió, con su nombre si lo sabes).',
           }],
         },
-      ],
+      ]),
     });
+    registrarUsoCache('cierre', response);
     const bloque = response.content.find((b) => b.type === 'text');
     return bloque ? bloque.text.trim() : '';
   } catch (error) {
@@ -1399,8 +1430,9 @@ ${empresa.guionAtencion ? '' : 'Instrucciones:\n'}${instruccionesModoInformativo
     let texto = '';
     try {
       const response = await anthropic.messages.create({
-        model: MODEL, max_tokens: MAX_TOKENS_RESPUESTA, system: systemPrompt, tools: herramientas, tool_choice: { type: 'none' }, messages,
+        model: MODEL, max_tokens: MAX_TOKENS_RESPUESTA, system: sistemaConCache(systemPrompt), tools: herramientas, tool_choice: { type: 'none' }, messages: mensajesConCache(messages),
       });
+      registrarUsoCache('precio', response);
       const bloque = response.content.find((b) => b.type === 'text');
       texto = bloque ? bloque.text.trim() : '';
     } catch (error) {
@@ -1422,11 +1454,12 @@ ${empresa.guionAtencion ? '' : 'Instrucciones:\n'}${instruccionesModoInformativo
     const response = await anthropic.messages.create({
       model: MODEL,
       max_tokens: MAX_TOKENS_RESPUESTA,
-      system: systemPrompt,
+      system: sistemaConCache(systemPrompt),
       tools: herramientas,
       ...(forzar ? { tool_choice: { type: 'tool', name: 'escalar_a_humano' } } : {}),
-      messages,
+      messages: mensajesConCache(messages),
     });
+    registrarUsoCache('informativo', response);
     forzar = false;
 
     const textBlock = response.content.find((b) => b.type === 'text');
