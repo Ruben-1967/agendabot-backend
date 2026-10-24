@@ -1175,6 +1175,13 @@ function preciosPais(pais) {
   const { nombre, mensual, hosting, dominio } = PAISES_GUION[pais];
   return `Precios para ${nombre}: el sitio web de una página + 2 correos corporativos cuesta ${mensual}, sin permanencia. El hosting cuesta ${hosting}. El dominio ${dominio} lo paga el cliente directamente al inscribirlo; nosotros lo asesoramos sin costo. Todo lo que vaya más allá del ejemplo que le enviamos se cotiza aparte.`;
 }
+// "¿Cuánto cuesta?", "¿qué precio tiene?", "¿y el hosting?"... Si además pide una persona
+// o una llamada, no cuenta: ahí sí se deriva como siempre.
+function pareceConsultaDePrecio(texto) {
+  const t = texto || '';
+  return /cu[aá]nto\s+(cuesta|sale|vale|cobran|es|ser[ií]a)|precio|valor|costo|tarifa|hosting|dominio/i.test(t)
+    && !/persona|humano|alguien|ejecutivo|ll[aá]m/i.test(t);
+}
 function instruccionesPaisExtranjero(pais) {
   const { nombre } = PAISES_GUION[pais];
   return `
@@ -1375,6 +1382,29 @@ ${empresa.guionAtencion ? '' : 'Instrucciones:\n'}${instruccionesModoInformativo
     // a nuestro equipo para que te llamen".
     || (!!empresa.guionAtencion && !/\?/.test(texto || '')
       && /\bte\s+(contact|llam|escrib)(an|ar[aá]n)\b|\bpara\s+que\s+te\s+(contacten|llamen|escriban)\b|\b(ya\s+)?(avis[eé]|avisamos|le\s+paso|les\s+paso|paso\s+(el|tu|los)[^.!\n]{0,40}?)\s+(a|al)\s+(nuestro\s+|el\s+)?equipo\b/i.test(texto || ''));
+
+  // Perú/Colombia preguntando el precio: aun con los precios en la información, el modelo
+  // a veces derivaba en vez de darlos (prueba en staging 2026-10-24, misma pregunta: una
+  // vez S/ 39, otra vez "te derivo"). Aquí no puede derivar (tool_choice none) y, si la
+  // respuesta no trae la cifra del país, se manda un texto fijo con los precios.
+  if (pais && pareceConsultaDePrecio(mensajeEntrante)) {
+    const { mensual, hosting, dominio } = PAISES_GUION[pais];
+    let texto = '';
+    try {
+      const response = await anthropic.messages.create({
+        model: MODEL, max_tokens: 800, system: systemPrompt, tools: herramientas, tool_choice: { type: 'none' }, messages,
+      });
+      const bloque = response.content.find((b) => b.type === 'text');
+      texto = bloque ? bloque.text.trim() : '';
+    } catch (error) {
+      console.error('[claude.js] Precio por país: falló el modelo, va el texto fijo:', error.message);
+    }
+    const traeCifraDelPais = [mensual, hosting].some((precio) => texto.includes(precio.split(' al ')[0]));
+    if (!traeCifraDelPais || pareceOfertaDeHumanoInventada(texto)) {
+      texto = `El sitio web de una página + 2 correos corporativos cuesta ${mensual}, sin permanencia. El hosting cuesta ${hosting}, y el dominio ${dominio} lo pagas tú directamente al inscribirlo (te asesoramos sin costo). Todo lo que vaya más allá del ejemplo que te enviamos se cotiza aparte.\n\nCualquier otra duda, me cuentas 🙌`;
+    }
+    return { texto, interactivo: null };
+  }
 
   // Con guion, al derivar se manda el cierre que escribió el modelo (con el nombre de
   // la persona); si al forzar la herramienta no vino texto, el del intento anterior.
