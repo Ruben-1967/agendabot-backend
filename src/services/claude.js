@@ -626,11 +626,11 @@ ${JSON.stringify(reservaEnCurso || {}, null, 2)}`;
  * @param {Object|null} [params.reservaEnCurso] - Conversacion.reservaEnCurso, si existe -- usado SOLO para el fallback determinístico si el ciclo de reintentos se agota (paso 10 del fix estructural), nunca para decidir el flujo normal.
  * @returns {Promise<{texto: string, interactivo: Object|null}>}
  */
-async function generarRespuestaChatbotSinCorregirVoseo({ empresa, cliente, historial, mensajeEntrante, reservaEnCurso }) {
+async function generarRespuestaChatbotSinCorregirVoseo({ empresa, cliente, historial, mensajeEntrante, reservaEnCurso, canal }) {
   // Modo informativo (empresas que no agendan, ej. Multidigital): camino corto y
   // aparte, sin nada de la lógica de citas de más abajo. Ver generarRespuestaInformativa.
   if (empresa.modoInformativo) {
-    return generarRespuestaInformativa({ empresa, historial, mensajeEntrante });
+    return generarRespuestaInformativa({ empresa, historial, mensajeEntrante, pais: paisDesdeTelefono(cliente?.telefono, canal) });
   }
 
   // Preferimos los Servicio reales que la empresa cargó en el panel de
@@ -1142,16 +1142,46 @@ ${empresa.requiereRut ? '- Este negocio además EXIGE RUT y teléfono de contact
  */
 // "Buenos días/tardes/noches" según la hora de Chile -- lo calcula el código, no el
 // modelo (que no sabe la hora). Se usa en el guion de atención del modo informativo.
-function saludoSegunHoraChile(ahora = new Date()) {
-  const hora = Number(new Intl.DateTimeFormat('en-US', { timeZone: 'America/Santiago', hour: 'numeric', hourCycle: 'h23' }).format(ahora));
+function saludoSegunHoraChile(ahora = new Date(), zonaHoraria = 'America/Santiago') {
+  const hora = Number(new Intl.DateTimeFormat('en-US', { timeZone: zonaHoraria, hour: 'numeric', hourCycle: 'h23' }).format(ahora));
   if (hora >= 5 && hora < 12) return 'Buenos días';
   if (hora >= 12 && hora < 20) return 'Buenas tardes';
   return 'Buenas noches';
 }
 
+// País de quien escribe, por el código de su WhatsApp, para los anuncios de Multidigital
+// en Perú y Colombia (2026-10-24). Solo celulares con el largo exacto (Perú 51 + 9 + 8
+// dígitos, Colombia 57 + 3 + 9 dígitos): un IGSID de Instagram también son puros dígitos
+// y no debe confundirse con un teléfono. null = Chile u otro (el guion de siempre).
+const PAISES_GUION = {
+  PE: { nombre: 'Perú', zonaHoraria: 'America/Lima' },
+  CO: { nombre: 'Colombia', zonaHoraria: 'America/Bogota' },
+};
+function paisDesdeTelefono(telefono, canal = 'whatsapp') {
+  if (canal !== 'whatsapp' || !telefono) return null;
+  const d = String(telefono).replace(/\D/g, '');
+  if (/^519\d{8}$/.test(d)) return 'PE';
+  if (/^573\d{9}$/.test(d)) return 'CO';
+  return null;
+}
+
+// Con guion y una persona de Perú o Colombia: los precios del guion son de Chile (pesos
+// chilenos, IVA, UF, promo con fecha), así que no se dan; se ofrece cotizar y el resto
+// del guion (apertura, datos, cierre) sigue igual.
+function instruccionesPaisExtranjero(pais) {
+  const { nombre } = PAISES_GUION[pais];
+  return `
+
+PERSONA DE ${nombre.toUpperCase()} (su WhatsApp es de ${nombre}; esto tiene prioridad sobre el guion en lo que se contradiga):
+- Atiéndela igual que el guion (misma apertura, mismos datos, mismo cierre), pero pide "ciudad" en vez de "comuna".
+- NO menciones precios en pesos chilenos, ni IVA, ni UF, ni la promoción del hosting. Si pregunta el precio, dile que con los datos de su negocio le preparamos una cotización para ${nombre}, y retoma el guion.
+- Si pregunta si atienden en ${nombre}: sí, el servicio es 100% online.
+- No uses modismos chilenos.`;
+}
+
 // Instrucciones del modo informativo. Con guionAtencion, el guion manda: no se parte
 // mostrando el catálogo y se piden los datos que el guion indique antes de derivar.
-function instruccionesModoInformativo(empresa, ahora) {
+function instruccionesModoInformativo(empresa, ahora, pais = null) {
   const comunes = [
     '- Sé breve, cordial y directo: estás en un chat de WhatsApp, no escribas párrafos largos.',
     '- Si pregunta por un producto en particular, respóndele solo con lo que dice la información.',
@@ -1177,7 +1207,7 @@ function instruccionesModoInformativo(empresa, ahora) {
   return `GUION DE ATENCIÓN (tiene prioridad sobre todo lo demás; síguelo con cada persona que escriba, venga o no de un anuncio):
 ${empresa.guionAtencion}
 
-Saludo que corresponde a la hora actual en Chile: "${saludoSegunHoraChile(ahora)}". Úsalo tal cual en tu primer mensaje de la conversación (no lo repitas después).
+Saludo que corresponde a la hora actual ${pais ? `en ${PAISES_GUION[pais].nombre}` : 'en Chile'}: "${saludoSegunHoraChile(ahora, pais ? PAISES_GUION[pais].zonaHoraria : undefined)}". Úsalo tal cual en tu primer mensaje de la conversación (no lo repitas después).
 Fecha de hoy en Chile: ${new Intl.DateTimeFormat('es-CL', { timeZone: 'America/Santiago', day: 'numeric', month: 'long', year: 'numeric' }).format(ahora)}. Si una promoción del guion o de la información tiene una fecha de término que ya pasó, NO la menciones ni la ofrezcas.
 
 Instrucciones:
@@ -1188,7 +1218,7 @@ Instrucciones:
 - Cuando ya tengas todos los datos que pide el guion, escribe el mensaje de cierre del guion usando su nombre Y llama a escalar_a_humano en esa misma respuesta.
 - Si la persona quiere contratar o cotizar, primero completa los datos del guion; solo si pide explícitamente hablar con una persona, llama a escalar_a_humano de inmediato.
 ${comunes.join('\n')}
-- NUNCA ofrezcas agendar, ni pidas día, RUT ni muestres horarios (sí puedes preguntar en qué horario le acomoda que lo llamen, si eligió la llamada).`;
+- NUNCA ofrezcas agendar, ni pidas día, RUT ni muestres horarios (sí puedes preguntar en qué horario le acomoda que lo llamen, si eligió la llamada).${pais ? instruccionesPaisExtranjero(pais) : ''}`;
 }
 
 /**
@@ -1261,7 +1291,7 @@ async function pedirCierreDelGuion(systemPrompt, herramientas, messages, conteni
   }
 }
 
-async function generarRespuestaInformativa({ empresa, historial, mensajeEntrante, ahora = new Date() }) {
+async function generarRespuestaInformativa({ empresa, historial, mensajeEntrante, ahora = new Date(), pais = null }) {
   const identidad = construirBloqueIdentidad(empresa).replace(
     'Eres el asistente de agendamiento de',
     'Eres el asistente de atención e información de'
@@ -1281,7 +1311,7 @@ Este negocio NO agenda citas ni reuniones por este chat: tu trabajo es informar 
 
 ${bloques.join('\n\n')}
 
-${empresa.guionAtencion ? '' : 'Instrucciones:\n'}${instruccionesModoInformativo(empresa, ahora)}`;
+${empresa.guionAtencion ? '' : 'Instrucciones:\n'}${instruccionesModoInformativo(empresa, ahora, empresa.guionAtencion ? pais : null)}`;
 
   const herramientas = construirTools(empresa, false, false).filter((t) => t.name === 'escalar_a_humano');
   const messages = [
@@ -1417,4 +1447,5 @@ module.exports = {
   extraerRutYTelefono,
   saludoSegunHoraChile,
   extraerDatosLeadWeb,
+  paisDesdeTelefono,
 };
