@@ -1153,9 +1153,12 @@ function saludoSegunHoraChile(ahora = new Date(), zonaHoraria = 'America/Santiag
 // en Perú y Colombia (2026-10-24). Solo celulares con el largo exacto (Perú 51 + 9 + 8
 // dígitos, Colombia 57 + 3 + 9 dígitos): un IGSID de Instagram también son puros dígitos
 // y no debe confundirse con un teléfono. null = Chile u otro (el guion de siempre).
+// Precios de Multidigital por país, definidos por Rubén el 2026-10-24 (los mismos del
+// afiche de cada país; hoy solo Multidigital tiene guion). Sin impuesto agregado: la
+// venta al extranjero se trata aparte en contabilidad.
 const PAISES_GUION = {
-  PE: { nombre: 'Perú', zonaHoraria: 'America/Lima' },
-  CO: { nombre: 'Colombia', zonaHoraria: 'America/Bogota' },
+  PE: { nombre: 'Perú', zonaHoraria: 'America/Lima', mensual: 'S/ 39 al mes', hosting: 'S/ 149 al año', dominio: '.pe' },
+  CO: { nombre: 'Colombia', zonaHoraria: 'America/Bogota', mensual: '$39.900 COP al mes', hosting: '$149.000 COP al año', dominio: '.co' },
 };
 function paisDesdeTelefono(telefono, canal = 'whatsapp') {
   if (canal !== 'whatsapp' || !telefono) return null;
@@ -1166,15 +1169,16 @@ function paisDesdeTelefono(telefono, canal = 'whatsapp') {
 }
 
 // Con guion y una persona de Perú o Colombia: los precios del guion son de Chile (pesos
-// chilenos, IVA, UF, promo con fecha), así que no se dan; se ofrece cotizar y el resto
-// del guion (apertura, datos, cierre) sigue igual.
+// chilenos, IVA, UF, promo con fecha) y se reemplazan por los de su país; el resto del
+// guion (apertura, datos, cierre) sigue igual.
 function instruccionesPaisExtranjero(pais) {
-  const { nombre } = PAISES_GUION[pais];
+  const { nombre, mensual, hosting, dominio } = PAISES_GUION[pais];
   return `
 
 PERSONA DE ${nombre.toUpperCase()} (su WhatsApp es de ${nombre}; esto tiene prioridad sobre el guion en lo que se contradiga):
 - Atiéndela igual que el guion (misma apertura, mismos datos, mismo cierre), pero pide "ciudad" en vez de "comuna".
-- NO menciones precios en pesos chilenos, ni IVA, ni UF, ni la promoción del hosting. Si pregunta el precio, dile que con los datos de su negocio le preparamos una cotización para ${nombre}, y retoma el guion.
+- Precios para ${nombre} (los ÚNICOS que puedes dar): el sitio web de una página + 2 correos corporativos cuesta ${mensual}, sin permanencia. El hosting cuesta ${hosting}. El dominio ${dominio} lo paga el cliente directamente al inscribirlo; nosotros lo asesoramos sin costo. Todo lo que vaya más allá del ejemplo que le enviamos se cotiza aparte. Da el precio tal cual (nunca "desde"), sin agregar impuestos, y retoma el guion.
+- NO menciones pesos chilenos, ni IVA, ni UF, ni pago anual, ni la promoción del hosting.
 - Si pregunta si atienden en ${nombre}: sí, el servicio es 100% online.
 - No uses modismos chilenos.`;
 }
