@@ -1179,6 +1179,24 @@ PERSONA DE ${nombre.toUpperCase()} (su WhatsApp es de ${nombre}; esto tiene prio
 - No uses modismos chilenos.`;
 }
 
+// Precios de Chile ($ en pesos, IVA, UF). Para Perú y Colombia se sacan del texto que ve
+// el modelo: con solo pedirle "no los menciones" los repetía igual (prueba en staging,
+// 2026-10-24), porque el guion y la información los traen explícitos.
+const TIENE_PRECIO_CHILENO = /\$\s?\d|\bIVA\b|\bUF\b/;
+
+// Guion sin las líneas que traen precios (ej. "4. Si pregunta el precio: ...$9.900 + IVA...").
+function guionSinPrecios(guion) {
+  return guion.split('\n').filter((linea) => !TIENE_PRECIO_CHILENO.test(linea)).join('\n');
+}
+
+// Información del negocio sin las frases que traen precios (se corta por ". ", así un
+// número como "9.900" no parte la frase).
+function informacionSinPrecios(info) {
+  return info.split('\n')
+    .map((linea) => linea.split(/(?<=\.)\s+/).filter((frase) => !TIENE_PRECIO_CHILENO.test(frase)).join(' '))
+    .join('\n');
+}
+
 // Instrucciones del modo informativo. Con guionAtencion, el guion manda: no se parte
 // mostrando el catálogo y se piden los datos que el guion indique antes de derivar.
 function instruccionesModoInformativo(empresa, ahora, pais = null) {
@@ -1291,7 +1309,16 @@ async function pedirCierreDelGuion(systemPrompt, herramientas, messages, conteni
   }
 }
 
-async function generarRespuestaInformativa({ empresa, historial, mensajeEntrante, ahora = new Date(), pais = null }) {
+async function generarRespuestaInformativa({ empresa: empresaOriginal, historial, mensajeEntrante, ahora = new Date(), pais: paisTelefono = null }) {
+  // Solo con guion se distingue el país (ver paisDesdeTelefono).
+  const pais = empresaOriginal.guionAtencion ? paisTelefono : null;
+  const empresa = pais
+    ? {
+      ...empresaOriginal,
+      guionAtencion: guionSinPrecios(empresaOriginal.guionAtencion),
+      informacionAdicional: empresaOriginal.informacionAdicional && informacionSinPrecios(empresaOriginal.informacionAdicional),
+    }
+    : empresaOriginal;
   const identidad = construirBloqueIdentidad(empresa).replace(
     'Eres el asistente de agendamiento de',
     'Eres el asistente de atención e información de'
@@ -1311,7 +1338,7 @@ Este negocio NO agenda citas ni reuniones por este chat: tu trabajo es informar 
 
 ${bloques.join('\n\n')}
 
-${empresa.guionAtencion ? '' : 'Instrucciones:\n'}${instruccionesModoInformativo(empresa, ahora, empresa.guionAtencion ? pais : null)}`;
+${empresa.guionAtencion ? '' : 'Instrucciones:\n'}${instruccionesModoInformativo(empresa, ahora, pais)}`;
 
   const herramientas = construirTools(empresa, false, false).filter((t) => t.name === 'escalar_a_humano');
   const messages = [
