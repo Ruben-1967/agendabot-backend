@@ -34,7 +34,20 @@ async function main() {
     where: { id: EMPRESA_ID_CLIENTES_WEB },
     include: { rubroTemplate: true },
   });
-  if (!empresa) throw new Error(`No existe en staging la Empresa de Clientes Web (${EMPRESA_ID_CLIENTES_WEB}).`);
+  if (!empresa) {
+    // En staging la Empresa de Multidigital puede no existir: se elige otra a mano,
+    // con la misma variable que usa el código (el silencio automático la lee igual).
+    const empresas = await prisma.empresa.findMany({
+      select: { id: true, nombre: true, modoInformativo: true, esDemo: true },
+      orderBy: { nombre: 'asc' },
+      take: 20,
+    });
+    console.log(`No existe en esta base la Empresa ${EMPRESA_ID_CLIENTES_WEB}. Empresas disponibles:`);
+    empresas.forEach((e) => console.log(`  ${e.id}  ${e.nombre}${e.modoInformativo ? ' (informativo)' : ''}${e.esDemo ? ' (demo)' : ''}`));
+    console.log('\nVuelve a correr eligiendo una, por ejemplo:\n  EMPRESA_ID_CLIENTES_WEB=<id> node scripts/_probar-bot-silenciado-24oct.js');
+    await prisma.$disconnect();
+    return;
+  }
   console.log(`Empresa: ${empresa.nombre} | teléfono de prueba: ${TELEFONO_PRUEBA}\n`);
 
   const limpiar = async () => {
