@@ -30,6 +30,7 @@ const { fechaLegibleDesdeISO } = require('./lib/formatoFechas');
 const { procesarMensajeEntrante, procesarSeleccionInteractiva, esComandoGlobalOPregunta } = require('./services/chatbotEngine');
 const { esConfirmacionDeAsistencia, mencionaFechaOHoraConcreta, respuestaDeAsistencia } = require('./lib/respuestaAsistencia');
 const { conLockDeConversacion } = require('./lib/conversacionLock');
+const { motivoBotSilenciado } = require('./lib/botSilenciado');
 const { sendInstagramTextMessage, armarTextoConInteractivo } = require('./services/instagram');
 const { sendFacebookTextMessage, armarTextoConInteractivo: armarTextoConInteractivoFacebook } = require('./services/facebook');
 const { renderFormulario, PLANES } = require('./services/contratoHtml');
@@ -1531,7 +1532,7 @@ app.post('/webhook/whatsapp', verificarFirmaWebhookWhatsApp, async (req, res) =>
           const respondida = await conLockDeConversacion(`${empresa.id}:${telefonoCliente}:whatsapp`, async () => {
             const convAsistencia = await prisma.conversacion.findFirst({
               where: { empresaId: empresa.id, telefono: telefonoCliente, canal: 'whatsapp' },
-              select: { id: true, mensajes: true, reservaEnCurso: true, pausadaPorHumanoEn: true, actualizadoEn: true },
+              select: { id: true, mensajes: true, reservaEnCurso: true, pausadaPorHumanoEn: true, botSilenciadoEn: true, actualizadoEn: true },
             });
             // "Reserva en curso reciente": mismas señales de progreso que usa
             // el motor (intentarFastPathTexto, chatbotEngine.js) --
@@ -1546,6 +1547,7 @@ app.post('/webhook/whatsapp', verificarFirmaWebhookWhatsApp, async (req, res) =>
               );
 
             if (convAsistencia?.pausadaPorHumanoEn || hayReservaReciente) return false;
+            if (await motivoBotSilenciado({ empresaId: empresa.id, telefono: telefonoCliente, canal: 'whatsapp', conversacion: convAsistencia })) return false;
 
             const accessTokenAsistencia = empresa.whatsappToken || process.env.WHATSAPP_ACCESS_TOKEN;
             const textoAsistencia = respuestaDeAsistencia(textoEntrante);

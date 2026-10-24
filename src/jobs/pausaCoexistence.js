@@ -25,6 +25,7 @@
 const cron = require('node-cron');
 const Anthropic = require('@anthropic-ai/sdk');
 const prisma = require('../lib/prisma');
+const { motivoBotSilenciado } = require('../lib/botSilenciado');
 const { sendWhatsAppTextMessage, sendWhatsAppTemplateMessage } = require('../services/whatsapp');
 const { sendInstagramTextMessage } = require('../services/instagram');
 const { sendFacebookTextMessage } = require('../services/facebook');
@@ -151,6 +152,18 @@ async function procesarPausasCoexistence() {
     try {
       const { empresa } = conversacion;
       const minutosDesdePausa = (ahora - conversacion.pausadaPorHumanoEn.getTime()) / 60000;
+
+      // Bot silenciado para este contacto (src/lib/botSilenciado.js): lo atiende
+      // una persona de forma permanente, así que no hay contención, alerta ni
+      // reactivación que hacer. Se limpia la pausa para que no quede contando
+      // como "pendiente" en el panel.
+      if (await motivoBotSilenciado({ empresaId: conversacion.empresaId, telefono: conversacion.telefono, canal: conversacion.canal, conversacion })) {
+        await prisma.conversacion.update({
+          where: { id: conversacion.id },
+          data: { pausadaPorHumanoEn: null, contencionEnviadaEn: null, alertaUrgenteEnviadaEn: null },
+        });
+        continue;
+      }
 
       // 1. Reactivación por silencio del cliente — se revisa primero: si ya
       // se cumplió, no tiene sentido evaluar contención/alerta esta vuelta.
