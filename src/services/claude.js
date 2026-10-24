@@ -194,6 +194,12 @@ const anthropic = new Anthropic({
 // un modelo mejor reduce cuánto disparan, no reemplaza la necesidad de
 // tenerlas.
 const MODEL = 'claude-sonnet-5';
+// Sonnet 5 piensa por defecto (thinking adaptativo) y esos tokens cuentan contra
+// max_tokens: si se los come todos, la respuesta vuelve sin texto. Visto en
+// producción el 2026-10-24 (primer interesado real de Colombia): 1500 de 1500 en
+// thinking, stop_reason max_tokens, y el cliente recibió "¿puedes repetir?".
+// Es un techo, no un gasto: se cobra solo lo que el modelo usa.
+const MAX_TOKENS_RESPUESTA = 4000;
 
 // Texto fijo de la pregunta de servicios (nunca lo redacta el modelo, ver
 // mostrar_lista_servicios más abajo) y su variante para cuando ya se
@@ -904,8 +910,9 @@ ${empresa.requiereRut ? '- Este negocio además EXIGE RUT y teléfono de contact
       // puede hacer pensar bastante más que el caso simple de prueba
       // (25 tokens de thinking). Encontrado real (2026-09-16): con 500,
       // algunos turnos cortaban a mitad de camino y volvían sin texto,
-      // cayendo en el mensaje genérico de abajo.
-      max_tokens: 1500,
+      // cayendo en el mensaje genérico de abajo. Con 1500 volvió a pasar en el
+      // modo informativo (ver MAX_TOKENS_RESPUESTA).
+      max_tokens: MAX_TOKENS_RESPUESTA,
       system: systemPrompt,
       tools,
       ...(forzarHerramienta ? { tool_choice: { type: 'tool', name: forzarHerramienta } } : {}),
@@ -1299,7 +1306,7 @@ async function pedirCierreDelGuion(systemPrompt, herramientas, messages, conteni
   try {
     const response = await anthropic.messages.create({
       model: MODEL,
-      max_tokens: 300,
+      max_tokens: MAX_TOKENS_RESPUESTA,
       system: systemPrompt,
       tools: herramientas,
       tool_choice: { type: 'none' },
@@ -1392,7 +1399,7 @@ ${empresa.guionAtencion ? '' : 'Instrucciones:\n'}${instruccionesModoInformativo
     let texto = '';
     try {
       const response = await anthropic.messages.create({
-        model: MODEL, max_tokens: 800, system: systemPrompt, tools: herramientas, tool_choice: { type: 'none' }, messages,
+        model: MODEL, max_tokens: MAX_TOKENS_RESPUESTA, system: systemPrompt, tools: herramientas, tool_choice: { type: 'none' }, messages,
       });
       const bloque = response.content.find((b) => b.type === 'text');
       texto = bloque ? bloque.text.trim() : '';
@@ -1414,7 +1421,7 @@ ${empresa.guionAtencion ? '' : 'Instrucciones:\n'}${instruccionesModoInformativo
   for (let intentos = 0; intentos < 2; intentos++) {
     const response = await anthropic.messages.create({
       model: MODEL,
-      max_tokens: 1500,
+      max_tokens: MAX_TOKENS_RESPUESTA,
       system: systemPrompt,
       tools: herramientas,
       ...(forzar ? { tool_choice: { type: 'tool', name: 'escalar_a_humano' } } : {}),
@@ -1436,6 +1443,8 @@ ${empresa.guionAtencion ? '' : 'Instrucciones:\n'}${instruccionesModoInformativo
     }
     if (!texto) {
       console.error('[claude.js] Modo informativo sin texto -- stop_reason:', response.stop_reason, '| usage:', JSON.stringify(response.usage));
+      // Un segundo intento antes de mandarle "¿puedes repetir?" a un interesado.
+      if (intentos === 0) continue;
     }
     if (pareceOfertaDeHumanoInventada(texto)) {
       textoPrevio = texto;
