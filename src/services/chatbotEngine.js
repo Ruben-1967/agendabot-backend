@@ -20,6 +20,7 @@ const { MAX_FILAS_LISTA_INTERACTIVA } = require('./whatsapp');
 const { conLockDeConversacion } = require('../lib/conversacionLock');
 const { fechaLegibleDesdeISO } = require('../lib/formatoFechas');
 const { registrarLeadDesdeBot, correspondeRegistrarLead } = require('../lib/leadClienteWeb');
+const { motivoBotSilenciado } = require('../lib/botSilenciado');
 
 // Frases genéricas que preguntan por la lista de servicios, normalizadas
 // (sin tildes, minúsculas, sin signos de puntuación). Si el mensaje del
@@ -198,16 +199,26 @@ async function procesarMensajeEntranteSinLock({ empresa, telefonoCliente, textoE
   // siempre, para que el humano (o el bot, cuando se reactive) tenga el
   // contexto completo. Ningún mensaje del cliente reinicia ni cancela la
   // pausa — eso solo lo hace el job de src/jobs/pausaCoexistence.js.
-  if (conversacion?.pausadaPorHumanoEn) {
+  // Mismo trato si el bot está silenciado para este contacto (ver
+  // src/lib/botSilenciado.js), que además puede no tener conversación todavía
+  // (prospecto cargado a mano en Clientes Web que escribe por primera vez).
+  if (conversacion?.pausadaPorHumanoEn
+    || await motivoBotSilenciado({ empresaId: empresa.id, telefono: telefonoCliente, canal, conversacion })) {
     const mensajesConEsteTurno = [
       ...historialPrevio,
       { rol: 'usuario', contenido: textoEntrante, timestamp: new Date().toISOString() },
     ];
 
-    await prisma.conversacion.update({
-      where: { id: conversacion.id },
-      data: { mensajes: mensajesConEsteTurno, clienteId: cliente.id },
-    });
+    if (conversacion) {
+      await prisma.conversacion.update({
+        where: { id: conversacion.id },
+        data: { mensajes: mensajesConEsteTurno, clienteId: cliente.id },
+      });
+    } else {
+      await prisma.conversacion.create({
+        data: { empresaId: empresa.id, clienteId: cliente.id, telefono: telefonoCliente, canal, mensajes: mensajesConEsteTurno, reservaEnCurso: null },
+      });
+    }
 
     return { respuestaTexto: null, interactivo: null, cliente };
   }
@@ -462,15 +473,21 @@ async function procesarSeleccionInteractivaSinLock({ empresa, telefonoCliente, n
 
   // Coexistence: igual que procesarMensajeEntranteSinLock, si hay un
   // humano interviniendo, el tap solo se registra en el historial (para
-  // contexto) y no se responde nada.
-  if (conversacion?.pausadaPorHumanoEn) {
-    await prisma.conversacion.update({
-      where: { id: conversacion.id },
-      data: {
-        mensajes: [...historialPrevio, { rol: 'usuario', contenido: descripcionTap, timestamp: new Date().toISOString() }],
-        clienteId: cliente.id,
-      },
-    });
+  // contexto) y no se responde nada. Igual si el bot está silenciado para
+  // este contacto (src/lib/botSilenciado.js).
+  if (conversacion?.pausadaPorHumanoEn
+    || await motivoBotSilenciado({ empresaId: empresa.id, telefono: telefonoCliente, canal, conversacion })) {
+    const mensajesConEsteTurno = [...historialPrevio, { rol: 'usuario', contenido: descripcionTap, timestamp: new Date().toISOString() }];
+    if (conversacion) {
+      await prisma.conversacion.update({
+        where: { id: conversacion.id },
+        data: { mensajes: mensajesConEsteTurno, clienteId: cliente.id },
+      });
+    } else {
+      await prisma.conversacion.create({
+        data: { empresaId: empresa.id, clienteId: cliente.id, telefono: telefonoCliente, canal, mensajes: mensajesConEsteTurno, reservaEnCurso: null },
+      });
+    }
     return { respuestaTexto: null, interactivo: null, cliente };
   }
 

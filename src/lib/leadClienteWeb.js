@@ -79,4 +79,4 @@ async function registrarLeadDesdeBot({ empresa, telefono, canal, mensajes }) {
   }
 }
 
-module.exports = { registrarLeadDesdeBot, correspondeRegistrarLead };
+module.exports = { registrarLeadDesdeBot, correspondeRegistrarLead, EMPRESA_ID_CLIENTES_WEB };

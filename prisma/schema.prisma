@@ -738,6 +738,11 @@ model Conversacion {
   contencionEnviadaEn    DateTime? // cuándo se mandó el mensaje de contención (evita repetirlo)
   alertaUrgenteEnviadaEn DateTime? // cuándo se mandó la alerta interna (evita repetirla)
 
+  // Bot silenciado a mano para este contacto (2026-10-24, botón en Chats en vivo):
+  // a diferencia de pausadaPorHumanoEn, NO se reactiva solo. Los mensajes del
+  // cliente se siguen guardando. Ver src/lib/botSilenciado.js.
+  botSilenciadoEn        DateTime?
+
   actualizadoEn DateTime @updatedAt
   creadoEn  DateTime @default(now())
 

@@ -5,6 +5,8 @@ const { sendWhatsAppTextMessage } = require('../services/whatsapp');
 const { sendInstagramTextMessage } = require('../services/instagram');
 const { sendFacebookTextMessage } = require('../services/facebook');
 const { listarEjemplosParaResumen, obtenerEjemploCompleto } = require('../lib/ejemplosDemoChats');
+const { motivoBotSilenciado, ETAPAS_CLIENTE_WEB_QUE_SILENCIAN } = require('../lib/botSilenciado');
+const { EMPRESA_ID_CLIENTES_WEB } = require('../lib/leadClienteWeb');
 
 const router = express.Router();
 
@@ -33,6 +35,15 @@ router.get('/:empresaId', requireAuth, async (req, res) => {
       orderBy: { actualizadoEn: 'desc' },
     });
 
+    // Silencio automático por etapa de Clientes Web (solo Multidigital): una sola
+    // consulta para toda la lista, en vez de una por conversación.
+    const telefonosClienteWebSilenciados = empresaId === EMPRESA_ID_CLIENTES_WEB
+      ? new Set((await prisma.clienteWeb.findMany({
+        where: { etapa: { in: ETAPAS_CLIENTE_WEB_QUE_SILENCIAN }, telefono: { not: null } },
+        select: { telefono: true },
+      })).map((c) => c.telefono))
+      : new Set();
+
     // Procesar para agregar último mensaje y status
     const conversacionesProcesadas = conversaciones.map((conv) => {
       const mensajesList = Array.isArray(conv.mensajes) ? conv.mensajes : [];
@@ -49,6 +60,8 @@ router.get('/:empresaId', requireAuth, async (req, res) => {
         ultimoMensajeRol: ultimoMensaje?.rol || null,
         totalMensajes: mensajesList.length,
         escaladoAHumano: conv.escaladoAHumano,
+        botSilenciado: conv.botSilenciadoEn ? 'MANUAL'
+          : (conv.canal === 'whatsapp' && telefonosClienteWebSilenciados.has(conv.telefono) ? 'CLIENTE_WEB' : null),
         actualizadoEn: conv.actualizadoEn,
         esEjemplo: false,
       };
@@ -141,10 +154,52 @@ router.get('/:empresaId/:conversacionId', requireAuth, async (req, res) => {
         canal: conversacion.canal,
         cliente: conversacion.cliente,
         escaladoAHumano: conversacion.escaladoAHumano,
+        botSilenciado: await motivoBotSilenciado({
+          empresaId, telefono: conversacion.telefono, canal: conversacion.canal, conversacion,
+        }),
         mensajes: mensajesList,
         actualizadoEn: conversacion.actualizadoEn,
         creadoEn: conversacion.creadoEn,
       },
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// PATCH /conversaciones/:empresaId/:conversacionId/bot-silenciado - Silencia o reactiva
+// el bot para este contacto, de forma permanente (ver src/lib/botSilenciado.js).
+// Body: { silenciado: boolean }. Reactivarlo no levanta el silencio automático de
+// Clientes Web: ese depende de la etapa del prospecto, y se responde cuál sigue vigente.
+router.patch('/:empresaId/:conversacionId/bot-silenciado', requireAuth, async (req, res) => {
+  try {
+    const { empresaId, conversacionId } = req.params;
+
+    if (!req.usuario || req.usuario.empresaId !== empresaId) {
+      return res.status(403).json({ error: 'No autorizado' });
+    }
+    if (typeof req.body?.silenciado !== 'boolean') {
+      return res.status(400).json({ error: 'Falta "silenciado" (true o false).' });
+    }
+
+    const conversacion = await prisma.conversacion.findUnique({ where: { id: conversacionId } });
+    if (!conversacion || conversacion.empresaId !== empresaId) {
+      return res.status(404).json({ error: 'Conversación no encontrada' });
+    }
+
+    const actualizada = await prisma.conversacion.update({
+      where: { id: conversacionId },
+      data: {
+        botSilenciadoEn: req.body.silenciado ? (conversacion.botSilenciadoEn || new Date()) : null,
+        // Al silenciar, la pausa temporal ya no aplica (y deja de contar como pendiente).
+        ...(req.body.silenciado ? { pausadaPorHumanoEn: null, contencionEnviadaEn: null, alertaUrgenteEnviadaEn: null } : {}),
+      },
+    });
+
+    res.json({
+      botSilenciado: await motivoBotSilenciado({
+        empresaId, telefono: actualizada.telefono, canal: actualizada.canal, conversacion: actualizada,
+      }),
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
