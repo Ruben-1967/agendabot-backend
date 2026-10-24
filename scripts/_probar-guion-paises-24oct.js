@@ -27,7 +27,8 @@ const empresa = {
 const TEL_PERU = '51900000001';
 const TEL_COLOMBIA = '573000000001';
 const TEL_CHILE = '56900000001';
-const PRECIO_CHILENO = /9\.900|95\.000|IVA|\bUF\b|31 de octubre|50\s?%/i;
+// "$9.900" sí, pero no "$39.900" (precio de Colombia).
+const PRECIO_CHILENO = /\$\s?9\.900|95\.000|IVA|\bUF\b|31 de octubre|50\s?%/i;
 
 let fallas = 0;
 function verificar(descripcion, condicion, detalle) {
@@ -59,8 +60,18 @@ async function main() {
   console.log('\n2) Perú: pregunta el precio');
   ({ r } = await conversar(TEL_PERU, ['Hola', '¿Cuánto cuesta?']));
   verificar('NO da precios chilenos, IVA, UF ni la promo', !PRECIO_CHILENO.test(r.texto), r.texto);
-  verificar('ofrece preparar una cotización', /cotiz/i.test(r.texto), r.texto);
+  verificar('da S/ 39 al mes, sin "desde"', /S\/\s?39\b/.test(r.texto) && !/desde/i.test(r.texto), r.texto);
   verificar('no deriva por preguntar el precio', !r.escaladoAHumano, '');
+
+  console.log('\n2b) Perú: pregunta por el hosting y el dominio');
+  ({ r } = await conversar(TEL_PERU, ['Hola', '¿Cuánto cuesta?', '¿Y el hosting y el dominio?']));
+  verificar('hosting S/ 149 al año y dominio .pe aparte', /S\/\s?149\b/.test(r.texto) && /\.pe\b/i.test(r.texto), r.texto);
+  verificar('NO da precios chilenos', !PRECIO_CHILENO.test(r.texto), r.texto);
+
+  console.log('\n2c) Colombia: pregunta el precio');
+  ({ r } = await conversar(TEL_COLOMBIA, ['Hola', '¿Qué precio tiene?']));
+  verificar('da $39.900 COP al mes, sin "desde"', /39\.900/.test(r.texto) && /COP/.test(r.texto) && !/desde/i.test(r.texto), r.texto);
+  verificar('NO da precios chilenos', !PRECIO_CHILENO.test(r.texto), r.texto);
 
   console.log('\n3) Colombia: camino del ejemplo, completo');
   const col = await conversar(TEL_COLOMBIA, ['Buenas', 'El ejemplo', 'Tengo una panadería, se llama Pan de Yuca Doña Rosa', 'Soy Rosa, estamos en Medellín']);
