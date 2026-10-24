@@ -28,7 +28,8 @@ const TEL_PERU = '51900000001';
 const TEL_COLOMBIA = '573000000001';
 const TEL_CHILE = '56900000001';
 // "$9.900" sí, pero no "$39.900" (precio de Colombia).
-const PRECIO_CHILENO = /\$\s?9\.900|95\.000|IVA|\bUF\b|31 de octubre|50\s?%/i;
+// "IVA" como palabra: si no, calza dentro de "deriva".
+const PRECIO_CHILENO = /\$\s?9\.900|95\.000|\bIVA\b|\bUF\b|31 de octubre|50\s?%/i;
 
 let fallas = 0;
 function verificar(descripcion, condicion, detalle) {

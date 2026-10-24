@@ -1171,14 +1171,18 @@ function paisDesdeTelefono(telefono, canal = 'whatsapp') {
 // Con guion y una persona de Perú o Colombia: los precios del guion son de Chile (pesos
 // chilenos, IVA, UF, promo con fecha) y se reemplazan por los de su país; el resto del
 // guion (apertura, datos, cierre) sigue igual.
-function instruccionesPaisExtranjero(pais) {
+function preciosPais(pais) {
   const { nombre, mensual, hosting, dominio } = PAISES_GUION[pais];
+  return `Precios para ${nombre}: el sitio web de una página + 2 correos corporativos cuesta ${mensual}, sin permanencia. El hosting cuesta ${hosting}. El dominio ${dominio} lo paga el cliente directamente al inscribirlo; nosotros lo asesoramos sin costo. Todo lo que vaya más allá del ejemplo que le enviamos se cotiza aparte.`;
+}
+function instruccionesPaisExtranjero(pais) {
+  const { nombre } = PAISES_GUION[pais];
   return `
 
 PERSONA DE ${nombre.toUpperCase()} (su WhatsApp es de ${nombre}; esto tiene prioridad sobre el guion en lo que se contradiga):
 - Atiéndela igual que el guion (misma apertura, mismos datos, mismo cierre), pero pide "ciudad" en vez de "comuna".
-- Precios para ${nombre} (los ÚNICOS que puedes dar): el sitio web de una página + 2 correos corporativos cuesta ${mensual}, sin permanencia. El hosting cuesta ${hosting}. El dominio ${dominio} lo paga el cliente directamente al inscribirlo; nosotros lo asesoramos sin costo. Todo lo que vaya más allá del ejemplo que le enviamos se cotiza aparte. Da el precio tal cual (nunca "desde"), sin agregar impuestos, y retoma el guion.
-- NO menciones pesos chilenos, ni IVA, ni UF, ni pago anual, ni la promoción del hosting.
+- ${preciosPais(pais)} Son los ÚNICOS precios que puedes dar y SÍ los tienes: si pregunta el precio, el hosting o el dominio, respóndele con ellos tal cual (nunca "desde"), sin agregar impuestos y sin derivar, y retoma el guion.
+- NO menciones pesos chilenos, ni IVA, ni UF, ni pago anual, ni la promoción del hosting. Los correos y el sitio van con su propio dominio (${PAISES_GUION[pais].dominio} u otro), nunca digas ".cl".
 - Si pregunta si atienden en ${nombre}: sí, el servicio es 100% online.
 - No uses modismos chilenos.`;
 }
@@ -1320,7 +1324,13 @@ async function generarRespuestaInformativa({ empresa: empresaOriginal, historial
     ? {
       ...empresaOriginal,
       guionAtencion: guionSinPrecios(empresaOriginal.guionAtencion),
-      informacionAdicional: empresaOriginal.informacionAdicional && informacionSinPrecios(empresaOriginal.informacionAdicional),
+      // Los precios del país van DENTRO de la información: el prompt la declara la única
+      // fuente válida y manda derivar lo que no esté ahí (sin esto, en la prueba de
+      // staging del 2026-10-24 el bot derivaba a Perú en vez de darle S/ 39).
+      informacionAdicional: [
+        empresaOriginal.informacionAdicional && informacionSinPrecios(empresaOriginal.informacionAdicional),
+        preciosPais(pais),
+      ].filter(Boolean).join('\n'),
     }
     : empresaOriginal;
   const identidad = construirBloqueIdentidad(empresa).replace(
