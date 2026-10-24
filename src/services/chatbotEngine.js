@@ -227,7 +227,7 @@ async function procesarMensajeEntranteSinLock({ empresa, telefonoCliente, textoE
       respuestaInfo = `¡Hola! 👋 Bienvenido/a a ${nombreSaludo}. ¿En qué te puedo ayudar hoy?`;
     } else {
       const resultadoInfo = await generarRespuestaChatbot({
-        empresa, cliente, historial: historialPrevio, mensajeEntrante: textoEntrante, reservaEnCurso: null,
+        empresa, cliente, historial: historialPrevio, mensajeEntrante: textoEntrante, reservaEnCurso: null, canal,
       });
       respuestaInfo = resultadoInfo.texto;
       escaladoInfo = !!resultadoInfo.escaladoAHumano;
