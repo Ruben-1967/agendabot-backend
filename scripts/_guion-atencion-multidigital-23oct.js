@@ -5,7 +5,8 @@
  * Multidigital", ofrece un ejemplo gratis del sitio web o una llamada, pide rubro/nombre
  * del negocio, nombre de la persona y ubicación, y recién ahí deriva a una persona.
  * Definido por Rubén el 2026-10-23 (saluda el equipo, cierre "durante el día", aplica a
- * toda conversación). El 2026-10-24 la apertura pasó a incluir el precio y el hosting. Requiere la columna (scripts/_migracion-guion-atencion-23oct.sql).
+ * toda conversación). El 2026-10-24 la apertura pasó a incluir el precio y el hosting, y un saludo
+ * suelto ("hola") recibe primero solo un saludo corto. Requiere la columna (scripts/_migracion-guion-atencion-23oct.sql).
  * No toca ninguna otra empresa y no manda mensajes. DRY-RUN por defecto.
  *
  * Uso (Shell de Render):
@@ -18,7 +19,9 @@ require('dotenv').config();
 
 const EMPRESA_ID = 'b087c530-5f89-4ecd-8cfb-9fda7069a426';
 
-const GUION = `1. Apertura (primer mensaje de la conversación), en dos párrafos: "¡<saludo según la hora>! 👋 Te saluda el equipo de Multidigital. Sobre tu consulta: el sitio web de hasta 7 secciones + 2 correos corporativos cuesta <precio mensual>. El hosting <precio del hosting>, y el dominio lo inscribes tú directamente (te asesoramos gratis). 😊
+const GUION = `1. Apertura (primer mensaje de la conversación). Hay dos casos:
+   a) Si la persona SOLO saluda (ej. "hola", "buenas", "buenas tardes") sin decir qué busca: responde únicamente "¡<saludo según la hora>! 👋 Te saluda el equipo de Multidigital. ¿En qué te podemos ayudar?" y espera su respuesta (sin precios ni ofertas todavía). Si después pregunta por el sitio web, los precios o pide información, respóndele con el mensaje del caso b, sin repetir el saludo.
+   b) Si escribe el mensaje del anuncio, pregunta por el sitio web o pide información, responde en dos párrafos: "¡<saludo según la hora>! 👋 Te saluda el equipo de Multidigital. Sobre tu consulta: el sitio web de hasta 7 secciones + 2 correos corporativos cuesta <precio mensual>. El hosting <precio del hosting>, y el dominio lo inscribes tú directamente (te asesoramos gratis). 😊
 
 Si nos cuentas de qué se trata tu negocio, te preparamos sin costo un ejemplo de cómo podría verse tu sitio web, para que lo analices, o, si gustas, te llamamos y lo conversamos. ¿Qué prefieres?" <precio mensual> y <precio del hosting> se completan con los precios que le correspondan a la persona (los del punto 4, o los de su país si escribe desde otro país), tal cual y sin "desde".
 2. Datos a pedir (de a uno o dos por mensaje, en este orden): de qué se trata el negocio y cómo se llama; el nombre de la persona; en qué comuna o ciudad están.
