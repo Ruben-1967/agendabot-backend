@@ -27,6 +27,8 @@ const empresa = {
 const TEL_PERU = '51900000001';
 const TEL_COLOMBIA = '573000000001';
 const TEL_CHILE = '56900000001';
+const TEL_MEXICO = '525500000001';
+const TEL_MEXICO_ANTIGUO = '5215500000001';
 // "$9.900" sí, pero no "$39.900" (precio de Colombia).
 // "IVA" como palabra: si no, calza dentro de "deriva".
 const PRECIO_CHILENO = /\$\s?9\.900|95\.000|\bIVA\b|\bUF\b|31 de octubre|50\s?%/i;
@@ -88,6 +90,14 @@ async function main() {
   verificar('el saludo de Colombia da $39.900 COP y el hosting $149.000 COP', /39\.900/.test(r.texto) && /149\.000/.test(r.texto) && !PRECIO_CHILENO.test(r.texto), r.texto);
   ({ r } = await conversar(TEL_COLOMBIA, ['Hola', '¿Ustedes trabajan con clientes en Colombia?']));
   verificar('dice que sí, 100% online', /online|en l[ií]nea|remot/i.test(r.texto), r.texto);
+
+  console.log('\n4b) México: saludo del anuncio y "el sitio es mío"');
+  ({ r } = await conversar(TEL_MEXICO, ['¡Hola! Quiero más información sobre el sitio web + 2 correos.']));
+  verificar('el saludo de México da $299 MXN y el hosting $749 MXN, sin precios chilenos', /299/.test(r.texto) && /749/.test(r.texto) && /MXN/.test(r.texto) && !PRECIO_CHILENO.test(r.texto), r.texto);
+  ({ r } = await conversar(TEL_MEXICO, ['Hola', '¿El sitio queda a mi nombre o siempre es de ustedes?']));
+  verificar('dice que a los 12 meses el sitio es suyo', /12 meses/i.test(r.texto), r.texto);
+  ({ r } = await conversar(TEL_MEXICO_ANTIGUO, ['Hola', '¿Cuánto cuesta?']));
+  verificar('un número mexicano con 521 también es México', /299/.test(r.texto) && !PRECIO_CHILENO.test(r.texto), r.texto);
 
   console.log('\n5) Chile sigue igual: da el precio');
   ({ r } = await conversar(TEL_CHILE, ['Hola', '¿Cuánto cuesta?']));
