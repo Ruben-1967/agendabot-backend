@@ -1202,7 +1202,7 @@ const PAISES_GUION = {
   MX: {
     nombre: 'México', zonaHoraria: 'America/Mexico_City', celular: /^521?\d{10}$/,
     mensual: '$299 MXN al mes', hosting: '$749 MXN al año', dominio: '.mx o .com.mx',
-    extra: 'Incluye certificado SSL. A los 12 meses de servicio, el sitio pasa a ser del cliente.',
+    extra: 'Incluye certificado SSL. A los 12 meses de servicio, el sitio pasa a ser del cliente; si se da de baja antes de los 12 meses, el sitio sigue siendo de Multidigital.',
   },
 };
 function paisDesdeTelefono(telefono, canal = 'whatsapp') {
