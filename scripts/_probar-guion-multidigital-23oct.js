@@ -38,11 +38,11 @@ function verificar(descripcion, condicion, detalle) {
 }
 
 // Simula una conversación: devuelve la última respuesta y el historial completo.
-async function conversar(mensajes) {
+async function conversar(mensajes, ahora = new Date()) {
   const historial = [];
   let r;
   for (const m of mensajes) {
-    r = await generarRespuestaChatbot({ empresa, cliente, historial: [...historial], mensajeEntrante: m, reservaEnCurso: null });
+    r = await generarRespuestaChatbot({ empresa, cliente, historial: [...historial], mensajeEntrante: m, reservaEnCurso: null, ahora });
     console.log(`  > ${m}\n  < ${r.texto}${r.escaladoAHumano ? '  [DERIVA A PERSONA]' : ''}`);
     historial.push({ rol: 'usuario', contenido: m }, { rol: 'asistente', contenido: r.texto });
     if (r.escaladoAHumano) break;
@@ -103,6 +103,17 @@ async function main() {
   console.log('\n8) No le interesa');
   ({ r } = await conversar(['Hola', 'No, gracias, no me interesa']));
   verificar('agradece sin derivar ni insistir', !r.escaladoAHumano && !/ejemplo/i.test(r.texto), r.texto);
+
+  console.log('\n9) Pide que lo llamen un domingo (25-oct-2026, 15:00 de Chile)');
+  const dom = await conversar(['¡Hola! Quiero más información sobre el sitio web + 2 correos.', 'Llámenme ahora por favor',
+    'Soy Pedro, tengo un taller mecánico, Taller Rojas, en Rancagua', 'A las 11 de la mañana'], new Date('2026-10-25T15:00:00-03:00'));
+  const textoDom = dom.historial.filter((m) => m.rol === 'asistente').slice(1).map((m) => m.contenido).join(' ');
+  verificar('dice que lo llaman el lunes', /lunes/i.test(textoDom), textoDom);
+  verificar('el cierre dice "el lunes"', /lunes/i.test(dom.r.texto), dom.r.texto);
+
+  console.log('\n10) Feriado en día hábil (martes 8-dic-2026, 10:00)');
+  const feriado = await conversar(['Hola', 'Prefiero que me llamen'], new Date('2026-12-08T10:00:00-03:00'));
+  verificar('ofrece llamar el miércoles 9', /mi[eé]rcoles/i.test(feriado.r.texto) && /\b9\b/.test(feriado.r.texto), feriado.r.texto);
 
   console.log(fallas ? `\n❌ ${fallas} verificación(es) fallaron.` : '\n✅ Todas las verificaciones pasaron.');
   process.exitCode = fallas ? 1 : 0;
