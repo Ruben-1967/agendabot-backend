@@ -550,7 +550,7 @@ app.post('/webhook/whatsapp', verificarFirmaWebhookWhatsApp, async (req, res) =>
             await prisma.fallaEnvioWhatsApp.create({
               data: {
                 empresaId: empresaEstado.id,
-                telefono: estado.recipient_id || '',
+                telefono: estado.recipient_id || estado.recipient_user_id || '',
                 wamid: estado.id || null,
                 errorCodigo: primerError?.code || null,
                 errorMensaje: primerError?.title || null,
@@ -587,7 +587,9 @@ app.post('/webhook/whatsapp', verificarFirmaWebhookWhatsApp, async (req, res) =>
 
       if (eco && phoneNumberIdEco) {
         const empresaEco = await prisma.empresa.findFirst({ where: { whatsappNumeroId: phoneNumberIdEco } });
-        const telefonoClienteEco = eco.to; // destinatario del echo = cliente (eco.from es el número propio del negocio)
+        // destinatario del echo = cliente (eco.from es el número propio del negocio). Si el
+        // cliente oculta su número con nombre de usuario, Meta manda solo to_user_id (BSUID).
+        const telefonoClienteEco = eco.to || eco.to_user_id;
 
         if (empresaEco && telefonoClienteEco) {
           const clienteEco = await prisma.cliente.findFirst({
@@ -667,7 +669,10 @@ app.post('/webhook/whatsapp', verificarFirmaWebhookWhatsApp, async (req, res) =>
     }
 
     const phoneNumberId = value.metadata?.phone_number_id;
-    const telefonoCliente = mensaje.from; // ej. "56912345678"
+    // ej. "56912345678". Si el cliente usa nombre de usuario de WhatsApp y oculta su
+    // número, Meta omite "from" y manda solo from_user_id (BSUID, ej. "CO.2549034048909580"):
+    // ese id pasa a ser su identificador acá, y los envíos usan "recipient" (whatsapp.js).
+    const telefonoCliente = mensaje.from || mensaje.from_user_id;
     const nombreContacto = value.contacts?.[0]?.profile?.name || null;
 
     // ------------------------------------------------------------

@@ -12,6 +12,7 @@
 
 const prisma = require('./prisma');
 const { EMPRESA_ID_CLIENTES_WEB } = require('./leadClienteWeb');
+const { esIdUsuarioWhatsApp } = require('../services/whatsapp');
 
 const ETAPAS_CLIENTE_WEB_QUE_SILENCIAN = ['EJEMPLO_ENVIADO', 'EN_ESPERA', 'ABONO', 'ACTIVO'];
 
@@ -28,7 +29,10 @@ async function motivoBotSilenciado({ empresaId, telefono, canal = 'whatsapp', co
   if (conversacion?.botSilenciadoEn) return 'MANUAL';
   if (empresaId !== EMPRESA_ID_CLIENTES_WEB || canal !== 'whatsapp' || !telefono) return null;
   const clienteWeb = await prisma.clienteWeb.findFirst({
-    where: { telefono: String(telefono).replace(/\D/g, ''), etapa: { in: ETAPAS_CLIENTE_WEB_QUE_SILENCIAN } },
+    where: {
+      telefono: esIdUsuarioWhatsApp(telefono) ? String(telefono) : String(telefono).replace(/\D/g, ''),
+      etapa: { in: ETAPAS_CLIENTE_WEB_QUE_SILENCIAN },
+    },
     select: { id: true },
   });
   return clienteWeb ? 'CLIENTE_WEB' : null;

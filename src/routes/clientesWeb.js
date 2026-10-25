@@ -17,6 +17,7 @@ const router = express.Router();
 const prisma = require('../lib/prisma');
 const { requireAuth, requireRolVendedorAdmin } = require('../middleware/auth');
 const { crearLinkSuscripcionWeb, urlSuscripcionWeb } = require('../lib/linkSuscripcionWeb');
+const { esIdUsuarioWhatsApp } = require('../services/whatsapp');
 
 const ETAPAS = ['INTERESADO', 'EJEMPLO_ENVIADO', 'EN_ESPERA', 'ABONO', 'ACTIVO', 'BAJA'];
 const CONCEPTOS = ['MENSUALIDAD', 'ANUALIDAD', 'HOSTING', 'DOMINIO', 'CAMBIO', 'CORREO_EXTRA', 'OTRO'];
@@ -29,6 +30,8 @@ router.use(requireAuth, requireRolVendedorAdmin);
 // Teléfono a solo dígitos con código de país, igual que lo guarda el bot
 // ("912345678" -> "56912345678"), para que la misma persona no quede en dos fichas.
 function soloDigitos(t) {
+  // Id de WhatsApp de quien oculta su número (BSUID, ej. "CO.2549034048909580"): tal cual.
+  if (esIdUsuarioWhatsApp(t)) return String(t);
   const d = t ? String(t).replace(/\D/g, '') : '';
   if (!d) return null;
   return /^9\d{8}$/.test(d) ? `56${d}` : d;
