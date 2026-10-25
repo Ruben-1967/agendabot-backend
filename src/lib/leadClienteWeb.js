@@ -6,6 +6,7 @@
 
 const prisma = require('./prisma');
 const { extraerDatosLeadWeb } = require('../services/claude');
+const { esIdUsuarioWhatsApp } = require('../services/whatsapp');
 
 // Empresa cuyos interesados alimentan el panel (Multidigital, la del WhatsApp de anuncios).
 const EMPRESA_ID_CLIENTES_WEB = process.env.EMPRESA_ID_CLIENTES_WEB || 'b087c530-5f89-4ecd-8cfb-9fda7069a426';
@@ -30,7 +31,9 @@ async function registrarLeadDesdeBot({ empresa, telefono, canal, mensajes }) {
   try {
     if (!correspondeRegistrarLead(empresa)) return;
     const datos = await extraerDatosLeadWeb(mensajes);
-    const telefonoWhatsApp = canal === 'whatsapp' ? String(telefono).replace(/\D/g, '') : null;
+    // Con nombre de usuario de WhatsApp no hay teléfono: se guarda su id (BSUID) tal cual.
+    const telefonoWhatsApp = canal !== 'whatsapp' ? null
+      : esIdUsuarioWhatsApp(telefono) ? String(telefono) : String(telefono).replace(/\D/g, '');
     const preferencia = ['EJEMPLO', 'LLAMADA'].includes(datos.preferencia) ? datos.preferencia : null;
     const notaCanal = canal !== 'whatsapp' ? `Llegó por ${canal} (id ${telefono}).` : null;
     const campos = {

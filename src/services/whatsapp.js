@@ -39,6 +39,18 @@ async function obtenerCalidadWhatsApp(phoneNumberId, accessToken) {
   };
 }
 
+// Usuarios con nombre de usuario de WhatsApp que ocultan su número (2026): Meta ya no
+// manda el teléfono ("from"), sino un identificador por negocio (BSUID), ej.
+// "CO.2549034048909580" -- dos letras de país, punto y el id. A esos se les escribe
+// con "recipient" en vez de "to" (ver documentación "Business-scoped user IDs").
+// Caso real: interesado de Colombia @ldvega9, 2026-10-24, el bot no le respondió.
+function esIdUsuarioWhatsApp(destino) {
+  return /^[A-Z]{2}\.[A-Za-z0-9.]+$/.test(String(destino || ''));
+}
+function destinatario(destino) {
+  return esIdUsuarioWhatsApp(destino) ? { recipient: destino } : { to: destino };
+}
+
 /**
  * Envía un mensaje de texto simple por WhatsApp.
  *
@@ -59,7 +71,7 @@ async function sendWhatsAppTextMessage({ phoneNumberId, to, text, accessToken })
     },
     body: JSON.stringify({
       messaging_product: 'whatsapp',
-      to,
+      ...destinatario(to),
       type: 'text',
       text: { body: text },
     }),
@@ -123,7 +135,7 @@ async function sendWhatsAppTemplateMessage({ phoneNumberId, to, accessToken, tem
     },
     body: JSON.stringify({
       messaging_product: 'whatsapp',
-      to,
+      ...destinatario(to),
       type: 'template',
       template: {
         name: templateName,
@@ -172,7 +184,7 @@ async function sendWhatsAppImageMessage({ phoneNumberId, to, accessToken, imageU
     },
     body: JSON.stringify({
       messaging_product: 'whatsapp',
-      to,
+      ...destinatario(to),
       type: 'image',
       image,
     }),
@@ -277,7 +289,7 @@ async function sendWhatsAppInteractiveList({
     },
     body: JSON.stringify({
       messaging_product: 'whatsapp',
-      to,
+      ...destinatario(to),
       type: 'interactive',
       interactive,
     }),
@@ -350,7 +362,7 @@ async function sendWhatsAppReplyButtons({
     },
     body: JSON.stringify({
       messaging_product: 'whatsapp',
-      to,
+      ...destinatario(to),
       type: 'interactive',
       interactive,
     }),
@@ -534,6 +546,7 @@ function decodificarBotonCategoriaGenerica(id) {
 }
 
 module.exports = {
+  esIdUsuarioWhatsApp,
   MAX_FILAS_LISTA_INTERACTIVA,
   obtenerCalidadWhatsApp,
   sendWhatsAppTextMessage,

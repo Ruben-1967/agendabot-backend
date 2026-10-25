@@ -1199,6 +1199,10 @@ const PAISES_GUION = {
 };
 function paisDesdeTelefono(telefono, canal = 'whatsapp') {
   if (canal !== 'whatsapp' || !telefono) return null;
+  // Quien oculta su número con nombre de usuario llega con un id de WhatsApp que parte
+  // con el país, ej. "CO.2549034048909580" (ver esIdUsuarioWhatsApp en whatsapp.js).
+  const paisId = /^(PE|CO)\.[A-Za-z0-9.]+$/.exec(String(telefono));
+  if (paisId) return paisId[1];
   const d = String(telefono).replace(/\D/g, '');
   if (/^519\d{8}$/.test(d)) return 'PE';
   if (/^573\d{9}$/.test(d)) return 'CO';
