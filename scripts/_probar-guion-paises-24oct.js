@@ -97,6 +97,8 @@ async function main() {
   verificar('el saludo de México da $299 MXN y el hosting $749 MXN, sin precios chilenos', /299/.test(r.texto) && /749/.test(r.texto) && /MXN/.test(r.texto) && !PRECIO_CHILENO.test(r.texto), r.texto);
   ({ r } = await conversar(TEL_MEXICO, ['Hola', '¿El sitio queda a mi nombre o siempre es de ustedes?']));
   verificar('dice que a los 12 meses el sitio es suyo', /12 meses/i.test(r.texto), r.texto);
+  ({ r } = await conversar(TEL_MEXICO, ['Hola', 'Necesito que mi negocio aparezca en Google']));
+  verificar('México: Google incluido sin costo (Maps), sin prometer el primer lugar', /Google/.test(r.texto) && /Maps|Perfil de Empresa/i.test(r.texto) && /(sin costo|incluid|gratis)/i.test(r.texto) && !/primer lugar garantizado|garantiza(mos)? el primer/i.test(r.texto), r.texto);
   ({ r } = await conversar(TEL_MEXICO_ANTIGUO, ['Hola', '¿Cuánto cuesta?']));
   verificar('un número mexicano con 521 también es México', /299/.test(r.texto) && !PRECIO_CHILENO.test(r.texto), r.texto);
 

@@ -1202,7 +1202,7 @@ const PAISES_GUION = {
   MX: {
     nombre: 'México', zonaHoraria: 'America/Mexico_City', celular: /^521?\d{10}$/,
     mensual: '$299 MXN al mes', hosting: '$749 MXN al año', dominio: '.mx o .com.mx',
-    extra: 'Incluye certificado SSL. A los 12 meses de servicio, el sitio pasa a ser del cliente; si se da de baja antes de los 12 meses, el sitio sigue siendo de Multidigital.',
+    extra: 'Incluye certificado SSL. A los 12 meses de servicio, el sitio pasa a ser del cliente; si se da de baja antes de los 12 meses, el sitio sigue siendo de Multidigital. Presencia en Google incluida sin costo: registramos el sitio en Google con textos pensados para que lo encuentren en su ciudad, y le creamos su ficha de Google Maps (Perfil de Empresa: dirección, horario, fotos y botón de WhatsApp). Nunca prometas el primer lugar en Google: sí que lo encuentren, y que posicionarse bien toma algunas semanas. Google Ads (publicidad pagada) se cotiza aparte.',
   },
 };
 function paisDesdeTelefono(telefono, canal = 'whatsapp') {
