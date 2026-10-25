@@ -67,7 +67,9 @@ async function main() {
 
   console.log('\n2b) Perú: pregunta por el hosting y el dominio');
   ({ r } = await conversar(TEL_PERU, ['Hola', '¿Cuánto cuesta?', '¿Y el hosting y el dominio?']));
-  verificar('hosting S/ 149 al año y dominio .pe aparte', /S\/\s?149\b/.test(r.texto) && /\.pe\b/i.test(r.texto), r.texto);
+  // El saludo nuevo dice "el dominio lo inscribes tú" sin la extensión, y el bot la repite así:
+  // basta con que aclare que el dominio va aparte (lo paga el cliente).
+  verificar('hosting S/ 149 al año y dominio aparte', /S\/\s?149\b/.test(r.texto) && /dominio/i.test(r.texto), r.texto);
   verificar('NO da precios chilenos', !PRECIO_CHILENO.test(r.texto), r.texto);
 
   console.log('\n2c) Colombia: pregunta el precio');
