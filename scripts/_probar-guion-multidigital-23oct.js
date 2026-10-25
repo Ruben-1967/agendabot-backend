@@ -58,6 +58,7 @@ async function main() {
   let { r } = await conversar(['Hola']);
   verificar(`abre con "${saludo}" y como el equipo de Multidigital`, r.texto.includes(saludo) && /equipo de Multidigital/i.test(r.texto), r.texto);
   verificar('ofrece ejemplo sin costo o llamada', /ejemplo/i.test(r.texto) && /llam/i.test(r.texto), r.texto);
+  verificar('el saludo ya da el precio ($9.900 + IVA) y el hosting', /9\.900/.test(r.texto) && /IVA/i.test(r.texto) && /hosting/i.test(r.texto), r.texto);
   verificar('NO muestra el catálogo', !CATALOGO.test(r.texto), r.texto);
   verificar('no deriva todavía', !r.escaladoAHumano, '');
 
