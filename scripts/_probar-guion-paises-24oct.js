@@ -57,6 +57,7 @@ async function main() {
   let { r } = await conversar(TEL_PERU, ['Hola']);
   const saludoLima = saludoSegunHoraChile(new Date(), 'America/Lima');
   verificar(`abre con "${saludoLima}" y ofrece ejemplo o llamada`, r.texto.includes(saludoLima) && /ejemplo/i.test(r.texto), r.texto);
+  verificar('el saludo ya da S/ 39 y el hosting S/ 149, sin precios chilenos', /S\/\s?39\b/.test(r.texto) && /S\/\s?149\b/.test(r.texto) && !PRECIO_CHILENO.test(r.texto), r.texto);
 
   console.log('\n2) Perú: pregunta el precio');
   ({ r } = await conversar(TEL_PERU, ['Hola', '¿Cuánto cuesta?']));
@@ -81,6 +82,8 @@ async function main() {
     !col.historial.some((m) => m.rol === 'asistente' && (/comuna/i.test(m.contenido) || PRECIO_CHILENO.test(m.contenido))), '');
 
   console.log('\n4) Colombia: ¿atienden en Colombia?');
+  ({ r } = await conversar(TEL_COLOMBIA, ['Hola']));
+  verificar('el saludo de Colombia da $39.900 COP y el hosting $149.000 COP', /39\.900/.test(r.texto) && /149\.000/.test(r.texto) && !PRECIO_CHILENO.test(r.texto), r.texto);
   ({ r } = await conversar(TEL_COLOMBIA, ['Hola', '¿Ustedes trabajan con clientes en Colombia?']));
   verificar('dice que sí, 100% online', /online|en l[ií]nea|remot/i.test(r.texto), r.texto);
 
