@@ -69,6 +69,7 @@ async function main() {
   console.log('\n2b) Saluda y después pide información');
   ({ r } = await conversar(['Hola', 'Quiero información del sitio web']));
   verificar('ahí da la apertura con el precio y la oferta', /9\.900/.test(r.texto) && /ejemplo/i.test(r.texto), r.texto);
+  verificar('y no repite el saludo', !/^¡\s*Buen[oa]s/i.test(r.texto), r.texto);
 
   console.log('\n3) Camino del ejemplo, completo');
   ({ r } = await conversar(['¡Hola! Quiero más información sobre el sitio web + 2 correos.', 'El ejemplo', 'Es una peluquería, se llama Estilo Ana', 'Me llamo Ana y estamos en Puerto Montt']));

@@ -1366,6 +1366,24 @@ async function pedirCierreDelGuion(systemPrompt, herramientas, messages, conteni
   }
 }
 
+// Con guion, el saludo ("¡Buenas noches! 👋 Te saluda el equipo de X.") va solo en el
+// primer mensaje del bot. Si la persona saluda y después pregunta, el modelo igual lo
+// repetía al dar la apertura completa (prueba en staging, 2026-10-24), aunque el guion
+// dice que no: se quita del comienzo cuando el bot ya habló en esta conversación.
+const SALUDO_INICIAL = /^¡\s*Buen[oa]s\s+(días|tardes|noches)\s*!\s*(👋\s*)?(Te saluda el equipo de [^.!\n]+[.!]\s*)?/i;
+// Solo si el bot habló hace poco: alguien que vuelve a escribir días después sí recibe
+// el saludo de nuevo (es otra conversación para él).
+const HORAS_SIN_REPETIR_SALUDO = 6;
+function quitarSaludoRepetido(texto, historial) {
+  const ultimoDelBot = [...historial].reverse().find((m) => m.rol === 'asistente');
+  if (!texto || !ultimoDelBot) return texto;
+  const horasDesde = ultimoDelBot.timestamp ? (Date.now() - new Date(ultimoDelBot.timestamp).getTime()) / 3600000 : 0;
+  if (horasDesde > HORAS_SIN_REPETIR_SALUDO) return texto;
+  const sinSaludo = texto.replace(SALUDO_INICIAL, '');
+  if (!sinSaludo || sinSaludo === texto) return texto;
+  return sinSaludo.charAt(0).toUpperCase() + sinSaludo.slice(1);
+}
+
 async function generarRespuestaInformativa({ empresa: empresaOriginal, historial, mensajeEntrante, ahora = new Date(), pais: paisTelefono = null }) {
   // Solo con guion se distingue el país (ver paisDesdeTelefono).
   const pais = empresaOriginal.guionAtencion ? paisTelefono : null;
@@ -1446,7 +1464,7 @@ ${empresa.guionAtencion ? '' : 'Instrucciones:\n'}${instruccionesModoInformativo
     if (!traeCifraDelPais || pareceOfertaDeHumanoInventada(texto)) {
       texto = `El sitio web de una página + 2 correos corporativos cuesta ${mensual}, sin permanencia. El hosting cuesta ${hosting}, y el dominio ${dominio} lo pagas tú directamente al inscribirlo (te asesoramos sin costo). Todo lo que vaya más allá del ejemplo que te enviamos se cotiza aparte.\n\nCualquier otra duda, me cuentas 🙌`;
     }
-    return { texto, interactivo: null };
+    return { texto: empresa.guionAtencion ? quitarSaludoRepetido(texto, historial) : texto, interactivo: null };
   }
 
   // Con guion, al derivar se manda el cierre que escribió el modelo (con el nombre de
@@ -1488,7 +1506,10 @@ ${empresa.guionAtencion ? '' : 'Instrucciones:\n'}${instruccionesModoInformativo
       forzar = true;
       continue;
     }
-    return { texto: texto || 'Disculpa, ¿puedes repetir tu mensaje?', interactivo: null };
+    return {
+      texto: (empresa.guionAtencion ? quitarSaludoRepetido(texto, historial) : texto) || 'Disculpa, ¿puedes repetir tu mensaje?',
+      interactivo: null,
+    };
   }
   return { texto: (empresa.guionAtencion && textoPrevio) || CIERRE_POR_DEFECTO, interactivo: null, escaladoAHumano: true };
 }
