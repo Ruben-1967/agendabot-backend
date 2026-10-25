@@ -72,7 +72,10 @@ async function main() {
   verificar('y no repite el saludo', !/^¡\s*Buen[oa]s/i.test(r.texto), r.texto);
 
   console.log('\n3) Camino del ejemplo, completo');
-  ({ r } = await conversar(['¡Hola! Quiero más información sobre el sitio web + 2 correos.', 'El ejemplo', 'Es una peluquería, se llama Estilo Ana', 'Me llamo Ana y estamos en Puerto Montt']));
+  const ejemplo = await conversar(['¡Hola! Quiero más información sobre el sitio web + 2 correos.', 'El ejemplo', 'Es una peluquería, se llama Estilo Ana', 'Me llamo Ana y estamos en Puerto Montt']);
+  ({ r } = ejemplo);
+  const pidioLos4 = ejemplo.historial.find((m, i) => m.rol === 'asistente' && i > 1);
+  verificar('al elegir el ejemplo pide los 4 datos juntos', /4 datos|cuatro datos/i.test(pidioLos4?.contenido || '') && /ciudad/i.test(pidioLos4?.contenido || ''), pidioLos4?.contenido);
   verificar('al tener los datos deriva a una persona', r.escaladoAHumano === true, r.texto);
   verificar('cierre con el nombre y "durante el día"', /Ana/.test(r.texto) && /durante el d[ií]a/i.test(r.texto), r.texto);
 
