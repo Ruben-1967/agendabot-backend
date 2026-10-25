@@ -279,6 +279,21 @@ const NOMBRES_CATEGORIA_GENERICA = {
 // reales) también muestre y permita responder demos — sin tocar el motor
 // de demo (demoEngine.js) ni su propio historial (DemoAsignada.historialSimulacion).
 // ------------------------------------------------------------
+// Foto, video o documento con texto, o audio de voz -> texto para el bot (ver el filtro
+// de tipos en el webhook). null = se ignora como antes.
+function textoDeMensajeConMedio(mensaje) {
+  if (!mensaje) return null;
+  const NOMBRES = { image: 'fotos', video: 'un video', document: 'un documento' };
+  if (NOMBRES[mensaje.type]) {
+    const texto = (mensaje[mensaje.type]?.caption || '').trim();
+    return texto ? `[La persona envió ${NOMBRES[mensaje.type]} con este texto] ${texto}` : null;
+  }
+  if (mensaje.type === 'audio') {
+    return '[La persona envió un audio de voz, que no puedes escuchar: pídele amablemente que te lo escriba]';
+  }
+  return null;
+}
+
 function extraerTextoLegibleDeMensaje(mensaje) {
   if (mensaje.type === 'text') return mensaje.text?.body || '';
   if (mensaje.type === 'button') return mensaje.button?.text || '[botón]';
@@ -495,7 +510,7 @@ app.post('/webhook/whatsapp', verificarFirmaWebhookWhatsApp, async (req, res) =>
     const entry = req.body.entry?.[0];
     const change = entry?.changes?.[0];
     const value = change?.value;
-    const mensaje = value?.messages?.[0];
+    let mensaje = value?.messages?.[0];
 
     // Rastro de CADA mensaje entrante (sin teléfono ni texto del cliente):
     // antes un mensaje normal no dejaba ninguna línea en los logs, así que
@@ -650,6 +665,16 @@ app.post('/webhook/whatsapp', verificarFirmaWebhookWhatsApp, async (req, res) =>
     // selecciones de listas interactivas (usadas por el catálogo rotativo).
     // Ignoramos silenciosamente cualquier otro tipo (imágenes, ubicación,
     // confirmaciones de entrega/lectura, cambios de estado de cuenta, etc.).
+    //
+    // Excepción (2026-10-25, caso real de México: mandó 3 fotos de su local y en una
+    // escribió "Es imprenta de tesis, encuadernación..."): una foto, video o documento
+    // CON texto se procesa como texto, con una marca para que el bot sepa que vino
+    // con fotos. Un audio se procesa como aviso, para que el bot pida escribirlo. Las
+    // fotos sin texto se siguen ignorando (si no, un álbum de 3 fotos daba 3 respuestas).
+    const textoDeMedio = textoDeMensajeConMedio(mensaje);
+    if (textoDeMedio) {
+      mensaje = { ...mensaje, type: 'text', text: { body: textoDeMedio } };
+    }
     if (!mensaje || !['text', 'button', 'interactive'].includes(mensaje.type)) {
       return;
     }
