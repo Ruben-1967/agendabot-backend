@@ -532,7 +532,7 @@ app.post('/webhook/whatsapp', verificarFirmaWebhookWhatsApp, async (req, res) =>
           ? ` -- ERROR: ${estado.errors.map((e) => `[${e.code}] ${e.title}${e.message ? ': ' + e.message : ''}`).join('; ')}`
           : '';
         console.log(
-          `[WHATSAPP STATUS] destinatario=${estado.recipient_id} estado=${estado.status} ` +
+          `[WHATSAPP STATUS] destinatario=${estado.recipient_id || estado.recipient_user_id} estado=${estado.status} ` +
           `mensajeId=${estado.id}${errorInfo}`
         );
 

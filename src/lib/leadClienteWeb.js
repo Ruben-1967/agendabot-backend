@@ -69,7 +69,7 @@ async function registrarLeadDesdeBot({ empresa, telefono, canal, mensajes }) {
     const nuevo = await prisma.clienteWeb.create({
       data: {
         ...campos,
-        negocio: campos.negocio || (telefonoWhatsApp ? `Interesado +${telefonoWhatsApp}` : `Interesado (${canal})`),
+        negocio: campos.negocio || (telefonoWhatsApp ? `Interesado ${esIdUsuarioWhatsApp(telefonoWhatsApp) ? '' : '+'}${telefonoWhatsApp}` : `Interesado (${canal})`),
         telefono: telefonoWhatsApp,
         etapa: 'INTERESADO',
         origen: 'BOT',
