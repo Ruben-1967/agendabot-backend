@@ -57,22 +57,26 @@ async function main() {
   console.log('\n1) Saludo simple');
   let { r } = await conversar(['Hola']);
   verificar(`abre con "${saludo}" y como el equipo de Multidigital`, r.texto.includes(saludo) && /equipo de Multidigital/i.test(r.texto), r.texto);
-  verificar('ofrece ejemplo sin costo o llamada', /ejemplo/i.test(r.texto) && /llam/i.test(r.texto), r.texto);
-  verificar('el saludo ya da el precio ($9.900 + IVA) y el hosting', /9\.900/.test(r.texto) && /IVA/i.test(r.texto) && /hosting/i.test(r.texto), r.texto);
+  verificar('saludo corto: pregunta en qué puede ayudar, sin precios ni ofertas todavía', /ayudar/i.test(r.texto) && !/9\.900/.test(r.texto) && !/ejemplo/i.test(r.texto), r.texto);
   verificar('NO muestra el catálogo', !CATALOGO.test(r.texto), r.texto);
   verificar('no deriva todavía', !r.escaladoAHumano, '');
 
   console.log('\n2) Mensaje automático del anuncio');
   ({ r } = await conversar(['¡Hola! Quiero más información sobre el sitio web + 2 correos.']));
   verificar('responde con la apertura, sin catálogo', /ejemplo/i.test(r.texto) && !CATALOGO.test(r.texto), r.texto);
+  verificar('la apertura da el precio ($9.900 + IVA) y el hosting', /9\.900/.test(r.texto) && /IVA/i.test(r.texto) && /hosting/i.test(r.texto), r.texto);
+
+  console.log('\n2b) Saluda y después pide información');
+  ({ r } = await conversar(['Hola', 'Quiero información del sitio web']));
+  verificar('ahí da la apertura con el precio y la oferta', /9\.900/.test(r.texto) && /ejemplo/i.test(r.texto), r.texto);
 
   console.log('\n3) Camino del ejemplo, completo');
-  ({ r } = await conversar(['Hola', 'El ejemplo', 'Es una peluquería, se llama Estilo Ana', 'Me llamo Ana y estamos en Puerto Montt']));
+  ({ r } = await conversar(['¡Hola! Quiero más información sobre el sitio web + 2 correos.', 'El ejemplo', 'Es una peluquería, se llama Estilo Ana', 'Me llamo Ana y estamos en Puerto Montt']));
   verificar('al tener los datos deriva a una persona', r.escaladoAHumano === true, r.texto);
   verificar('cierre con el nombre y "durante el día"', /Ana/.test(r.texto) && /durante el d[ií]a/i.test(r.texto), r.texto);
 
   console.log('\n4) Camino de la llamada');
-  const llamada = await conversar(['Buenas', 'Prefiero que me llamen', 'Tengo un taller mecánico, Taller Rojas', 'Soy Pedro, de Rancagua', 'En la tarde, después de las 15:00']);
+  const llamada = await conversar(['¡Hola! Quiero más información sobre el sitio web + 2 correos.', 'Prefiero que me llamen', 'Tengo un taller mecánico, Taller Rojas', 'Soy Pedro, de Rancagua', 'En la tarde, después de las 15:00']);
   const pidioHorario = llamada.historial.some((m) => m.rol === 'asistente' && /horario|hora/i.test(m.contenido));
   verificar('pregunta en qué horario llamarlo', pidioHorario, '');
   verificar('termina derivando a una persona', llamada.r.escaladoAHumano === true, llamada.r.texto);

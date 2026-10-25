@@ -1285,7 +1285,7 @@ Saludo que corresponde a la hora actual ${pais ? `en ${PAISES_GUION[pais].nombre
 Fecha de hoy en Chile: ${new Intl.DateTimeFormat('es-CL', { timeZone: 'America/Santiago', day: 'numeric', month: 'long', year: 'numeric' }).format(ahora)}. Si una promoción del guion o de la información tiene una fecha de término que ya pasó, NO la menciones ni la ofrezcas.
 
 Instrucciones:
-- Si es el inicio de la conversación (aunque la persona solo salude o escriba un mensaje automático del anuncio), responde con la apertura del guion. NO muestres el catálogo completo de entrada.
+- Si es el inicio de la conversación (aunque la persona solo salude o escriba un mensaje automático del anuncio), responde con la apertura del guion (si el guion distingue un saludo suelto de una consulta, sigue esa distinción). NO muestres el catálogo completo de entrada.
 - Pide los datos del guion de a uno o dos por mensaje, nunca todos juntos como formulario. No vuelvas a pedir un dato que la persona ya dio.
 - Si en medio del guion hace una pregunta, respóndela corto con la información y retoma el guion.
 - Solo si pregunta explícitamente qué otros productos o servicios ofrecen, enuméralos de la información en una lista corta.

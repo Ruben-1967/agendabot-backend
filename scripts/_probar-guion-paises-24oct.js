@@ -54,7 +54,7 @@ async function main() {
   if (!process.env.ANTHROPIC_API_KEY) throw new Error('Falta ANTHROPIC_API_KEY en el entorno.');
 
   console.log('\n1) Perú: saludo con la hora de Lima');
-  let { r } = await conversar(TEL_PERU, ['Hola']);
+  let { r } = await conversar(TEL_PERU, ['¡Hola! Quiero más información sobre el sitio web + 2 correos.']);
   const saludoLima = saludoSegunHoraChile(new Date(), 'America/Lima');
   verificar(`abre con "${saludoLima}" y ofrece ejemplo o llamada`, r.texto.includes(saludoLima) && /ejemplo/i.test(r.texto), r.texto);
   verificar('el saludo ya da S/ 39 y el hosting S/ 149, sin precios chilenos', /S\/\s?39\b/.test(r.texto) && /S\/\s?149\b/.test(r.texto) && !PRECIO_CHILENO.test(r.texto), r.texto);
@@ -78,13 +78,13 @@ async function main() {
   verificar('NO da precios chilenos', !PRECIO_CHILENO.test(r.texto), r.texto);
 
   console.log('\n3) Colombia: camino del ejemplo, completo');
-  const col = await conversar(TEL_COLOMBIA, ['Buenas', 'El ejemplo', 'Tengo una panadería, se llama Pan de Yuca Doña Rosa', 'Soy Rosa, estamos en Medellín']);
+  const col = await conversar(TEL_COLOMBIA, ['¡Hola! Quiero más información sobre el sitio web + 2 correos.', 'El ejemplo', 'Tengo una panadería, se llama Pan de Yuca Doña Rosa', 'Soy Rosa, estamos en Medellín']);
   verificar('deriva a una persona con el cierre y su nombre', col.r.escaladoAHumano === true && /Rosa/.test(col.r.texto), col.r.texto);
   verificar('en toda la conversación no aparece "comuna" ni precios chilenos',
     !col.historial.some((m) => m.rol === 'asistente' && (/comuna/i.test(m.contenido) || PRECIO_CHILENO.test(m.contenido))), '');
 
   console.log('\n4) Colombia: ¿atienden en Colombia?');
-  ({ r } = await conversar(TEL_COLOMBIA, ['Hola']));
+  ({ r } = await conversar(TEL_COLOMBIA, ['¡Hola! Quiero más información sobre el sitio web + 2 correos.']));
   verificar('el saludo de Colombia da $39.900 COP y el hosting $149.000 COP', /39\.900/.test(r.texto) && /149\.000/.test(r.texto) && !PRECIO_CHILENO.test(r.texto), r.texto);
   ({ r } = await conversar(TEL_COLOMBIA, ['Hola', '¿Ustedes trabajan con clientes en Colombia?']));
   verificar('dice que sí, 100% online', /online|en l[ií]nea|remot/i.test(r.texto), r.texto);
