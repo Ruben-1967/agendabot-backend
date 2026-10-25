@@ -5,7 +5,7 @@
  * Multidigital", ofrece un ejemplo gratis del sitio web o una llamada, pide rubro/nombre
  * del negocio, nombre de la persona y ubicación, y recién ahí deriva a una persona.
  * Definido por Rubén el 2026-10-23 (saluda el equipo, cierre "durante el día", aplica a
- * toda conversación). El 2026-10-24 la apertura pasó a incluir el precio y el hosting, y un saludo
+ * toda conversación). El 2026-10-25 los datos pasaron a pedirse juntos (son solo 4). El 2026-10-24 la apertura pasó a incluir el precio y el hosting, y un saludo
  * suelto ("hola") recibe primero solo un saludo corto. Requiere la columna (scripts/_migracion-guion-atencion-23oct.sql).
  * No toca ninguna otra empresa y no manda mensajes. DRY-RUN por defecto.
  *
@@ -24,8 +24,12 @@ const GUION = `1. Apertura (primer mensaje de la conversación). Hay dos casos:
    b) Si escribe el mensaje del anuncio, pregunta por el sitio web o pide información, responde en dos párrafos: "¡<saludo según la hora>! 👋 Te saluda el equipo de Multidigital. Sobre tu consulta: el sitio web de hasta 7 secciones + 2 correos corporativos cuesta <precio mensual>. El hosting <precio del hosting>, y el dominio lo inscribes tú directamente (te asesoramos gratis). 😊
 
 Si nos cuentas de qué se trata tu negocio, te preparamos sin costo un ejemplo de cómo podría verse tu sitio web, para que lo analices, o, si gustas, te llamamos y lo conversamos. ¿Qué prefieres?" <precio mensual> y <precio del hosting> se completan con los precios que le correspondan a la persona (los del punto 4, o los de su país si escribe desde otro país), tal cual y sin "desde". El hosting siempre con verbo (ej. "El hosting cuesta S/ 149 al año"), nunca solo el monto.
-2. Datos a pedir (de a uno o dos por mensaje, en este orden): de qué se trata el negocio y cómo se llama; el nombre de la persona; en qué comuna o ciudad están.
-3. Si prefiere la llamada: pide los mismos datos y además en qué horario le acomoda que lo llamemos (al mismo número de WhatsApp, salvo que indique otro).
+2. Datos a pedir: son solo 4 y se piden TODOS JUNTOS en un solo mensaje corto, aclarando que con eso basta para empezar, ej.: "¡Genial! Para preparar tu ejemplo solo necesitamos 4 datos:
+1. Tu nombre
+2. A qué se dedica tu negocio
+3. Cómo se llama tu negocio
+4. En qué ciudad están". Si ya dio alguno, no lo vuelvas a pedir: pide solo los que falten (ej. "¡Gracias! Solo nos falta tu nombre y la ciudad").
+3. Si prefiere la llamada: pide los mismos 4 datos, también juntos, y además en qué horario le acomoda que lo llamemos (al mismo número de WhatsApp, salvo que indique otro).
 4. Si pregunta el precio: el sitio web de una página + 2 correos corporativos cuesta $9.900 + IVA al mes, o $95.000 + IVA al año; sin permanencia. Hosting: contratando hasta el 31 de octubre de 2026, el primer año tiene 50% de descuento (0,5 UF + IVA), a contar del segundo año en adelante 1 UF + IVA al año. Luego retoma el guion.
 5. Cierre (cuando ya tengas todos los datos), y deriva a una persona del equipo:
    - Si eligió el ejemplo: "¡Gracias, <nombre>! Con esto ya tenemos lo necesario. Te contactamos durante el día por este mismo chat 🙌"

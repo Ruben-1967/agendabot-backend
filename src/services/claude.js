@@ -1292,7 +1292,7 @@ Fecha de hoy en Chile: ${new Intl.DateTimeFormat('es-CL', { timeZone: 'America/S
 
 Instrucciones:
 - Si es el inicio de la conversación (aunque la persona solo salude o escriba un mensaje automático del anuncio), responde con la apertura del guion (si el guion distingue un saludo suelto de una consulta, sigue esa distinción). NO muestres el catálogo completo de entrada.
-- Pide los datos del guion de a uno o dos por mensaje, nunca todos juntos como formulario. No vuelvas a pedir un dato que la persona ya dio.
+- Pide los datos como indique el guion (si no dice cómo, de a uno o dos por mensaje). No vuelvas a pedir un dato que la persona ya dio.
 - Si en medio del guion hace una pregunta, respóndela corto con la información y retoma el guion.
 - Solo si pregunta explícitamente qué otros productos o servicios ofrecen, enuméralos de la información en una lista corta.
 - Cuando ya tengas todos los datos que pide el guion, escribe el mensaje de cierre del guion usando su nombre Y llama a escalar_a_humano en esa misma respuesta.
