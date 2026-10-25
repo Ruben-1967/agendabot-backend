@@ -661,11 +661,11 @@ ${JSON.stringify(reservaEnCurso || {}, null, 2)}`;
  * @param {Object|null} [params.reservaEnCurso] - Conversacion.reservaEnCurso, si existe -- usado SOLO para el fallback determinístico si el ciclo de reintentos se agota (paso 10 del fix estructural), nunca para decidir el flujo normal.
  * @returns {Promise<{texto: string, interactivo: Object|null}>}
  */
-async function generarRespuestaChatbotSinCorregirVoseo({ empresa, cliente, historial, mensajeEntrante, reservaEnCurso, canal }) {
+async function generarRespuestaChatbotSinCorregirVoseo({ empresa, cliente, historial, mensajeEntrante, reservaEnCurso, canal, ahora = new Date() }) {
   // Modo informativo (empresas que no agendan, ej. Multidigital): camino corto y
   // aparte, sin nada de la lógica de citas de más abajo. Ver generarRespuestaInformativa.
   if (empresa.modoInformativo) {
-    return generarRespuestaInformativa({ empresa, historial, mensajeEntrante, pais: paisDesdeTelefono(cliente?.telefono, canal) });
+    return generarRespuestaInformativa({ empresa, historial, mensajeEntrante, ahora, pais: paisDesdeTelefono(cliente?.telefono, canal) });
   }
 
   // Preferimos los Servicio reales que la empresa cargó en el panel de
@@ -1259,6 +1259,43 @@ function informacionSinPrecios(info) {
     .join('\n');
 }
 
+// Llamadas del guion (2026-10-25, pedido de Rubén): no se llama el sábado desde las 14:00,
+// el domingo ni los feriados de Chile; si piden que los llamen, se les ofrece el próximo
+// día hábil. Feriados nacionales (Dirección del Trabajo); los móviles de 2027 calculados
+// según la ley de traslados -- revisar la lista cada fin de año.
+const FERIADOS_CHILE = new Set([
+  '2026-01-01', '2026-04-03', '2026-04-04', '2026-05-01', '2026-05-21', '2026-06-21', '2026-06-29',
+  '2026-07-16', '2026-08-15', '2026-09-18', '2026-09-19', '2026-10-12', '2026-10-31', '2026-11-01',
+  '2026-12-08', '2026-12-25',
+  '2027-01-01', '2027-03-26', '2027-03-27', '2027-05-01', '2027-05-21', '2027-06-21', '2027-06-28',
+  '2027-07-16', '2027-08-15', '2027-09-17', '2027-09-18', '2027-09-19', '2027-10-11', '2027-10-31',
+  '2027-11-01', '2027-12-08', '2027-12-25',
+]);
+const HORA_FIN_LLAMADAS_SABADO = 14;
+function partesFechaChile(fecha) {
+  const p = Object.fromEntries(new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Santiago', year: 'numeric', month: '2-digit', day: '2-digit', hour: 'numeric', hourCycle: 'h23', weekday: 'short',
+  }).formatToParts(fecha).map((x) => [x.type, x.value]));
+  return { iso: `${p.year}-${p.month}-${p.day}`, hora: Number(p.hour), diaSemana: p.weekday };
+}
+// null = hoy sí se llama. Si no, { motivo, proximoDia: "el lunes 26 de octubre" }.
+function llamadasFueraDeHorario(ahora = new Date()) {
+  const hoy = partesFechaChile(ahora);
+  let motivo = null;
+  if (FERIADOS_CHILE.has(hoy.iso)) motivo = 'es feriado en Chile';
+  else if (hoy.diaSemana === 'Sun') motivo = 'es domingo';
+  else if (hoy.diaSemana === 'Sat' && hoy.hora >= HORA_FIN_LLAMADAS_SABADO) motivo = 'es sábado en la tarde';
+  if (!motivo) return null;
+  for (let i = 1; i <= 10; i++) {
+    const dia = new Date(ahora.getTime() + i * 86400000);
+    const p = partesFechaChile(dia);
+    if (p.diaSemana === 'Sat' || p.diaSemana === 'Sun' || FERIADOS_CHILE.has(p.iso)) continue;
+    const texto = new Intl.DateTimeFormat('es-CL', { timeZone: 'America/Santiago', weekday: 'long', day: 'numeric', month: 'long' }).format(dia);
+    return { motivo, proximoDia: `el ${texto.replace(',', '')}` };
+  }
+  return { motivo, proximoDia: 'el próximo día hábil' };
+}
+
 // Instrucciones del modo informativo. Con guionAtencion, el guion manda: no se parte
 // mostrando el catálogo y se piden los datos que el guion indique antes de derivar.
 function instruccionesModoInformativo(empresa, ahora, pais = null) {
@@ -1288,7 +1325,11 @@ function instruccionesModoInformativo(empresa, ahora, pais = null) {
 ${empresa.guionAtencion}
 
 Saludo que corresponde a la hora actual ${pais ? `en ${PAISES_GUION[pais].nombre}` : 'en Chile'}: "${saludoSegunHoraChile(ahora, pais ? PAISES_GUION[pais].zonaHoraria : undefined)}". Úsalo tal cual en tu primer mensaje de la conversación (no lo repitas después).
-Fecha de hoy en Chile: ${new Intl.DateTimeFormat('es-CL', { timeZone: 'America/Santiago', day: 'numeric', month: 'long', year: 'numeric' }).format(ahora)}. Si una promoción del guion o de la información tiene una fecha de término que ya pasó, NO la menciones ni la ofrezcas.
+Fecha de hoy en Chile: ${new Intl.DateTimeFormat('es-CL', { timeZone: 'America/Santiago', day: 'numeric', month: 'long', year: 'numeric' }).format(ahora)}. Si una promoción del guion o de la información tiene una fecha de término que ya pasó, NO la menciones ni la ofrezcas.${(() => {
+  const fuera = llamadasFueraDeHorario(ahora);
+  return fuera ? `
+LLAMADAS: hoy no hacemos llamadas (${fuera.motivo}). Si la persona elige la llamada o pide que la llamen, dile que la llamamos ${fuera.proximoDia} y pregúntale en qué horario de ese día le acomoda. En el cierre de la llamada di "Te llamamos ${fuera.proximoDia} en el horario que nos indicaste" en vez de solo "en el horario que nos indicaste". Nunca prometas llamar hoy.` : '';
+})()}
 
 Instrucciones:
 - Si es el inicio de la conversación (aunque la persona solo salude o escriba un mensaje automático del anuncio), responde con la apertura del guion (si el guion distingue un saludo suelto de una consulta, sigue esa distinción). NO muestres el catálogo completo de entrada.
@@ -1602,4 +1643,5 @@ module.exports = {
   saludoSegunHoraChile,
   extraerDatosLeadWeb,
   paisDesdeTelefono,
+  llamadasFueraDeHorario,
 };
