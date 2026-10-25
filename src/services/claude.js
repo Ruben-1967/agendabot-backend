@@ -1390,6 +1390,16 @@ function quitarSaludoRepetido(texto, historial) {
   return sinSaludo.charAt(0).toUpperCase() + sinSaludo.slice(1);
 }
 
+// Personas de otro país: el WhatsApp es chileno (+56) y muchos dejaban de responder tras
+// la apertura (Rubén, 2026-10-25). La apertura con precios ("Sobre tu consulta: ...")
+// se presenta antes como empresa chilena que trabaja para toda Latinoamérica. Se agrega
+// en el código (no en el prompt) para que salga siempre igual.
+function agregarPresentacionPais(texto, pais) {
+  if (!texto || !pais || /chilena/i.test(texto) || !/Sobre tu consulta/i.test(texto)) return texto;
+  const { nombre } = PAISES_GUION[pais];
+  return texto.replace(/Sobre tu consulta/i, `Somos una empresa chilena que crea sitios web para toda Latinoamérica, 100% online, con precios especiales para ${nombre}. Sobre tu consulta`);
+}
+
 async function generarRespuestaInformativa({ empresa: empresaOriginal, historial, mensajeEntrante, ahora = new Date(), pais: paisTelefono = null }) {
   // Solo con guion se distingue el país (ver paisDesdeTelefono).
   const pais = empresaOriginal.guionAtencion ? paisTelefono : null;
@@ -1470,7 +1480,7 @@ ${empresa.guionAtencion ? '' : 'Instrucciones:\n'}${instruccionesModoInformativo
     if (!traeCifraDelPais || pareceOfertaDeHumanoInventada(texto)) {
       texto = `El sitio web de una página + 2 correos corporativos cuesta ${mensual}, sin permanencia. El hosting cuesta ${hosting}, y el dominio ${dominio} lo pagas tú directamente al inscribirlo (te asesoramos sin costo). Todo lo que vaya más allá del ejemplo que te enviamos se cotiza aparte.\n\nCualquier otra duda, me cuentas 🙌`;
     }
-    return { texto: empresa.guionAtencion ? quitarSaludoRepetido(texto, historial) : texto, interactivo: null };
+    return { texto: empresa.guionAtencion ? agregarPresentacionPais(quitarSaludoRepetido(texto, historial), pais) : texto, interactivo: null };
   }
 
   // Con guion, al derivar se manda el cierre que escribió el modelo (con el nombre de
@@ -1513,7 +1523,7 @@ ${empresa.guionAtencion ? '' : 'Instrucciones:\n'}${instruccionesModoInformativo
       continue;
     }
     return {
-      texto: (empresa.guionAtencion ? quitarSaludoRepetido(texto, historial) : texto) || 'Disculpa, ¿puedes repetir tu mensaje?',
+      texto: (empresa.guionAtencion ? agregarPresentacionPais(quitarSaludoRepetido(texto, historial), pais) : texto) || 'Disculpa, ¿puedes repetir tu mensaje?',
       interactivo: null,
     };
   }

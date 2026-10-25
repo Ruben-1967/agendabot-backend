@@ -87,6 +87,7 @@ async function main() {
 
   console.log('\n4) Colombia: ¿atienden en Colombia?');
   ({ r } = await conversar(TEL_COLOMBIA, ['¡Hola! Quiero más información sobre el sitio web + 2 correos.']));
+  verificar('se presenta como empresa chilena que trabaja para Latinoamérica', /empresa chilena/i.test(r.texto) && /Latinoam[ée]rica/i.test(r.texto) && /Colombia/.test(r.texto), r.texto);
   verificar('el saludo de Colombia da $39.900 COP y el hosting $149.000 COP', /39\.900/.test(r.texto) && /149\.000/.test(r.texto) && !PRECIO_CHILENO.test(r.texto), r.texto);
   ({ r } = await conversar(TEL_COLOMBIA, ['Hola', '¿Ustedes trabajan con clientes en Colombia?']));
   verificar('dice que sí, 100% online', /online|en l[ií]nea|remot/i.test(r.texto), r.texto);
@@ -102,6 +103,7 @@ async function main() {
   console.log('\n5) Chile sigue igual: da el precio');
   ({ r } = await conversar(TEL_CHILE, ['Hola', '¿Cuánto cuesta?']));
   verificar('da $9.900 + IVA', /9\.900/.test(r.texto) && /IVA/i.test(r.texto), r.texto);
+  verificar('a Chile no le dice "empresa chilena"', !/empresa chilena/i.test(r.texto), r.texto);
 
   console.log(fallas ? `\n❌ ${fallas} verificación(es) fallaron.` : '\n✅ Todas las verificaciones pasaron.');
   process.exitCode = fallas ? 1 : 0;
