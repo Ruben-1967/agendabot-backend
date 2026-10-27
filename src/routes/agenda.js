@@ -34,6 +34,7 @@ const { obtenerHorariosDisponibles, obtenerHorarioDelDia, esConflictoDeHorario }
 // campo DIRECTO, no cuando llega anidado dentro de un include de OTRO
 // modelo (ej. cita.cliente.rut). Ver lib/cifrado.js para el detalle.
 const { descifrarSiCorresponde } = require('../lib/cifrado');
+const { elegirClientePorTelefono } = require('../lib/clientePorTelefono');
 const { traducirErrorWhatsApp } = require('../lib/erroresWhatsApp');
 
 const REGEX_HORA = /^([01]\d|2[0-3]):([0-5]\d)$/;
@@ -1476,7 +1477,12 @@ router.post('/citas', requireRole('ADMIN', 'RECEPCION'), async (req, res) => {
         const candidatosPorRut = await prisma.cliente.findMany({ where: { empresaId, rut: { not: null } } });
         cliente = candidatosPorRut.find((c) => c.rut === rut) || null;
       }
-      if (!cliente && telefono) cliente = await prisma.cliente.findFirst({ where: { empresaId, telefono } });
+      if (!cliente && telefono) {
+        // Varias personas pueden compartir teléfono: si el Cliente de ese
+        // teléfono es otra persona (otro RUT y otro nombre) se crea uno propio.
+        const candidatosPorTelefono = await prisma.cliente.findMany({ where: { empresaId, telefono }, orderBy: { creadoEn: 'asc' } });
+        cliente = elegirClientePorTelefono(candidatosPorTelefono, rut, clienteNuevo.nombre);
+      }
 
       if (!cliente) {
         cliente = await prisma.cliente.create({

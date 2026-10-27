@@ -140,8 +140,11 @@ function conOpcionesDelPipelineAgentico(reservaEnCurso, interactivo) {
  * @param {string|null} nombreContacto
  */
 async function buscarOCrearCliente(empresaId, telefonoWhatsApp, nombreContacto) {
+  // orderBy: varias personas pueden compartir teléfono (un Cliente por RUT,
+  // creados desde el panel); el bot siempre usa el primero, de forma estable.
   let cliente = await prisma.cliente.findFirst({
     where: { empresaId, telefono: telefonoWhatsApp },
+    orderBy: { creadoEn: 'asc' },
   });
   if (!cliente) {
     cliente = await prisma.cliente.create({
