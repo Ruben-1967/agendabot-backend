@@ -118,6 +118,7 @@ function renderSuscribir(sw, { error, valores = {}, cobroInicial = null } = {}) 
 ${error ? `<div class="error">${escapar(error)}</div>` : ''}
 
 <form method="post" id="form-suscribir">
+  ${cobroInicial ? `<input type="hidden" name="totalMostrado" value="${cobroInicial.total}">` : ''}
   <label class="campo" for="razonSocial">Nombre o razón social</label>
   <input type="text" id="razonSocial" name="razonSocial" required maxlength="150" value="${v('razonSocial')}">
 
@@ -173,7 +174,7 @@ function renderResultado(tipo, sw) {
   if (tipo === 'procesando') {
     return pagina('Procesando', `
 <h1>Estamos terminando de activar tu suscripción</h1>
-<p class="sub">Tu tarjeta ya quedó registrada y estamos procesando tu primer pago. Si en unos minutos no recibes la confirmación, escríbenos.</p>
+<p class="sub">Tu tarjeta ya quedó registrada${sw && sw.hostingAlRegistrar && !sw.fechaPrimerCobro ? ' y estamos procesando tu primer pago' : ''}. Si en unos minutos no recibes la confirmación, escríbenos.</p>
 <a class="wa" href="${enlaceWhatsapp('Hola Multidigital, registré mi tarjeta y quiero confirmar mi suscripción')}">Escribir por WhatsApp</a>`);
   }
   if (tipo === 'cancelada') {

@@ -48,4 +48,4 @@ function calcularCobroInicial({ montoPlanConIva, valorUf, fecha = new Date() }) 
   };
 }
 
-module.exports = { PRECIOS_NETOS_WEB, descuentoHostingPrimerAnio, calcularCobroInicial, TRAMOS_DESCUENTO_HOSTING_1ER_ANIO };
+module.exports = { PRECIOS_NETOS_WEB, descuentoHostingPrimerAnio, calcularCobroInicial, diaChileTexto, TRAMOS_DESCUENTO_HOSTING_1ER_ANIO };

@@ -37,7 +37,7 @@ const { renderSuscribir, renderResultado } = require('../services/suscripcionWeb
 const { registrarPagoFlowEnClienteWeb } = require('./clientesWeb');
 const crypto = require('crypto');
 const { obtenerValorUfHoy } = require('../lib/uf');
-const { calcularCobroInicial } = require('../lib/preciosWeb');
+const { calcularCobroInicial, diaChileTexto } = require('../lib/preciosWeb');
 const { sumarMeses } = require('../lib/linkSuscripcionWeb');
 
 // Va guardada en cada aceptación: si el contrato cambia, se sube la versión
@@ -125,11 +125,21 @@ function usaCobroInicial(sw) {
   return Boolean(sw.hostingAlRegistrar) && !sw.fechaPrimerCobro;
 }
 
-// Lo que se le muestra (y luego se cobra) hoy. null si no aplica o no se pudo leer la UF.
+// UF del día en memoria: cada GET público llamaría a SII/mindicador (hasta 2 x 10 s de timeout).
+let cacheUf = { dia: null, valor: null, hasta: 0 };
+async function valorUfConCache() {
+  const dia = diaChileTexto(new Date());
+  if (cacheUf.dia === dia && Date.now() < cacheUf.hasta) return cacheUf.valor;
+  const valor = await obtenerValorUfHoy();
+  cacheUf = { dia, valor, hasta: Date.now() + 30 * 60 * 1000 };
+  return valor;
+}
+
+// Lo que se le muestra hoy (y lo que se congela al aceptar). null si no aplica o no se pudo leer la UF.
 async function cobroInicialPara(sw) {
   if (!usaCobroInicial(sw)) return null;
   try {
-    return calcularCobroInicial({ montoPlanConIva: sw.montoConIva, valorUf: await obtenerValorUfHoy() });
+    return calcularCobroInicial({ montoPlanConIva: sw.montoConIva, valorUf: await valorUfConCache() });
   } catch (error) {
     console.error('[web] No se pudo calcular el cobro inicial (UF):', error.message);
     return null;
@@ -142,8 +152,11 @@ router.get('/suscribir/:ref', async (req, res) => {
     if (!sw) return res.status(404).send(renderResultado('no-encontrada'));
     const resultado = resultadoPorEstado(sw);
     if (resultado) return res.send(renderResultado(resultado, sw));
+    const cobroInicial = await cobroInicialPara(sw);
+    // Sin el valor de la UF no se puede mostrar el total: no se ofrece aceptar a ciegas.
+    if (usaCobroInicial(sw) && !cobroInicial) return res.status(503).send(renderResultado('error', sw));
     res.send(renderSuscribir(sw, {
-      cobroInicial: await cobroInicialPara(sw),
+      cobroInicial,
       valores: {
         razonSocial: sw.razonSocial, rut: sw.rut, domicilio: sw.domicilio,
         email: sw.emailAceptacion, nombreQuienAcepta: sw.nombreQuienAcepta,
@@ -165,11 +178,19 @@ router.post('/suscribir/:ref', async (req, res) => {
 
     const { datos, error } = validarDatos(req.body);
     const cobroInicial = await cobroInicialPara(sw);
-    if (error) return res.status(400).send(renderSuscribir(sw, { error, valores: req.body, cobroInicial }));
     // Sin el valor de la UF no se puede mostrar ni cobrar el hosting: mejor frenar
     // ahora que mandar al cliente a registrar su tarjeta.
     if (usaCobroInicial(sw) && !cobroInicial) {
-      return res.status(503).send(renderSuscribir(sw, { error: 'No pudimos calcular el valor del hosting en este momento. Intenta de nuevo en unos minutos.', valores: req.body }));
+      return res.status(503).send(renderResultado('error', sw));
+    }
+    if (error) return res.status(400).send(renderSuscribir(sw, { error, valores: req.body, cobroInicial }));
+    // El total que se cobra es el que el cliente vio al aceptar. Si cambió entre que abrió
+    // la página y aceptó (cambio de promoción o de UF), se le muestra el nuevo y acepta de nuevo.
+    if (cobroInicial && Number(req.body.totalMostrado) !== cobroInicial.total) {
+      return res.status(409).send(renderSuscribir(sw, {
+        error: 'El valor del primer pago cambió desde que abriste la página (promoción o valor de la UF). Revisa el nuevo total y vuelve a aceptar.',
+        valores: req.body, cobroInicial,
+      }));
     }
 
     // Registro legal de la aceptación (clickwrap). Si vuelve a aceptar (ej. no
@@ -188,6 +209,13 @@ router.post('/suscribir/:ref', async (req, res) => {
         fechaAceptacion: new Date(),
         ipAceptacion: req.ip,
         userAgentAceptacion: req.headers['user-agent'] || null,
+        // Se congela lo que el cliente aceptó pagar: el callback de la tarjeta cobra esto,
+        // aunque pasen horas o cambie la promoción.
+        ...(cobroInicial && {
+          montoPlanCollect: cobroInicial.montoPlan,
+          montoHostingCollect: cobroInicial.montoHosting,
+          descuentoHostingPct: Math.round(cobroInicial.descuento * 100),
+        }),
       },
     });
     sw = await prisma.suscripcionWeb.findUnique({ where: { id: sw.id } });
@@ -220,7 +248,11 @@ router.post('/suscribir/:ref', async (req, res) => {
 // Tarjeta ya registrada: un solo cobro con el plan + el hosting del primer año. Las
 // suscripciones recién se crean cuando Flow confirma ese cobro (/flow-webhook-collect).
 async function iniciarCobroInicial(sw, registro, res) {
-  const cobro = calcularCobroInicial({ montoPlanConIva: sw.montoConIva, valorUf: await obtenerValorUfHoy() });
+  // Lo congelado al aceptar (POST /suscribir): nunca se recalcula acá.
+  if (sw.montoPlanCollect == null || sw.montoHostingCollect == null) {
+    throw new Error(`Cobro inicial sin montos congelados para ${sw.id}`);
+  }
+  const cobro = { montoPlan: sw.montoPlanCollect, montoHosting: sw.montoHostingCollect, total: sw.montoPlanCollect + sw.montoHostingCollect };
   const orden = `wc_${crypto.randomBytes(16).toString('hex')}`; // Flow trunca commerceOrder a 45 caracteres
 
   // Solo una de las dos vueltas de Flow (GET y POST) llega a cobrar.
@@ -229,9 +261,6 @@ async function iniciarCobroInicial(sw, registro, res) {
     data: {
       estado: 'COBRANDO',
       ordenComercioCollectPendiente: orden,
-      montoPlanCollect: cobro.montoPlan,
-      montoHostingCollect: cobro.montoHosting,
-      descuentoHostingPct: Math.round(cobro.descuento * 100),
       tarjetaTipo: registro.creditCardType,
       tarjetaUltimos4: registro.last4CardDigits || null,
     },
@@ -365,6 +394,10 @@ router.post('/flow-callback-tarjeta', manejarCallbackTarjeta);
 
 // urlConfirmation del cobro inicial combinado. Llega solo { token }: el estado real
 // se consulta a Flow con una llamada nuestra y firmada (nunca se confía en el body).
+// Es REANUDABLE: todo fallo ANTES de que Flow cree algo revierte a COBRANDO y responde
+// 500 para que Flow reintente; un reintento retoma donde quedó (omite el plan si
+// flowSubscriptionId ya existe). Un error ambiguo (timeout) en una llamada a Flow nunca se
+// reintenta solo: podría duplicar la suscripción, así que se deja un log "REVISAR A MANO".
 router.post('/flow-webhook-collect', async (req, res) => {
   try {
     const token = req.body.token;
@@ -380,14 +413,14 @@ router.post('/flow-webhook-collect', async (req, res) => {
     const sw = await prisma.suscripcionWeb.findUnique({ where: { ordenComercioCollectPendiente: estadoFlow.comercioOrden } });
     if (!sw) {
       if (!exitoso) return res.status(200).send('OK'); // rechazo ya procesado o aviso repetido
-      console.error('[web/flow-webhook-collect] Cobro pagado sin SuscripcionWeb para', estadoFlow.comercioOrden);
+      console.error(`[web/flow-webhook-collect] REVISAR A MANO: cobro pagado ($${estadoFlow.monto}) sin SuscripcionWeb para ${estadoFlow.comercioOrden}`);
       return res.status(404).send('Suscripcion no encontrada');
     }
 
     if (!exitoso) {
       // Tarjeta rechazada u orden anulada: vuelve a ACEPTADA para que pueda reintentar desde el link.
       await prisma.suscripcionWeb.updateMany({ where: { id: sw.id, estado: 'COBRANDO' }, data: { estado: 'ACEPTADA', ordenComercioCollectPendiente: null } });
-      console.warn(`[web/flow-webhook-collect] Cobro inicial NO pagado (estado ${estadoFlow.estado}) para ${sw.razonSocial || sw.nombreCliente} (${sw.id})`);
+      console.warn(`[web/flow-webhook-collect] Cobro inicial NO pagado (estado ${estadoFlow.estado}) para ${sw.razonSocial || sw.nombreCliente} (${sw.id}); el cliente no recibe aviso, hay que contactarlo.`);
       return res.status(200).send('OK');
     }
 
@@ -398,56 +431,93 @@ router.post('/flow-webhook-collect', async (req, res) => {
     }
 
     const ahora = new Date();
+    // Mediodía de Chile del día de pago: base estable de los aniversarios (el instante UTC
+    // corría el cobro un día cuando se registraba de noche cerca de fin de mes).
+    const inicioContrato = sw.fechaInicioContrato || new Date(`${diaChileTexto(ahora)}T12:00:00-03:00`);
     const tomado = await prisma.suscripcionWeb.updateMany({
       where: { id: sw.id, estado: 'COBRANDO' },
-      data: { estado: 'ACTIVANDO', fechaInicioContrato: sw.fechaInicioContrato || ahora },
+      data: { estado: 'ACTIVANDO', fechaInicioContrato: inicioContrato },
     });
-    if (tomado.count === 0) return res.status(200).send('OK'); // aviso repetido: ya se procesó
-    const fechaInicio = sw.fechaInicioContrato || ahora;
+    if (tomado.count === 0) {
+      if (sw.estado !== 'ACTIVANDO' && sw.estado !== 'ACTIVA') {
+        console.error(`[web/flow-webhook-collect] REVISAR A MANO ${sw.id}: Flow cobró $${estadoFlow.monto} pero la suscripción está en estado ${sw.estado}.`);
+      }
+      return res.status(200).send('OK'); // aviso repetido: ya se procesó
+    }
+    const revertir = () => prisma.suscripcionWeb.updateMany({ where: { id: sw.id, estado: 'ACTIVANDO' }, data: { estado: 'COBRANDO' } });
     const fechaPago = estadoFlow.fechaPago && !isNaN(new Date(estadoFlow.fechaPago)) ? new Date(estadoFlow.fechaPago) : ahora;
 
-    // El dinero ya entró: se anota primero (idempotente por flowToken) y recién después
-    // se crean las suscripciones.
-    for (const [tipo, monto] of [['PLAN', sw.montoPlanCollect], ['HOSTING', sw.montoHostingCollect]]) {
-      if (!monto) continue;
-      try {
-        const pago = await prisma.pagoWeb.create({
-          data: { suscripcionWebId: sw.id, tipo, monto, estado: 'EXITOSO', flowToken: `${token}:${tipo}` },
-        });
-        await registrarPagoFlowEnClienteWeb({ suscripcionWebId: sw.id, pagoWebId: pago.id, tipo, monto, planSuscripcion: sw.plan, fecha: fechaPago });
-      } catch (errorPago) {
-        if (errorPago.code !== 'P2002') throw errorPago; // P2002: ya anotado en un intento anterior
+    // 1) El dinero ya entró: se anota primero (idempotente por flowToken). Si la BD falla acá,
+    // en Flow todavía no se creó nada: se revierte y Flow reintenta.
+    try {
+      for (const [tipo, monto] of [['PLAN', sw.montoPlanCollect], ['HOSTING', sw.montoHostingCollect]]) {
+        if (!monto) continue;
+        let pago;
+        try {
+          pago = await prisma.pagoWeb.create({
+            data: { suscripcionWebId: sw.id, tipo, monto, estado: 'EXITOSO', flowToken: `${token}:${tipo}` },
+          });
+        } catch (errorPago) {
+          if (errorPago.code !== 'P2002') throw errorPago;
+          pago = await prisma.pagoWeb.findUnique({ where: { flowToken: `${token}:${tipo}` } }); // ya anotado: se reintenta solo la ficha
+        }
+        if (pago) await registrarPagoFlowEnClienteWeb({ suscripcionWebId: sw.id, pagoWebId: pago.id, tipo, monto, planSuscripcion: sw.plan, fecha: fechaPago });
       }
+      await prisma.suscripcionWeb.update({ where: { id: sw.id }, data: { fechaUltimoPago: fechaPago } });
+    } catch (errorBd) {
+      await revertir();
+      console.error(`[web/flow-webhook-collect] Falló la BD al anotar el pago de ${sw.id}; se reintenta:`, errorBd);
+      return res.status(500).send('Error anotando el pago');
     }
-    await prisma.suscripcionWeb.update({ where: { id: sw.id }, data: { fechaUltimoPago: fechaPago } });
 
     const planId = planIdFlow(sw.plan);
     const planIdHosting = process.env.FLOW_PLAN_ID_WEB_HOSTING;
     // Primer período ya pagado: el plan vuelve a cobrar en 1 mes/año y el hosting en el aniversario.
-    const trialPlan = Math.max(1, diasHasta(sw.plan === 'ANUAL' ? sumarAnios(fechaInicio, 1) : sumarMeses(fechaInicio, 1), ahora));
-    const trialHosting = Math.max(1, diasHasta(sumarAnios(fechaInicio, 1), ahora));
+    const trialPlan = Math.max(1, diasHasta(sw.plan === 'ANUAL' ? sumarAnios(inicioContrato, 1) : sumarMeses(inicioContrato, 1), ahora));
+    const trialHosting = Math.max(1, diasHasta(sumarAnios(inicioContrato, 1), ahora));
 
-    let susPlan;
-    try {
-      susPlan = await flowClient.crearSuscripcionFlow({ planId, customerId: sw.flowCustomerId, trialPeriodDays: trialPlan });
-    } catch (errorPlan) {
-      if (esRechazoExplicitoDeFlow(errorPlan)) {
-        // Flow no creó nada: se devuelve a COBRANDO y se responde 500 para que reintente
-        // (los pagos ya anotados no se duplican).
-        await prisma.suscripcionWeb.updateMany({ where: { id: sw.id, estado: 'ACTIVANDO' }, data: { estado: 'COBRANDO' } });
-        console.error(`[web/flow-webhook-collect] Flow rechazó crear el plan de ${sw.id}; se reintenta:`, errorPlan.message);
-        return res.status(500).send('Error creando la suscripcion');
+    // 2) Plan (se omite si un intento anterior ya lo creó).
+    if (!sw.flowSubscriptionId) {
+      let susPlan;
+      try {
+        susPlan = await flowClient.crearSuscripcionFlow({ planId, customerId: sw.flowCustomerId, trialPeriodDays: trialPlan });
+      } catch (errorPlan) {
+        if (esRechazoExplicitoDeFlow(errorPlan)) {
+          await revertir(); // Flow no creó nada: Flow reintenta el aviso
+          console.error(`[web/flow-webhook-collect] Flow rechazó crear el plan de ${sw.id}; se reintenta:`, errorPlan.message);
+          return res.status(500).send('Error creando la suscripcion');
+        }
+        console.error(`[web/flow-webhook-collect] REVISAR A MANO ${sw.id}: cobro hecho pero no se sabe si Flow creó el plan:`, errorPlan);
+        return res.status(200).send('OK');
       }
-      console.error(`[web/flow-webhook-collect] REVISAR A MANO ${sw.id}: cobro hecho pero no se sabe si Flow creó el plan:`, errorPlan);
-      return res.status(200).send('OK');
+      try {
+        await prisma.suscripcionWeb.update({ where: { id: sw.id }, data: { flowSubscriptionId: susPlan.subscriptionId } });
+      } catch (errorGuardar) {
+        // El plan YA existe en Flow: nunca revertir (un reintento crearía un segundo plan).
+        console.error(`[web/flow-webhook-collect] REVISAR A MANO ${sw.id}: plan creado en Flow (${susPlan.subscriptionId}) pero no se pudo guardar:`, errorGuardar);
+        return res.status(200).send('OK');
+      }
     }
-    await prisma.suscripcionWeb.update({ where: { id: sw.id }, data: { flowSubscriptionId: susPlan.subscriptionId } });
 
+    // 3) Hosting (se omite si ya existe) y activación.
+    let hostingId = sw.flowSubscriptionIdHosting;
+    if (!hostingId) {
+      try {
+        hostingId = (await flowClient.crearSuscripcionFlow({ planId: planIdHosting, customerId: sw.flowCustomerId, trialPeriodDays: trialHosting })).subscriptionId;
+      } catch (errorHosting) {
+        if (esRechazoExplicitoDeFlow(errorHosting)) {
+          await revertir(); // el plan ya quedó guardado: el reintento retoma desde el hosting
+          console.error(`[web/flow-webhook-collect] Flow rechazó crear el hosting de ${sw.id}; se reintenta:`, errorHosting.message);
+          return res.status(500).send('Error creando la suscripcion de hosting');
+        }
+        console.error(`[web/flow-webhook-collect] REVISAR A MANO ${sw.id}: plan creado pero no se sabe si Flow creó el hosting:`, errorHosting);
+        return res.status(200).send('OK');
+      }
+    }
     try {
-      const susHosting = await flowClient.crearSuscripcionFlow({ planId: planIdHosting, customerId: sw.flowCustomerId, trialPeriodDays: trialHosting });
-      await prisma.suscripcionWeb.update({ where: { id: sw.id }, data: { flowSubscriptionIdHosting: susHosting.subscriptionId, estado: 'ACTIVA' } });
-    } catch (errorHosting) {
-      console.error(`[web/flow-webhook-collect] REVISAR A MANO ${sw.id}: plan creado en Flow (${susPlan.subscriptionId}) pero falló la suscripción de hosting:`, errorHosting);
+      await prisma.suscripcionWeb.update({ where: { id: sw.id }, data: { flowSubscriptionIdHosting: hostingId, estado: 'ACTIVA' } });
+    } catch (errorFinal) {
+      console.error(`[web/flow-webhook-collect] REVISAR A MANO ${sw.id}: hosting creado en Flow (${hostingId}) pero no se pudo guardar/activar:`, errorFinal);
       return res.status(200).send('OK');
     }
 

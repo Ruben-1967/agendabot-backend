@@ -22,14 +22,15 @@ async function main() {
   if (filas.length === 0) return console.log('No hay suscripciones web.');
 
   for (const sw of filas) {
-    const atascada = sw.estado === 'ACTIVANDO' && Date.now() - sw.actualizadoEn.getTime() > 15 * 60 * 1000;
+    const atascada = (sw.estado === 'ACTIVANDO' || sw.estado === 'COBRANDO') && Date.now() - sw.actualizadoEn.getTime() > 15 * 60 * 1000;
     const ultimoFallido = sw.pagos[0]?.estado === 'FALLIDO';
     console.log(`${atascada || ultimoFallido ? '⚠️ ' : ''}${sw.razonSocial || sw.nombreCliente} · ${sw.plan} $${sw.montoConIva.toLocaleString('es-CL')} · ${sw.estado}`);
     console.log(`   link: ${process.env.BACKEND_URL || ''}/web/suscribir/${sw.ref}`);
     console.log(`   aceptó: ${fmt(sw.fechaAceptacion)} (${sw.versionContrato || '-'}) · 1er cobro: ${sw.fechaPrimerCobro ? fmt(sw.fechaPrimerCobro) : 'al registrar'} · inicio: ${fmt(sw.fechaInicioContrato)}`);
     console.log(`   Flow plan: ${sw.flowSubscriptionId || '-'} · hosting: ${sw.flowSubscriptionIdHosting || '-'} · tarjeta: ${sw.tarjetaUltimos4 || '-'}`);
     for (const p of sw.pagos) console.log(`   pago ${fmt(p.fecha)} ${p.tipo} $${p.monto.toLocaleString('es-CL')} ${p.estado}`);
-    if (atascada) console.log('   -> ACTIVANDO hace más de 15 min: revisar en Flow y completar a mano.');
+    if (sw.estado === 'COBRANDO') console.log(`   cobro inicial: plan $${(sw.montoPlanCollect || 0).toLocaleString('es-CL')} + hosting $${(sw.montoHostingCollect || 0).toLocaleString('es-CL')} · orden ${sw.ordenComercioCollectPendiente || '-'}`);
+    if (atascada) console.log(`   -> ${sw.estado} hace más de 15 min: revisar en Flow (si el cobro está pagado, completar a mano; si no, el cliente debe reintentar).`);
   }
 }
 

@@ -55,6 +55,15 @@ ok('sin cobro inicial (link viejo) la pagina queda como antes', () => {
   assert.ok(!html.includes('Hoy pagas'));
   assert.ok(html.includes('El primer cargo se hace al registrar tu tarjeta.'));
 });
+ok('la pagina manda el total mostrado en un campo oculto (el servidor lo compara al aceptar)', () => {
+  const c = calcularCobroInicial({ montoPlanConIva: 11781, valorUf: UF, fecha: dia('2026-10-29') });
+  assert.ok(renderSuscribir(sw, { cobroInicial: c }).includes(`name="totalMostrado" value="${c.total}"`));
+  assert.ok(!renderSuscribir({ ...sw, hostingAlRegistrar: false }).includes('totalMostrado'));
+});
+ok('"procesando" de un link viejo no habla de primer pago', () => {
+  assert.ok(!renderResultado('procesando', { ...sw, hostingAlRegistrar: false, fechaPrimerCobro: new Date() }).includes('primer pago'));
+  assert.ok(renderResultado('procesando', sw).includes('primer pago'));
+});
 ok('pagina de exito con cobro inicial hecho', () => {
   const html = renderResultado('exito', { ...sw, estado: 'ACTIVA', fechaInicioContrato: dia('2026-10-29'), tarjetaUltimos4: '1234' });
   assert.ok(html.includes('Recibimos tu primer pago'));

@@ -248,6 +248,8 @@ router.post('/:id/link-suscripcion', async (req, res) => {
       }
       const { suscripcionWeb, link } = await crearLinkSuscripcionWeb({
         nombre: c.negocio, email, plan, dominio: c.dominio, pagadoEl: req.body.pagadoEl || undefined,
+        // true = cobrar solo el plan (hosting exento o pactado aparte); por defecto plan + hosting del 1er año.
+        sinHostingInicial: req.body.sinHostingInicial === true,
       }, tx);
       await tx.clienteWeb.update({ where: { id: c.id }, data: { suscripcionWebId: suscripcionWeb.id, plan, email } });
       return { link, suscripcion: suscripcionWeb };
