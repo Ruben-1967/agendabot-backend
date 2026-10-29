@@ -60,9 +60,13 @@ ok('la pagina manda el total mostrado en un campo oculto (el servidor lo compara
   assert.ok(renderSuscribir(sw, { cobroInicial: c }).includes(`name="totalMostrado" value="${c.total}"`));
   assert.ok(!renderSuscribir({ ...sw, hostingAlRegistrar: false }).includes('totalMostrado'));
 });
-ok('"procesando" de un link viejo no habla de primer pago', () => {
-  assert.ok(!renderResultado('procesando', { ...sw, hostingAlRegistrar: false, fechaPrimerCobro: new Date() }).includes('primer pago'));
-  assert.ok(renderResultado('procesando', sw).includes('primer pago'));
+ok('"procesando" avisa que la tarjeta quedo inscrita y que llegara un correo (links nuevos y viejos)', () => {
+  for (const x of [sw, { ...sw, hostingAlRegistrar: false, fechaPrimerCobro: new Date() }]) {
+    const html = renderResultado('procesando', x);
+    assert.ok(html.includes('Tu tarjeta quedó inscrita'));
+    assert.ok(html.includes('correo de confirmación'));
+    assert.ok(!html.includes('terminando de activar'));
+  }
 });
 ok('pagina de exito con cobro inicial hecho', () => {
   const html = renderResultado('exito', { ...sw, estado: 'ACTIVA', fechaInicioContrato: dia('2026-10-29'), tarjetaUltimos4: '1234' });

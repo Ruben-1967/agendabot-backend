@@ -172,10 +172,12 @@ function renderResultado(tipo, sw) {
 <a class="wa" href="${enlaceWhatsapp('Hola Multidigital, acabo de activar mi suscripción')}">Escribir por WhatsApp</a>`);
   }
   if (tipo === 'procesando') {
-    return pagina('Procesando', `
-<h1>Estamos terminando de activar tu suscripción</h1>
-<p class="sub">Tu tarjeta ya quedó registrada${sw && sw.hostingAlRegistrar && !sw.fechaPrimerCobro ? ' y estamos procesando tu primer pago' : ''}. Si en unos minutos no recibes la confirmación, escríbenos.</p>
-<a class="wa" href="${enlaceWhatsapp('Hola Multidigital, registré mi tarjeta y quiero confirmar mi suscripción')}">Escribir por WhatsApp</a>`);
+    return pagina('Tarjeta inscrita', `
+<div class="ok">✅</div>
+<h1>Tu tarjeta quedó inscrita</h1>
+<p class="sub">Te llegará un correo de confirmación. Si hay algún problema con el pago o con la activación, te contactaremos.</p>
+<p class="nota">No necesitas hacer nada más. Si tienes cualquier duda, escríbenos.</p>
+<a class="wa" href="${enlaceWhatsapp('Hola Multidigital, inscribí mi tarjeta y quiero confirmar mi suscripción')}">Escribir por WhatsApp</a>`);
   }
   if (tipo === 'cancelada') {
     return pagina('Suscripción cancelada', `
