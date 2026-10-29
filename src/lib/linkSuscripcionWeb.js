@@ -29,6 +29,14 @@ function sumarMeses(fecha, meses) {
   return r;
 }
 
+// El cobro inicial combinado (plan + hosting del 1er año en un solo cobro) está APAGADO por defecto:
+// el 2026-10-29 Flow rechazó cobros automáticos de $24.536 o más en nuestra cuenta (pasan $1.000 y
+// $11.781). Encender con COBRO_INICIAL_WEB_ACTIVO=true cuando Flow suba el límite. Apagado, un link
+// sin fecha de pago cobra solo el plan al registrar la tarjeta, como antes.
+function cobroInicialWebActivo() {
+  return process.env.COBRO_INICIAL_WEB_ACTIVO === 'true';
+}
+
 /**
  * @param {Object} p
  * @param {string} p.nombre
@@ -37,8 +45,8 @@ function sumarMeses(fecha, meses) {
  * @param {string} [p.dominio]
  * @param {string} [p.pagadoEl] - AAAA-MM-DD: el primer período ya se pagó por fuera;
  *   Flow cobra por primera vez 1 mes (o 1 año) después. Sin esto, cobra al registrar la tarjeta.
- * @param {boolean} [p.sinHostingInicial] - sin pagadoEl, por defecto se cobra al registrar la tarjeta
- *   el plan + el hosting del primer año (con la promo vigente). true = solo el plan, como antes
+ * @param {boolean} [p.sinHostingInicial] - solo aplica si COBRO_INICIAL_WEB_ACTIVO=true: sin pagadoEl se cobra
+ *   al registrar la tarjeta el plan + el hosting del primer año (con la promo vigente). true = solo el plan
  *   (ej. hosting exento o pactado aparte).
  * @returns {Promise<{suscripcionWeb: Object, link: string}>}
  */
@@ -64,7 +72,7 @@ async function crearLinkSuscripcionWeb({ nombre, email, plan, dominio, pagadoEl,
       montoConIva: conIva(PRECIOS_NETOS_WEB[plan]),
       fechaPrimerCobro,
       fechaInicioContrato,
-      hostingAlRegistrar: !pagadoEl && !sinHostingInicial,
+      hostingAlRegistrar: cobroInicialWebActivo() && !pagadoEl && !sinHostingInicial,
     },
   });
   return { suscripcionWeb, link: urlSuscripcionWeb(suscripcionWeb.ref) };

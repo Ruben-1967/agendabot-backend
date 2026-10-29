@@ -16,8 +16,9 @@
  *                cliente registra su tarjeta.
  *   --sin-hosting-inicial  (sin --pagado-el) cobra solo el plan al registrar la tarjeta,
  *                sin el hosting del primer año (hosting exento o pactado aparte).
- *                Por defecto, sin --pagado-el se cobra plan + hosting del 1er año
- *                (con la promo vigente, ver src/lib/preciosWeb.js).
+ *                Solo rige si COBRO_INICIAL_WEB_ACTIVO=true (hoy APAGADO: Flow rechaza
+ *                cobros automáticos de $24.536 o más); ahí, sin --pagado-el se cobra
+ *                plan + hosting del 1er año (promo vigente, ver src/lib/preciosWeb.js).
  */
 
 require('dotenv').config();
