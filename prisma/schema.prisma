@@ -133,6 +133,13 @@ model Empresa {
   // intentos -- quedan pendientes hasta gestión manual.
   recordatorioConfirmacionCitaActivo Boolean @default(true)
 
+  // Cuántos avisos de confirmación recibe cada cita (1 a 3, default 3 = ciclo
+  // completo: recordatorio, segundo recordatorio y "último aviso", y si no
+  // responde se cancela sola). Con 1 o 2 solo se mandan esos recordatorios y
+  // NO hay cancelación automática: la cita sigue PENDIENTE hasta gestión
+  // manual. Pedido de Ahorróptica 2026-10-29 (1 solo aviso, molestaba).
+  confirmacionMaxIntentos Int @default(3)
+
   // ====== CAMPOS PARA WHATSAPP BUSINESS ======
   whatsappNumeroId    String?   @unique  // phone_number_id de Meta (ej: "135018715483508")
   whatsappToken       String?   @db.Text // Access token permanente (cifrado AES-256-GCM)

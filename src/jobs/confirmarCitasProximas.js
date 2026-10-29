@@ -108,6 +108,11 @@ async function procesarConfirmacionesDeCitas() {
       continue;
     }
 
+    // 1 a 3 avisos por cita (Empresa.confirmacionMaxIntentos, default 3). Solo
+    // con 3 corre el ciclo completo con "último aviso" y cancelación
+    // automática; con menos, la cita queda PENDIENTE tras el último aviso.
+    const maxIntentos = Math.min(3, Math.max(1, Number(empresa.confirmacionMaxIntentos) || 3));
+
     const horasHastaCita = horasEntre(cita.fechaHoraInicio, ahora);
     const horasDesdeUltimoEnvio = cita.confirmacionUltimoEnvioEn
       ? horasEntre(ahora, cita.confirmacionUltimoEnvioEn)
@@ -145,7 +150,7 @@ async function procesarConfirmacionesDeCitas() {
           });
           enviados1++;
         }
-      } else if (cita.confirmacionIntentos === 1 && horasDesdeUltimoEnvio >= HORAS_ENTRE_INTENTOS) {
+      } else if (cita.confirmacionIntentos === 1 && maxIntentos >= 2 && horasDesdeUltimoEnvio >= HORAS_ENTRE_INTENTOS) {
         await sendWhatsAppTemplateMessage({
           phoneNumberId: empresa.whatsappNumeroId, to: cliente.telefono, accessToken,
           templateName: elegirPlantilla(empresa, { conBotones: PLANTILLA_RECORDATORIO_BOTONES, sinBotones: PLANTILLA_RECORDATORIO }),
@@ -157,7 +162,7 @@ async function procesarConfirmacionesDeCitas() {
           data: { confirmacionIntentos: 2, confirmacionUltimoEnvioEn: ahora },
         });
         enviados2++;
-      } else if (cita.confirmacionIntentos === 2 && horasDesdeUltimoEnvio >= HORAS_ENTRE_INTENTOS) {
+      } else if (cita.confirmacionIntentos === 2 && maxIntentos >= 3 && horasDesdeUltimoEnvio >= HORAS_ENTRE_INTENTOS) {
         await sendWhatsAppTemplateMessage({
           phoneNumberId: empresa.whatsappNumeroId, to: cliente.telefono, accessToken,
           templateName: elegirPlantilla(empresa, { conBotones: PLANTILLA_ULTIMO_AVISO_BOTONES, sinBotones: PLANTILLA_ULTIMO_AVISO }),
@@ -169,7 +174,7 @@ async function procesarConfirmacionesDeCitas() {
           data: { confirmacionIntentos: 3, confirmacionUltimoEnvioEn: ahora },
         });
         enviados3++;
-      } else if (cita.confirmacionIntentos === 3 && horasDesdeUltimoEnvio >= HORAS_ENTRE_INTENTOS) {
+      } else if (cita.confirmacionIntentos === 3 && maxIntentos >= 3 && horasDesdeUltimoEnvio >= HORAS_ENTRE_INTENTOS) {
         // Se agotaron los 3 intentos sin respuesta — se libera el cupo.
         // No hace falta tocar disponibilidad.js: al pasar a CANCELADA, el
         // motor de disponibilidad ya la excluye automáticamente (solo
