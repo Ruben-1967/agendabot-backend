@@ -41,4 +41,23 @@ async function enviarAlertaCobroRechazado(datos) {
   if (r.error) throw new Error(`Resend rechazó la alerta: ${JSON.stringify(r.error)}`);
 }
 
-module.exports = { enviarAlertaCobroRechazado, armarAlerta };
+// Cobro que lleva horas "cobrando" sin que Flow lo resuelva (no conoce la orden, o sigue pendiente).
+async function enviarAlertaCobroSinResolver({ nombre, emailCliente, monto, ref, minutos, motivo }) {
+  if (!process.env.RESEND_API_KEY_MULTIDIGITAL) throw new Error('Falta RESEND_API_KEY_MULTIDIGITAL en el entorno');
+  const resend = new Resend(process.env.RESEND_API_KEY_MULTIDIGITAL);
+  const link = process.env.BACKEND_URL ? `${process.env.BACKEND_URL}/web/suscribir/${ref}` : '';
+  const r = await resend.emails.send({
+    from: REMITENTE,
+    to: process.env.ALERTA_COBROS_WEB_EMAIL || DESTINO_POR_DEFECTO,
+    subject: `Revisar a mano: cobro sin resolver de ${nombre}`,
+    html: `
+      <h2>Un cobro lleva ${Math.round(minutos / 60)} horas sin resolverse</h2>
+      <p>El cliente <b>${escapar(nombre)}</b> (${escapar(emailCliente)}) inscribió su tarjeta, pero el cobro inicial de
+      <b>${formatoMonto(monto)}</b> no se pudo confirmar en Flow.</p>
+      <p>Motivo: ${escapar(motivo)}</p>
+      <p>Revisa la orden en Flow. Si no se cobró, el cliente puede reintentar desde su link${link ? `: ${escapar(link)}` : ''}.</p>`,
+  });
+  if (r.error) throw new Error(`Resend rechazó la alerta: ${JSON.stringify(r.error)}`);
+}
+
+module.exports = { enviarAlertaCobroRechazado, enviarAlertaCobroSinResolver, armarAlerta };

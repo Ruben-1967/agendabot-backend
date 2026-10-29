@@ -22,7 +22,7 @@ const flowClient = require('../services/flowClient');
 const { sumarMeses } = require('./linkSuscripcionWeb');
 const { diaChileTexto } = require('./preciosWeb');
 const { registrarPagoFlowEnClienteWeb } = require('../routes/clientesWeb');
-const { enviarAlertaCobroRechazado } = require('../services/emailAlertaCobroWeb');
+const { enviarAlertaCobroRechazado, enviarAlertaCobroSinResolver } = require('../services/emailAlertaCobroWeb');
 
 const DIA_MS = 24 * 60 * 60 * 1000;
 
@@ -74,7 +74,7 @@ async function procesarEstadoCobroInicial(sw, estadoFlow) {
     // Tarjeta rechazada u orden anulada: vuelve a ACEPTADA para que pueda reintentar desde el link,
     // y se avisa a Multidigital (el cliente ya vio "tarjeta inscrita": hay que contactarlo).
     const revertida = await prisma.suscripcionWeb.updateMany({
-      where: { id: sw.id, estado: 'COBRANDO' },
+      where: { id: sw.id, estado: 'COBRANDO', ordenComercioCollectPendiente: sw.ordenComercioCollectPendiente },
       data: { estado: 'ACEPTADA', ordenComercioCollectPendiente: null },
     });
     if (revertida.count > 0) {
@@ -103,7 +103,7 @@ async function procesarEstadoCobroInicial(sw, estadoFlow) {
   // corría el cobro un día cuando se registraba de noche cerca de fin de mes).
   const inicioContrato = sw.fechaInicioContrato || new Date(`${diaChileTexto(ahora)}T12:00:00-03:00`);
   const tomado = await prisma.suscripcionWeb.updateMany({
-    where: { id: sw.id, estado: 'COBRANDO' },
+    where: { id: sw.id, estado: 'COBRANDO', ordenComercioCollectPendiente: sw.ordenComercioCollectPendiente },
     data: { estado: 'ACTIVANDO', fechaInicioContrato: inicioContrato },
   });
   if (tomado.count === 0) {
@@ -112,6 +112,9 @@ async function procesarEstadoCobroInicial(sw, estadoFlow) {
     }
     return { http: 200, texto: 'OK' }; // aviso repetido: ya se procesó
   }
+  // Foto fresca: `sw` se leyó antes del claim y otro proceso (webhook / revisor) pudo haber guardado
+  // flowSubscriptionId antes de revertir. Decidir con la foto vieja crearía un segundo plan en Flow.
+  sw = await prisma.suscripcionWeb.findUnique({ where: { id: sw.id } });
   const revertir = () => prisma.suscripcionWeb.updateMany({ where: { id: sw.id, estado: 'ACTIVANDO' }, data: { estado: 'COBRANDO' } });
   const fechaPago = estadoFlow.fechaPago && !isNaN(new Date(estadoFlow.fechaPago)) ? new Date(estadoFlow.fechaPago) : ahora;
 
@@ -142,8 +145,9 @@ async function procesarEstadoCobroInicial(sw, estadoFlow) {
   const planId = planIdFlow(sw.plan);
   const planIdHosting = process.env.FLOW_PLAN_ID_WEB_HOSTING;
   // Primer período ya pagado: el plan vuelve a cobrar en 1 mes/año y el hosting en el aniversario.
-  const trialPlan = Math.max(1, diasHasta(sw.plan === 'ANUAL' ? sumarAnios(inicioContrato, 1) : sumarMeses(inicioContrato, 1), ahora));
-  const trialHosting = Math.max(1, diasHasta(sumarAnios(inicioContrato, 1), ahora));
+  const baseContrato = sw.fechaInicioContrato || inicioContrato;
+  const trialPlan = Math.max(1, diasHasta(sw.plan === 'ANUAL' ? sumarAnios(baseContrato, 1) : sumarMeses(baseContrato, 1), ahora));
+  const trialHosting = Math.max(1, diasHasta(sumarAnios(baseContrato, 1), ahora));
 
   // 2) Plan (se omite si un intento anterior ya lo creó).
   if (!sw.flowSubscriptionId) {
@@ -194,6 +198,26 @@ async function procesarEstadoCobroInicial(sw, estadoFlow) {
   return { http: 200, texto: 'OK' };
 }
 
+// Cobros sin resolver por más de este tiempo (Flow no conoce la orden, o sigue "pendiente"):
+// una sola alerta (en memoria: si el servidor se reinicia, vuelve a avisar una vez).
+const MINUTOS_PARA_ALERTAR_SIN_RESOLVER = 120;
+const yaAlertadasSinResolver = new Set();
+
+async function alertarSiLlevaMuchoTiempo(sw, ahora, motivo) {
+  const minutos = Math.round((ahora - sw.actualizadoEn) / 60000);
+  if (minutos < MINUTOS_PARA_ALERTAR_SIN_RESOLVER || yaAlertadasSinResolver.has(sw.id)) return;
+  yaAlertadasSinResolver.add(sw.id);
+  console.error(`[cobro-inicial-web] REVISAR A MANO ${sw.id}: lleva ${minutos} min "cobrando" sin resolverse (${motivo}).`);
+  try {
+    await enviarAlertaCobroSinResolver({
+      nombre: sw.razonSocial || sw.nombreCliente, emailCliente: sw.emailAceptacion || sw.emailCliente,
+      monto: (sw.montoPlanCollect || 0) + (sw.montoHostingCollect || 0), ref: sw.ref, minutos, motivo,
+    });
+  } catch (errorAlerta) {
+    console.error(`[cobro-inicial-web] No se pudo enviar la alerta de cobro sin resolver de ${sw.id}:`, errorAlerta.message);
+  }
+}
+
 /**
  * Revisa las suscripciones que quedaron "cobrando" hace más de `minutos` y le pregunta a Flow
  * cómo terminó cada cobro (por la orden, que nosotros generamos). Pagado -> activa; rechazado o
@@ -212,7 +236,11 @@ async function reconciliarCobrosInicialesWeb({ ahora = new Date(), minutos = 5, 
     try {
       const estadoFlow = await flowClient.consultarEstadoPorCommerceId(sw.ordenComercioCollectPendiente);
       const codigo = String(estadoFlow.estado);
-      if (codigo === '1') { resumen.pendientes++; continue; }
+      if (codigo === '1') {
+        resumen.pendientes++;
+        await alertarSiLlevaMuchoTiempo(sw, ahora, 'Flow dice que el cobro sigue pendiente');
+        continue;
+      }
       console.log(`[cobro-inicial-web] Reconciliación ${sw.id}: Flow dice estado ${codigo}${dryRun ? ' (dry-run)' : ''}`);
       if (dryRun) continue;
       const r = await procesarEstadoCobroInicial(sw, estadoFlow);
@@ -222,6 +250,7 @@ async function reconciliarCobrosInicialesWeb({ ahora = new Date(), minutos = 5, 
     } catch (error) {
       resumen.errores++;
       console.error(`[cobro-inicial-web] Reconciliación ${sw.id} falló (se reintenta):`, error.message);
+      await alertarSiLlevaMuchoTiempo(sw, ahora, `Flow respondió: ${error.message}`);
     }
   }
   if (candidatas.length) console.log('[cobro-inicial-web] Resumen reconciliación:', JSON.stringify(resumen));

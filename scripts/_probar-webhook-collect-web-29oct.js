@@ -60,7 +60,11 @@ const fakeFlow = {
 };
 
 let alertas = [];
-const fakeAlerta = { enviarAlertaCobroRechazado: async (d) => { alertas.push(d); } };
+let alertasSinResolver = [];
+const fakeAlerta = {
+  enviarAlertaCobroRechazado: async (d) => { alertas.push(d); },
+  enviarAlertaCobroSinResolver: async (d) => { alertasSinResolver.push(d); },
+};
 
 const raiz = path.resolve(__dirname, '..');
 require.cache[require.resolve(path.join(raiz, 'src/services/emailAlertaCobroWeb'))] = { id: 'alerta', filename: 'alerta', loaded: true, exports: fakeAlerta };
@@ -68,7 +72,7 @@ require.cache[require.resolve(path.join(raiz, 'src/lib/prisma'))] = { id: 'prism
 require.cache[require.resolve(path.join(raiz, 'src/services/flowClient'))] = { id: 'flow', filename: 'flow', loaded: true, exports: fakeFlow };
 
 const router = require('../src/routes/suscripcionWeb');
-const { reconciliarCobrosInicialesWeb } = require('../src/lib/cobroInicialWeb');
+const { reconciliarCobrosInicialesWeb, procesarEstadoCobroInicial } = require('../src/lib/cobroInicialWeb');
 const capa = router.stack.find((l) => l.route && l.route.path === '/flow-webhook-collect');
 const handler = capa.route.stack[0].handle;
 
@@ -86,7 +90,7 @@ function nuevo(extra = {}) {
     emailAceptacion: 'cliente@ejemplo.cl', tarjetaUltimos4: '1781', ref: 'refabc', plan2: null,
     actualizadoEn: new Date(Date.now() - 60 * 60 * 1000), ...extra,
   };
-  pagos = []; creadas = []; rechazos = []; fallaPagoCreate = false; alertas = [];
+  pagos = []; creadas = []; rechazos = []; fallaPagoCreate = false; alertas = []; alertasSinResolver = [];
   estadoFlow = { estado: '2', monto: 36295, comercioOrden: 'wc_abc', fechaPago: '2026-10-29 12:00:00' };
 }
 const rechazoFlow = () => new Error('Flow error 400: plan invalido');
@@ -204,6 +208,39 @@ const timeout = () => new Error('network timeout');
     nuevo({ actualizadoEn: new Date() }); estadoFlow = { estado: 3, monto: '36295', comercioOrden: 'wc_abc' };
     const r = await reconciliarCobrosInicialesWeb();
     assert.strictEqual(r.revisadas, 0); assert.strictEqual(sw.estado, 'COBRANDO');
+  });
+
+  await caso('foto vieja: otro proceso ya guardo el plan -> NO se crea un segundo plan en Flow', async () => {
+    nuevo({ flowSubscriptionId: 'sus_ya_creado' });          // lo que hay en la BD ahora
+    const fotoVieja = { ...sw, flowSubscriptionId: null };    // lo que leyó este proceso antes
+    const r = await procesarEstadoCobroInicial(fotoVieja, estadoFlow);
+    assert.strictEqual(r.http, 200);
+    assert.deepStrictEqual(creadas.map((c) => c.planId), ['plan-hosting']); // solo el hosting que faltaba
+    assert.strictEqual(sw.flowSubscriptionId, 'sus_ya_creado');
+  });
+
+  await caso('rechazo de un intento viejo no anula un intento nuevo (otra orden)', async () => {
+    nuevo({ ordenComercioCollectPendiente: 'wc_NUEVA' });
+    const fotoVieja = { ...sw, ordenComercioCollectPendiente: 'wc_abc' };
+    // el fake no filtra por orden, asi que se comprueba lo que la logica le pide a la BD
+    let donde = null;
+    const original = fakePrisma.suscripcionWeb.updateMany;
+    fakePrisma.suscripcionWeb.updateMany = async (a) => { donde = a.where; return { count: 0 }; };
+    await procesarEstadoCobroInicial(fotoVieja, { estado: 3, monto: '1', comercioOrden: 'wc_abc' });
+    fakePrisma.suscripcionWeb.updateMany = original;
+    assert.strictEqual(donde.ordenComercioCollectPendiente, 'wc_abc');
+    assert.strictEqual(alertas.length, 0);
+  });
+
+  await caso('revisor: Flow no conoce la orden hace > 2 h -> una sola alerta "sin resolver", no spam', async () => {
+    nuevo({ actualizadoEn: new Date(Date.now() - 3 * 60 * 60 * 1000) });
+    const original = fakeFlow.consultarEstadoPorCommerceId;
+    fakeFlow.consultarEstadoPorCommerceId = async () => { throw new Error('Flow error 105: orden no encontrada'); };
+    await reconciliarCobrosInicialesWeb();
+    await reconciliarCobrosInicialesWeb();
+    fakeFlow.consultarEstadoPorCommerceId = original;
+    assert.strictEqual(alertasSinResolver.length, 1);
+    assert.strictEqual(sw.estado, 'COBRANDO');
   });
 
   console.log(`✅ ${n} casos OK`);
