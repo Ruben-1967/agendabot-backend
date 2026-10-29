@@ -37,9 +37,12 @@ function sumarMeses(fecha, meses) {
  * @param {string} [p.dominio]
  * @param {string} [p.pagadoEl] - AAAA-MM-DD: el primer período ya se pagó por fuera;
  *   Flow cobra por primera vez 1 mes (o 1 año) después. Sin esto, cobra al registrar la tarjeta.
+ * @param {boolean} [p.sinHostingInicial] - sin pagadoEl, por defecto se cobra al registrar la tarjeta
+ *   el plan + el hosting del primer año (con la promo vigente). true = solo el plan, como antes
+ *   (ej. hosting exento o pactado aparte).
  * @returns {Promise<{suscripcionWeb: Object, link: string}>}
  */
-async function crearLinkSuscripcionWeb({ nombre, email, plan, dominio, pagadoEl }, cliente = prisma) {
+async function crearLinkSuscripcionWeb({ nombre, email, plan, dominio, pagadoEl, sinHostingInicial }, cliente = prisma) {
   if (!nombre || !email || !['MENSUAL', 'ANUAL'].includes(plan)) throw errorDeDatos('Faltan nombre, email o un plan válido (MENSUAL o ANUAL).');
   if (!process.env.BACKEND_URL) throw new Error('Falta BACKEND_URL para armar el link.');
 
@@ -61,6 +64,7 @@ async function crearLinkSuscripcionWeb({ nombre, email, plan, dominio, pagadoEl 
       montoConIva: conIva(PRECIOS_NETOS_WEB[plan]),
       fechaPrimerCobro,
       fechaInicioContrato,
+      hostingAlRegistrar: !pagadoEl && !sinHostingInicial,
     },
   });
   return { suscripcionWeb, link: urlSuscripcionWeb(suscripcionWeb.ref) };

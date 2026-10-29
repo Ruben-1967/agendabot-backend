@@ -1574,7 +1574,18 @@ model SuscripcionWeb {
   // Base del aniversario del hosting: la fecha de la transferencia si se
   // indicó al crear el link, o el día en que se activa si se cobra al registrar.
   fechaInicioContrato DateTime?
-  estado              String   @default("PENDIENTE") // PENDIENTE | ACEPTADA | ACTIVA | CANCELADA
+  estado              String   @default("PENDIENTE") // PENDIENTE | ACEPTADA | COBRANDO | ACTIVANDO | ACTIVA | CANCELADA
+
+  // Cobro inicial combinado (2026-10-29): sin fechaPrimerCobro y con esto en true, al registrar la
+  // tarjeta se hace UN cobro (customer/collect) con el plan del primer período + el hosting del
+  // primer año (con la promo vigente), y las suscripciones de Flow se crean recién cuando ese cobro
+  // se confirma (/web/flow-webhook-collect), con trial para no cobrar dos veces. Los links anteriores
+  // quedan en false y siguen con el flujo de siempre. Migración: scripts/_migracion-cobro-inicial-web-29oct.sql
+  hostingAlRegistrar          Boolean @default(false)
+  ordenComercioCollectPendiente String? @unique
+  montoPlanCollect            Int?
+  montoHostingCollect         Int?
+  descuentoHostingPct         Int?   // 50, 20 o 0: el descuento aplicado al hosting del primer año
 
   // Aceptación del contrato (Ley 19.799)
   razonSocial         String?

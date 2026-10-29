@@ -185,7 +185,7 @@ async function consultarEstadoRegistroFlow(token) {
  * a `urlConfirmation` (ver flow-webhook-collect en suscripcion.js), acá solo
  * se dispara el cobro.
  */
-async function cobrarCollectFlow({ customerId, montoClp, asunto, ordenComercio, urlConfirmation }) {
+async function cobrarCollectFlow({ customerId, montoClp, asunto, ordenComercio, urlConfirmation, urlReturn }) {
   const params = {
     customerId,
     amount: montoClp,
@@ -193,7 +193,7 @@ async function cobrarCollectFlow({ customerId, montoClp, asunto, ordenComercio, 
     commerceOrder: ordenComercio,
     currency: 'CLP',
     urlConfirmation,
-    urlReturn: `${obtenerUrlPanelPrincipal()}/suscripcion/resultado`,
+    urlReturn: urlReturn || `${obtenerUrlPanelPrincipal()}/suscripcion/resultado`,
   };
   return requestFlowPost('/customer/collect', params);
 }

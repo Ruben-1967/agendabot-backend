@@ -2,6 +2,8 @@
 // que abre el cliente desde su link (resumen, contrato, datos y aceptación) y
 // las páginas de resultado al volver de Flow. Ver src/routes/suscripcionWeb.js.
 
+const { sumarMeses } = require('../lib/linkSuscripcionWeb');
+
 const URL_CONTRATO = 'https://multidigital.cl/contrato-sitio-web';
 const WHATSAPP_MULTIDIGITAL = '56966108858';
 
@@ -35,6 +37,8 @@ const ESTILOS = `
   .resumen .plan{font-size:13px;opacity:.75;text-transform:uppercase;letter-spacing:1px;font-weight:700}
   .resumen .monto{font-size:30px;font-weight:800;margin:4px 0 2px}
   .resumen .monto small{font-size:15px;font-weight:600;opacity:.85}
+  .resumen .hoy{background:rgba(255,255,255,.10);border-radius:10px;padding:10px 12px;margin-top:12px;font-size:14px;line-height:1.55}
+  .resumen .hoy b{font-size:17px}
   .resumen ul{margin:12px 0 0;padding-left:18px;font-size:14px;line-height:1.6;color:#DBEAFE}
   label.campo{display:block;font-size:13px;font-weight:700;margin:14px 0 5px}
   input[type=text],input[type=email]{width:100%;padding:11px 12px;border:1.5px solid #CBD5E1;border-radius:10px;font-size:15px;font-family:inherit}
@@ -76,9 +80,28 @@ function textoPrimerCargo(sw) {
   return `Tu primer período ya está pagado. El primer cargo automático será el <b>${formatoFecha(sw.fechaPrimerCobro)}</b>.`;
 }
 
-function renderSuscribir(sw, { error, valores = {} } = {}) {
+// Desglose del primer pago cuando se cobra el plan + el hosting del primer año al
+// registrar la tarjeta (ver cobroInicial en src/lib/preciosWeb.js).
+function htmlCobroInicial(sw, c) {
+  const esAnual = sw.plan === 'ANUAL';
+  const pct = Math.round(c.descuento * 100);
+  const detalleHosting = pct > 0
+    ? `hosting del primer año ${formatoCLP(c.montoHosting)} (${pct}% de descuento sobre ${formatoCLP(c.montoHostingCompleto)})`
+    : `hosting del primer año ${formatoCLP(c.montoHosting)}`;
+  return `<div class="hoy">Hoy pagas <b>${formatoCLP(c.total)}</b> (IVA incluido):<br>plan ${esAnual ? 'anual' : 'mensual'} ${formatoCLP(c.montoPlan)} + ${detalleHosting}.</div>`;
+}
+
+function renderSuscribir(sw, { error, valores = {}, cobroInicial = null } = {}) {
   const esAnual = sw.plan === 'ANUAL';
   const v = (campo, porDefecto = '') => escapar(valores[campo] ?? porDefecto);
+  const puntos = cobroInicial
+    ? `<li>El plan se vuelve a cobrar automáticamente cada ${esAnual ? 'año' : 'mes'}, con la tarjeta que registres.</li>
+    <li>Hosting: desde el primer aniversario, 1 UF + IVA al año.</li>
+    <li>Sin permanencia: te das de baja cuando quieras, avisándonos por escrito.</li>`
+    : `<li>${textoPrimerCargo(sw)}</li>
+    <li>Luego se cobra automáticamente cada ${esAnual ? 'año' : 'mes'} con la tarjeta que registres.</li>
+    <li>Hosting: 1 UF + IVA al año, salvo condiciones especiales acordadas contigo.</li>
+    <li>Sin permanencia: te das de baja cuando quieras, avisándonos por escrito.</li>`;
   const cuerpo = `
 <h1>Activa tu suscripción</h1>
 <p class="sub">Sitio web + 2 correos corporativos${sw.dominio ? ` · ${escapar(sw.dominio)}` : ''}</p>
@@ -86,11 +109,9 @@ function renderSuscribir(sw, { error, valores = {} } = {}) {
 <div class="resumen">
   <div class="plan">${esAnual ? 'Plan anual' : 'Plan mensual'}</div>
   <div class="monto">${formatoCLP(sw.montoConIva)} <small>IVA incluido / ${esAnual ? 'año' : 'mes'}</small></div>
+  ${cobroInicial ? htmlCobroInicial(sw, cobroInicial) : ''}
   <ul>
-    <li>${textoPrimerCargo(sw)}</li>
-    <li>Luego se cobra automáticamente cada ${esAnual ? 'año' : 'mes'} con la tarjeta que registres.</li>
-    <li>Hosting: 1 UF + IVA al año, salvo condiciones especiales acordadas contigo.</li>
-    <li>Sin permanencia: te das de baja cuando quieras, avisándonos por escrito.</li>
+    ${puntos}
   </ul>
 </div>
 
@@ -136,9 +157,12 @@ function enlaceWhatsapp(texto) {
 
 function renderResultado(tipo, sw) {
   if (tipo === 'exito') {
+    const cobroInicialHecho = sw.hostingAlRegistrar && !sw.fechaPrimerCobro && sw.fechaInicioContrato;
     const proximo = primerCobroFuturo(sw)
       ? `El primer cargo automático será el <b>${formatoFecha(sw.fechaPrimerCobro)}</b>.`
-      : 'El cargo del primer período se procesa en los próximos minutos y Flow te enviará el comprobante por correo.';
+      : cobroInicialHecho
+        ? `Recibimos tu primer pago (plan + hosting del primer año) y Flow te enviará el comprobante por correo. El próximo cargo del plan será el <b>${formatoFecha(sw.plan === 'ANUAL' ? sumarMeses(sw.fechaInicioContrato, 12) : sumarMeses(sw.fechaInicioContrato, 1))}</b>.`
+        : 'El cargo del primer período se procesa en los próximos minutos y Flow te enviará el comprobante por correo.';
     return pagina('Suscripción activa', `
 <div class="ok">✅</div>
 <h1>¡Listo! Tu suscripción quedó activa</h1>
@@ -149,7 +173,7 @@ function renderResultado(tipo, sw) {
   if (tipo === 'procesando') {
     return pagina('Procesando', `
 <h1>Estamos terminando de activar tu suscripción</h1>
-<p class="sub">Tu tarjeta ya quedó registrada. Si en unos minutos no recibes la confirmación, escríbenos.</p>
+<p class="sub">Tu tarjeta ya quedó registrada y estamos procesando tu primer pago. Si en unos minutos no recibes la confirmación, escríbenos.</p>
 <a class="wa" href="${enlaceWhatsapp('Hola Multidigital, registré mi tarjeta y quiero confirmar mi suscripción')}">Escribir por WhatsApp</a>`);
   }
   if (tipo === 'cancelada') {
