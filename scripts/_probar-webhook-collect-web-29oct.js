@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 // Prueba del POST /web/flow-webhook-collect (cobro inicial combinado) con una base de datos y un
 // Flow SIMULADOS en memoria: no toca ninguna base real, no llama a Flow, no manda WhatsApp.
-// Cubre: camino feliz, aviso duplicado, rechazo de pago, monto distinto, rechazo explícito de Flow
-// al crear el plan y el hosting (reintento reanudable, sin duplicar), y fallo de BD al anotar pagos.
+// Cubre: camino feliz, aviso duplicado, rechazo de pago (con alerta por correo), monto distinto,
+// rechazo explícito de Flow al crear el plan y el hosting (reintento reanudable, sin duplicar), fallo
+// de BD al anotar pagos, y el revisor periódico (Flow no avisa los rechazos).
 // USO: node scripts/_probar-webhook-collect-web-29oct.js
 process.env.BACKEND_URL = 'http://localhost:0';
 process.env.FLOW_PLAN_ID_WEB_MENSUAL = 'plan-mensual';
@@ -22,6 +23,11 @@ const fakePrisma = {
       ? (sw.ordenComercioCollectPendiente === where.ordenComercioCollectPendiente ? { ...sw } : null)
       : { ...sw }),
     findFirst: async () => ({ ...sw }),
+    findMany: async ({ where }) => {
+      const ok = sw.estado === where.estado && sw.ordenComercioCollectPendiente !== null
+        && sw.actualizadoEn < where.actualizadoEn.lt;
+      return ok ? [{ ...sw }] : [];
+    },
     updateMany: async ({ where, data }) => {
       if (where.estado && sw.estado !== where.estado) return { count: 0 };
       Object.assign(sw, data); return { count: 1 };
@@ -45,6 +51,7 @@ let creadas;
 let rechazos; // cola de errores a lanzar en crearSuscripcionFlow
 const fakeFlow = {
   consultarEstado: async () => estadoFlow,
+  consultarEstadoPorCommerceId: async () => estadoFlow,
   crearSuscripcionFlow: async (p) => {
     const err = rechazos.shift();
     if (err) throw err;
@@ -52,11 +59,16 @@ const fakeFlow = {
   },
 };
 
+let alertas = [];
+const fakeAlerta = { enviarAlertaCobroRechazado: async (d) => { alertas.push(d); } };
+
 const raiz = path.resolve(__dirname, '..');
+require.cache[require.resolve(path.join(raiz, 'src/services/emailAlertaCobroWeb'))] = { id: 'alerta', filename: 'alerta', loaded: true, exports: fakeAlerta };
 require.cache[require.resolve(path.join(raiz, 'src/lib/prisma'))] = { id: 'prisma', filename: 'prisma', loaded: true, exports: fakePrisma };
 require.cache[require.resolve(path.join(raiz, 'src/services/flowClient'))] = { id: 'flow', filename: 'flow', loaded: true, exports: fakeFlow };
 
 const router = require('../src/routes/suscripcionWeb');
+const { reconciliarCobrosInicialesWeb } = require('../src/lib/cobroInicialWeb');
 const capa = router.stack.find((l) => l.route && l.route.path === '/flow-webhook-collect');
 const handler = capa.route.stack[0].handle;
 
@@ -70,9 +82,11 @@ function nuevo(extra = {}) {
   sw = {
     id: 'sw1', plan: 'MENSUAL', estado: 'COBRANDO', razonSocial: 'Cliente Prueba', flowCustomerId: 'cus1',
     ordenComercioCollectPendiente: 'wc_abc', montoPlanCollect: 11781, montoHostingCollect: 24514,
-    fechaInicioContrato: null, flowSubscriptionId: null, flowSubscriptionIdHosting: null, ...extra,
+    fechaInicioContrato: null, flowSubscriptionId: null, flowSubscriptionIdHosting: null,
+    emailAceptacion: 'cliente@ejemplo.cl', tarjetaUltimos4: '1781', ref: 'refabc', plan2: null,
+    actualizadoEn: new Date(Date.now() - 60 * 60 * 1000), ...extra,
   };
-  pagos = []; creadas = []; rechazos = []; fallaPagoCreate = false;
+  pagos = []; creadas = []; rechazos = []; fallaPagoCreate = false; alertas = [];
   estadoFlow = { estado: '2', monto: 36295, comercioOrden: 'wc_abc', fechaPago: '2026-10-29 12:00:00' };
 }
 const rechazoFlow = () => new Error('Flow error 400: plan invalido');
@@ -113,6 +127,8 @@ const timeout = () => new Error('network timeout');
     assert.strictEqual(await llamar(), 200);
     assert.strictEqual(sw.estado, 'ACEPTADA'); assert.strictEqual(sw.ordenComercioCollectPendiente, null);
     assert.strictEqual(creadas.length, 0); assert.strictEqual(pagos.length, 0);
+    assert.strictEqual(alertas.length, 1); assert.strictEqual(alertas[0].monto, 36295);
+    assert.strictEqual(await llamar(), 200); assert.strictEqual(alertas.length, 1); // aviso repetido: sin 2.ª alerta
   });
 
   await caso('monto distinto al esperado: no activa nada', async () => {
@@ -158,6 +174,36 @@ const timeout = () => new Error('network timeout');
   await caso('orden desconocida y pagada: 404 para que Flow reintente', async () => {
     nuevo(); estadoFlow.comercioOrden = 'wc_otra';
     assert.strictEqual(await llamar(), 404);
+  });
+
+  await caso('revisor: Flow dice RECHAZADO -> ACEPTADA y 1 alerta (Flow nunca avisó)', async () => {
+    nuevo(); estadoFlow = { estado: 3, monto: '36295', comercioOrden: 'wc_abc' };
+    const r = await reconciliarCobrosInicialesWeb();
+    assert.strictEqual(r.rechazadas, 1);
+    assert.strictEqual(sw.estado, 'ACEPTADA'); assert.strictEqual(sw.ordenComercioCollectPendiente, null);
+    assert.strictEqual(alertas.length, 1);
+    assert.deepStrictEqual(await reconciliarCobrosInicialesWeb(), { revisadas: 0, activadas: 0, rechazadas: 0, pendientes: 0, errores: 0 });
+  });
+
+  await caso('revisor: Flow dice PAGADO -> activa igual que el webhook, sin duplicar si llega el webhook despues', async () => {
+    nuevo(); estadoFlow = { estado: 2, monto: '36295', comercioOrden: 'wc_abc', fechaPago: '2026-10-29 12:00:00' };
+    const r = await reconciliarCobrosInicialesWeb();
+    assert.strictEqual(r.activadas, 1);
+    assert.strictEqual(sw.estado, 'ACTIVA'); assert.strictEqual(creadas.length, 2); assert.strictEqual(pagos.length, 2);
+    assert.strictEqual(await llamar(), 200); // llega el webhook tarde
+    assert.strictEqual(creadas.length, 2); assert.strictEqual(pagos.length, 2);
+  });
+
+  await caso('revisor: Flow aun sin resultado (estado 1) -> no toca nada', async () => {
+    nuevo(); estadoFlow = { estado: 1, monto: '36295', comercioOrden: 'wc_abc' };
+    const r = await reconciliarCobrosInicialesWeb();
+    assert.strictEqual(r.pendientes, 1); assert.strictEqual(sw.estado, 'COBRANDO'); assert.strictEqual(alertas.length, 0);
+  });
+
+  await caso('revisor: un cobro reciente (< 5 min) se deja tranquilo', async () => {
+    nuevo({ actualizadoEn: new Date() }); estadoFlow = { estado: 3, monto: '36295', comercioOrden: 'wc_abc' };
+    const r = await reconciliarCobrosInicialesWeb();
+    assert.strictEqual(r.revisadas, 0); assert.strictEqual(sw.estado, 'COBRANDO');
   });
 
   console.log(`✅ ${n} casos OK`);

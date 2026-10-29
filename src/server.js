@@ -62,6 +62,7 @@ const suscripcionRouter = require('./routes/suscripcion');
 const websiteLeadsRouter = require('./routes/websiteLeads');
 const { iniciarJobBloqueoVencidas } = require('./jobs/bloquearEmpresasVencidas');
 const { iniciarJobImpagos } = require('./jobs/impagos');
+const { iniciarJobReconciliarCobrosWeb } = require('./jobs/reconciliarCobrosWeb');
 const { serviciosPausadosPorImpago } = require('./lib/estadoServicio');
 
 // Job de opt-in de campañas (node-cron autoprogramado dentro de este mismo
@@ -74,6 +75,7 @@ require('./jobs/pausaCoexistence');
 require('./jobs/chequeoSaludDiario');
 iniciarJobBloqueoVencidas();
 iniciarJobImpagos();
+iniciarJobReconciliarCobrosWeb();
 
 const app = express();
 app.set('trust proxy', 1);

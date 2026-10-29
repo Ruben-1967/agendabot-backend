@@ -38,17 +38,11 @@ const { registrarPagoFlowEnClienteWeb } = require('./clientesWeb');
 const crypto = require('crypto');
 const { obtenerValorUfHoy } = require('../lib/uf');
 const { calcularCobroInicial, diaChileTexto } = require('../lib/preciosWeb');
-const { sumarMeses } = require('../lib/linkSuscripcionWeb');
+const { procesarEstadoCobroInicial, planIdFlow, diasHasta, sumarAnios, esRechazoExplicitoDeFlow } = require('../lib/cobroInicialWeb');
 
 // Va guardada en cada aceptación: si el contrato cambia, se sube la versión
 // (y el comentario de cabecera de contrato-sitio-web.html en norman-landing).
 const VERSION_CONTRATO = 'web-correos-v5';
-
-const DIA_MS = 24 * 60 * 60 * 1000;
-
-function planIdFlow(plan) {
-  return plan === 'ANUAL' ? process.env.FLOW_PLAN_ID_WEB_ANUAL : process.env.FLOW_PLAN_ID_WEB_MENSUAL;
-}
 
 // Dígito verificador real (módulo 11): acá el RUT queda en un registro legal
 // de aceptación, así que se rechaza uno mal tipeado en vez de guardarlo.
@@ -64,37 +58,6 @@ function esRutConDvValido(rutNormalizado) {
   const resto = 11 - (suma % 11);
   const dv = resto === 11 ? '0' : resto === 10 ? 'K' : String(resto);
   return dv === m[2];
-}
-
-// Medianoche UTC del día calendario de Chile en que cae `fecha`.
-function diaChile(fecha) {
-  const p = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Santiago', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(fecha);
-  const v = (t) => Number(p.find((x) => x.type === t).value);
-  return Date.UTC(v('year'), v('month') - 1, v('day'));
-}
-
-// Días de calendario en Chile entre hoy y `fecha` (no milisegundos: con ceil
-// sobre ms, registrar la tarjeta en la mañana corría el cobro un día).
-function diasHasta(fecha, ahora) {
-  return Math.max(0, Math.round((diaChile(fecha) - diaChile(ahora)) / DIA_MS));
-}
-
-// Suma años de calendario (29-feb + 1 año -> 28-feb, no 1-mar).
-function sumarAnios(fecha, anios) {
-  const r = new Date(fecha);
-  const dia = r.getUTCDate();
-  r.setUTCDate(1);
-  r.setUTCFullYear(r.getUTCFullYear() + anios);
-  const ultimo = new Date(Date.UTC(r.getUTCFullYear(), r.getUTCMonth() + 1, 0)).getUTCDate();
-  r.setUTCDate(Math.min(dia, ultimo));
-  return r;
-}
-
-// requestFlow/requestFlowPost lanzan "Flow error <code>: ..." cuando Flow
-// RESPONDE rechazando la operación (no se creó nada). Cualquier otro error
-// (timeout, red, BD) deja la duda de si Flow alcanzó a crear la suscripción.
-function esRechazoExplicitoDeFlow(error) {
-  return /^Flow error /.test(error?.message || '');
 }
 
 function validarDatos(body) {
@@ -393,11 +356,9 @@ router.get('/flow-callback-tarjeta', manejarCallbackTarjeta);
 router.post('/flow-callback-tarjeta', manejarCallbackTarjeta);
 
 // urlConfirmation del cobro inicial combinado. Llega solo { token }: el estado real
-// se consulta a Flow con una llamada nuestra y firmada (nunca se confía en el body).
-// Es REANUDABLE: todo fallo ANTES de que Flow cree algo revierte a COBRANDO y responde
-// 500 para que Flow reintente; un reintento retoma donde quedó (omite el plan si
-// flowSubscriptionId ya existe). Un error ambiguo (timeout) en una llamada a Flow nunca se
-// reintenta solo: podría duplicar la suscripción, así que se deja un log "REVISAR A MANO".
+// se consulta a Flow con una llamada nuestra y firmada (nunca se confía en el body). Lo que
+// se hace con el resultado vive en src/lib/cobroInicialWeb.js, compartido con el revisor
+// periódico (Flow no avisa los cobros rechazados).
 router.post('/flow-webhook-collect', async (req, res) => {
   try {
     const token = req.body.token;
@@ -408,121 +369,16 @@ router.post('/flow-webhook-collect', async (req, res) => {
 
     const estadoFlow = await flowClient.consultarEstado(token);
     if (String(estadoFlow.estado) === '1') return res.status(200).send('OK'); // aún sin resultado
-    const exitoso = String(estadoFlow.estado) === '2';
 
     const sw = await prisma.suscripcionWeb.findUnique({ where: { ordenComercioCollectPendiente: estadoFlow.comercioOrden } });
     if (!sw) {
-      if (!exitoso) return res.status(200).send('OK'); // rechazo ya procesado o aviso repetido
+      if (String(estadoFlow.estado) !== '2') return res.status(200).send('OK'); // rechazo ya procesado o aviso repetido
       console.error(`[web/flow-webhook-collect] REVISAR A MANO: cobro pagado ($${estadoFlow.monto}) sin SuscripcionWeb para ${estadoFlow.comercioOrden}`);
       return res.status(404).send('Suscripcion no encontrada');
     }
 
-    if (!exitoso) {
-      // Tarjeta rechazada u orden anulada: vuelve a ACEPTADA para que pueda reintentar desde el link.
-      await prisma.suscripcionWeb.updateMany({ where: { id: sw.id, estado: 'COBRANDO' }, data: { estado: 'ACEPTADA', ordenComercioCollectPendiente: null } });
-      console.warn(`[web/flow-webhook-collect] Cobro inicial NO pagado (estado ${estadoFlow.estado}) para ${sw.razonSocial || sw.nombreCliente} (${sw.id}); el cliente no recibe aviso, hay que contactarlo.`);
-      return res.status(200).send('OK');
-    }
-
-    const montoEsperado = (sw.montoPlanCollect || 0) + (sw.montoHostingCollect || 0);
-    if (Number(estadoFlow.monto) !== montoEsperado) {
-      console.error(`[web/flow-webhook-collect] REVISAR A MANO ${sw.id}: Flow cobró $${estadoFlow.monto} y se esperaba $${montoEsperado}; no se activó nada.`);
-      return res.status(200).send('OK');
-    }
-
-    const ahora = new Date();
-    // Mediodía de Chile del día de pago: base estable de los aniversarios (el instante UTC
-    // corría el cobro un día cuando se registraba de noche cerca de fin de mes).
-    const inicioContrato = sw.fechaInicioContrato || new Date(`${diaChileTexto(ahora)}T12:00:00-03:00`);
-    const tomado = await prisma.suscripcionWeb.updateMany({
-      where: { id: sw.id, estado: 'COBRANDO' },
-      data: { estado: 'ACTIVANDO', fechaInicioContrato: inicioContrato },
-    });
-    if (tomado.count === 0) {
-      if (sw.estado !== 'ACTIVANDO' && sw.estado !== 'ACTIVA') {
-        console.error(`[web/flow-webhook-collect] REVISAR A MANO ${sw.id}: Flow cobró $${estadoFlow.monto} pero la suscripción está en estado ${sw.estado}.`);
-      }
-      return res.status(200).send('OK'); // aviso repetido: ya se procesó
-    }
-    const revertir = () => prisma.suscripcionWeb.updateMany({ where: { id: sw.id, estado: 'ACTIVANDO' }, data: { estado: 'COBRANDO' } });
-    const fechaPago = estadoFlow.fechaPago && !isNaN(new Date(estadoFlow.fechaPago)) ? new Date(estadoFlow.fechaPago) : ahora;
-
-    // 1) El dinero ya entró: se anota primero (idempotente por flowToken). Si la BD falla acá,
-    // en Flow todavía no se creó nada: se revierte y Flow reintenta.
-    try {
-      for (const [tipo, monto] of [['PLAN', sw.montoPlanCollect], ['HOSTING', sw.montoHostingCollect]]) {
-        if (!monto) continue;
-        let pago;
-        try {
-          pago = await prisma.pagoWeb.create({
-            data: { suscripcionWebId: sw.id, tipo, monto, estado: 'EXITOSO', flowToken: `${token}:${tipo}` },
-          });
-        } catch (errorPago) {
-          if (errorPago.code !== 'P2002') throw errorPago;
-          pago = await prisma.pagoWeb.findUnique({ where: { flowToken: `${token}:${tipo}` } }); // ya anotado: se reintenta solo la ficha
-        }
-        if (pago) await registrarPagoFlowEnClienteWeb({ suscripcionWebId: sw.id, pagoWebId: pago.id, tipo, monto, planSuscripcion: sw.plan, fecha: fechaPago });
-      }
-      await prisma.suscripcionWeb.update({ where: { id: sw.id }, data: { fechaUltimoPago: fechaPago } });
-    } catch (errorBd) {
-      await revertir();
-      console.error(`[web/flow-webhook-collect] Falló la BD al anotar el pago de ${sw.id}; se reintenta:`, errorBd);
-      return res.status(500).send('Error anotando el pago');
-    }
-
-    const planId = planIdFlow(sw.plan);
-    const planIdHosting = process.env.FLOW_PLAN_ID_WEB_HOSTING;
-    // Primer período ya pagado: el plan vuelve a cobrar en 1 mes/año y el hosting en el aniversario.
-    const trialPlan = Math.max(1, diasHasta(sw.plan === 'ANUAL' ? sumarAnios(inicioContrato, 1) : sumarMeses(inicioContrato, 1), ahora));
-    const trialHosting = Math.max(1, diasHasta(sumarAnios(inicioContrato, 1), ahora));
-
-    // 2) Plan (se omite si un intento anterior ya lo creó).
-    if (!sw.flowSubscriptionId) {
-      let susPlan;
-      try {
-        susPlan = await flowClient.crearSuscripcionFlow({ planId, customerId: sw.flowCustomerId, trialPeriodDays: trialPlan });
-      } catch (errorPlan) {
-        if (esRechazoExplicitoDeFlow(errorPlan)) {
-          await revertir(); // Flow no creó nada: Flow reintenta el aviso
-          console.error(`[web/flow-webhook-collect] Flow rechazó crear el plan de ${sw.id}; se reintenta:`, errorPlan.message);
-          return res.status(500).send('Error creando la suscripcion');
-        }
-        console.error(`[web/flow-webhook-collect] REVISAR A MANO ${sw.id}: cobro hecho pero no se sabe si Flow creó el plan:`, errorPlan);
-        return res.status(200).send('OK');
-      }
-      try {
-        await prisma.suscripcionWeb.update({ where: { id: sw.id }, data: { flowSubscriptionId: susPlan.subscriptionId } });
-      } catch (errorGuardar) {
-        // El plan YA existe en Flow: nunca revertir (un reintento crearía un segundo plan).
-        console.error(`[web/flow-webhook-collect] REVISAR A MANO ${sw.id}: plan creado en Flow (${susPlan.subscriptionId}) pero no se pudo guardar:`, errorGuardar);
-        return res.status(200).send('OK');
-      }
-    }
-
-    // 3) Hosting (se omite si ya existe) y activación.
-    let hostingId = sw.flowSubscriptionIdHosting;
-    if (!hostingId) {
-      try {
-        hostingId = (await flowClient.crearSuscripcionFlow({ planId: planIdHosting, customerId: sw.flowCustomerId, trialPeriodDays: trialHosting })).subscriptionId;
-      } catch (errorHosting) {
-        if (esRechazoExplicitoDeFlow(errorHosting)) {
-          await revertir(); // el plan ya quedó guardado: el reintento retoma desde el hosting
-          console.error(`[web/flow-webhook-collect] Flow rechazó crear el hosting de ${sw.id}; se reintenta:`, errorHosting.message);
-          return res.status(500).send('Error creando la suscripcion de hosting');
-        }
-        console.error(`[web/flow-webhook-collect] REVISAR A MANO ${sw.id}: plan creado pero no se sabe si Flow creó el hosting:`, errorHosting);
-        return res.status(200).send('OK');
-      }
-    }
-    try {
-      await prisma.suscripcionWeb.update({ where: { id: sw.id }, data: { flowSubscriptionIdHosting: hostingId, estado: 'ACTIVA' } });
-    } catch (errorFinal) {
-      console.error(`[web/flow-webhook-collect] REVISAR A MANO ${sw.id}: hosting creado en Flow (${hostingId}) pero no se pudo guardar/activar:`, errorFinal);
-      return res.status(200).send('OK');
-    }
-
-    console.log(`[web/flow-webhook-collect] Suscripción web ACTIVA: ${sw.id} (${sw.razonSocial}, ${sw.plan}); cobro inicial $${estadoFlow.monto}`);
-    res.status(200).send('OK');
+    const r = await procesarEstadoCobroInicial(sw, estadoFlow);
+    return res.status(r.http).send(r.texto);
   } catch (error) {
     console.error('[web/flow-webhook-collect] Error:', error);
     res.status(500).send('Error procesando webhook');
