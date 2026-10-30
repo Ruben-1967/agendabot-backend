@@ -194,6 +194,12 @@ const anthropic = new Anthropic({
 // un modelo mejor reduce cuánto disparan, no reemplaza la necesidad de
 // tenerlas.
 const MODEL = 'claude-sonnet-5';
+// Bot de atención con guion (Multidigital): Haiku 5.5 desde el 2026-10-30. Prueba con 20
+// conversaciones reales en producción: respuestas iguales o mejores que Sonnet 5 (Rubén) a
+// ~US$0,0008 por respuesta. Solo el modo informativo CON guion; el agendamiento
+// (Ahorróptica y el resto) sigue en MODEL.
+const MODEL_ATENCION_GUION = 'claude-haiku-5-5';
+const modeloInformativo = (empresa) => (empresa?.guionAtencion ? MODEL_ATENCION_GUION : MODEL);
 // Sonnet 5 piensa por defecto (thinking adaptativo) y esos tokens cuentan contra
 // max_tokens: si se los come todos, la respuesta vuelve sin texto. Visto en
 // producción el 2026-10-24 (primer interesado real de Colombia): 1500 de 1500 en
@@ -1383,10 +1389,10 @@ async function extraerDatosLeadWeb(mensajes) {
 // pausarse), se le pide al modelo SOLO el mensaje de cierre del guion. Sin herramientas
 // disponibles para esta respuesta (tool_choice none). Si falla, devuelve '' y se usa el
 // cierre por defecto: el lead igual queda derivado.
-async function pedirCierreDelGuion(systemPrompt, herramientas, messages, contenidoAsistente, toolUseId) {
+async function pedirCierreDelGuion(systemPrompt, herramientas, messages, contenidoAsistente, toolUseId, modelo = MODEL) {
   try {
     const response = await anthropic.messages.create({
-      model: MODEL,
+      model: modelo,
       max_tokens: MAX_TOKENS_RESPUESTA,
       system: sistemaConCache(systemPrompt),
       tools: herramientas,
@@ -1509,7 +1515,7 @@ ${empresa.guionAtencion ? '' : 'Instrucciones:\n'}${instruccionesModoInformativo
     let texto = '';
     try {
       const response = await anthropic.messages.create({
-        model: MODEL, max_tokens: MAX_TOKENS_RESPUESTA, system: sistemaConCache(systemPrompt), tools: herramientas, tool_choice: { type: 'none' }, messages: mensajesConCache(messages),
+        model: modeloInformativo(empresa), max_tokens: MAX_TOKENS_RESPUESTA, system: sistemaConCache(systemPrompt), tools: herramientas, tool_choice: { type: 'none' }, messages: mensajesConCache(messages),
       });
       registrarUsoCache('precio', response);
       const bloque = response.content.find((b) => b.type === 'text');
@@ -1531,7 +1537,7 @@ ${empresa.guionAtencion ? '' : 'Instrucciones:\n'}${instruccionesModoInformativo
   let forzar = false;
   for (let intentos = 0; intentos < 2; intentos++) {
     const response = await anthropic.messages.create({
-      model: MODEL,
+      model: modeloInformativo(empresa),
       max_tokens: MAX_TOKENS_RESPUESTA,
       system: sistemaConCache(systemPrompt),
       tools: herramientas,
@@ -1549,7 +1555,7 @@ ${empresa.guionAtencion ? '' : 'Instrucciones:\n'}${instruccionesModoInformativo
       if (empresa.guionAtencion && !cierre) {
         // A veces el modelo solo llama la herramienta, sin texto (visto en prueba 2026-10-23,
         // camino de la llamada): se le devuelve el resultado y se le pide el cierre del guion.
-        cierre = await pedirCierreDelGuion(systemPrompt, herramientas, messages, response.content, usoHerramienta.id);
+        cierre = await pedirCierreDelGuion(systemPrompt, herramientas, messages, response.content, usoHerramienta.id, modeloInformativo(empresa));
       }
       return { texto: cierre || CIERRE_POR_DEFECTO, interactivo: null, escaladoAHumano: true };
     }
@@ -1628,9 +1634,15 @@ function corregirVoseo(texto) {
   return resultado;
 }
 
+// WhatsApp marca la negrita con UN asterisco; los modelos a veces escriben **texto**
+// (markdown) y el cliente veía los asteriscos dobles.
+function negritaWhatsApp(texto) {
+  return typeof texto === 'string' ? texto.replace(/\*\*([^*\n]+?)\*\*/g, '*$1*') : texto;
+}
+
 async function generarRespuestaChatbot(params) {
   const resultado = await generarRespuestaChatbotSinCorregirVoseo(params);
-  return { ...resultado, texto: corregirVoseo(resultado.texto) };
+  return { ...resultado, texto: negritaWhatsApp(corregirVoseo(resultado.texto)) };
 }
 
 module.exports = {
