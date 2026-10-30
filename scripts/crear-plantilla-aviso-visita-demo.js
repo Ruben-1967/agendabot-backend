@@ -4,6 +4,8 @@
  * una demo de muestras.multidigital.cl (ver src/routes/visitasDemo.js). Sale del número
  * de la plataforma (DEMO_*), igual que la alerta de cliente que pide humano.
  * El cuerpo no parte con una variable: Meta rechaza esas plantillas.
+ * La 1.ª versión (aviso_visita_demo, 30-oct) la rechazó por INCORRECT_CATEGORY: el texto
+ * tiene que leerse como alerta de actividad de una cuenta, no como un aviso suelto.
  *
  * Requiere DEMO_WHATSAPP_ACCESS_TOKEN y DEMO_WHATSAPP_WABA_ID.
  *
@@ -17,7 +19,7 @@ require('dotenv').config();
 
 const GRAPH_API_VERSION = 'v21.0';
 // Debe coincidir con TEMPLATE_AVISO_VISITA en src/routes/visitasDemo.js
-const NOMBRE_PLANTILLA = 'aviso_visita_demo';
+const NOMBRE_PLANTILLA = 'alerta_visita_demo';
 
 async function main() {
   const accessToken = process.env.DEMO_WHATSAPP_ACCESS_TOKEN;
@@ -34,7 +36,9 @@ async function main() {
     components: [
       {
         type: 'BODY',
-        text: 'Aviso de visita: alguien abrió la demo {{1}} desde un {{2}}. Es la primera visita de hoy a esa demo.\n\nRevisa su ficha antes del próximo seguimiento.',
+        text: 'Alerta de actividad de tu cuenta Multidigital: tu página de demostración {{1}} registró su primera visita de hoy, desde un {{2}}.
+
+Esta alerta se envía una vez al día por página.',
         example: { body_text: [['carima.html', 'celular']] },
       },
       { type: 'FOOTER', text: 'Multidigital' },
