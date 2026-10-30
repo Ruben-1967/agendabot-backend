@@ -2,9 +2,9 @@
 //
 // POST /visitas-demo  {slug, dispositivo}  — público, lo llama muestras/visita.js desde
 //   cada demo tras 5 s con la página a la vista. Guarda la visita y, si es la primera
-//   del día (hora Chile) de esa demo, le avisa a Rubén por WhatsApp con la plantilla
-//   alerta_visita_demo (ver scripts/crear-plantilla-aviso-visita-demo.js). Nunca le
-//   escribe al prospecto.
+//   del día (hora Chile) de esa demo, le avisa a Rubén por correo (ver
+//   src/services/emailAvisoVisitaDemo.js; no por WhatsApp, para no depender de
+//   plantillas de Meta). Nunca le escribe al prospecto.
 // GET /visitas-demo?desde=YYYY-MM-DD  — con header x-clave = VISITAS_DEMO_CLAVE; lo usa
 //   seguimiento.py (multidigital-tools) para elegir el texto del seguimiento.
 //
@@ -13,13 +13,12 @@
 
 const express = require('express');
 const prisma = require('../lib/prisma');
-const { sendWhatsAppTemplateMessage } = require('../services/whatsapp');
+const { enviarAvisoVisitaDemo } = require('../services/emailAvisoVisitaDemo');
 const { fechaISOEnChile, horaChileAFechaUTC } = require('../lib/horaChile');
 
 const router = express.Router();
 
 const ORIGEN_MUESTRAS = 'https://muestras.multidigital.cl';
-const TEMPLATE_AVISO_VISITA = 'alerta_visita_demo'; // debe existir y estar aprobada en Meta (aviso_visita_demo fue rechazada)
 const PATRON_SLUG = /^[a-z0-9][a-z0-9_-]{0,79}$/i;
 const PATRON_BOT = /bot|crawl|spider|facebookexternalhit|facebot|whatsapp|preview|headless|lighthouse|slurp/i;
 const MAX_VISITAS_POR_IP_HORA = 30;
@@ -42,21 +41,8 @@ router.use((req, res, next) => {
 });
 
 async function avisarARuben(slug, dispositivo) {
-  const phoneNumberId = process.env.DEMO_PHONE_NUMBER_ID;
-  const accessToken = process.env.DEMO_WHATSAPP_ACCESS_TOKEN;
-  const telefono = process.env.VISITAS_DEMO_AVISO_TELEFONO;
-  if (!phoneNumberId || !accessToken || !telefono) {
-    console.warn(`[VISITAS-DEMO] Primera visita de hoy a ${slug} (${dispositivo}), sin aviso: falta VISITAS_DEMO_AVISO_TELEFONO o la config de plataforma.`);
-    return;
-  }
   try {
-    await sendWhatsAppTemplateMessage({
-      phoneNumberId,
-      accessToken,
-      to: telefono,
-      templateName: TEMPLATE_AVISO_VISITA,
-      variables: [`${slug}.html`, dispositivo],
-    });
+    await enviarAvisoVisitaDemo({ slug, dispositivo });
   } catch (error) {
     console.error(`[VISITAS-DEMO] No se pudo avisar la visita a ${slug}:`, error.message);
   }
