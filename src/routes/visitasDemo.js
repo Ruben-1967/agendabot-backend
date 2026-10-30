@@ -40,9 +40,31 @@ router.use((req, res, next) => {
   next();
 });
 
-async function avisarARuben(slug, dispositivo) {
+// Historial de la demo para que el aviso sirva para decidir (pedido de Rubén, 30-oct).
+async function armarDatosAviso(slug, dispositivo, inicioDelDia) {
+  const visitas = await prisma.visitaDemo.findMany({ where: { slug }, select: { creadoEn: true, dispositivo: true }, orderBy: { creadoEn: 'asc' } });
+  const hace7Dias = Date.now() - 7 * 86400000;
+  const otrasHoy = await prisma.visitaDemo.groupBy({
+    by: ['slug'],
+    where: { creadoEn: { gte: inicioDelDia }, slug: { not: slug } },
+    _count: { _all: true },
+  });
+  return {
+    slug,
+    dispositivo,
+    total: visitas.length,
+    ultimos7: visitas.filter((v) => v.creadoEn.getTime() >= hace7Dias).length,
+    celular: visitas.filter((v) => v.dispositivo === 'celular').length,
+    computador: visitas.filter((v) => v.dispositivo !== 'celular').length,
+    primera: visitas[0]?.creadoEn || new Date(),
+    anterior: visitas.length > 1 ? visitas[visitas.length - 2].creadoEn : null,
+    otrasHoy: otrasHoy.map((o) => ({ slug: o.slug, visitas: o._count._all })).sort((a, b) => b.visitas - a.visitas),
+  };
+}
+
+async function avisarARuben(slug, dispositivo, inicioDelDia) {
   try {
-    await enviarAvisoVisitaDemo({ slug, dispositivo });
+    await enviarAvisoVisitaDemo(await armarDatosAviso(slug, dispositivo, inicioDelDia));
   } catch (error) {
     console.error(`[VISITAS-DEMO] No se pudo avisar la visita a ${slug}:`, error.message);
   }
@@ -59,7 +81,7 @@ router.post('/', express.json({ limit: '1kb' }), async (req, res) => {
     const inicioDelDia = horaChileAFechaUTC(fechaISOEnChile(), '00:00');
     const yaHabiaHoy = await prisma.visitaDemo.count({ where: { slug, creadoEn: { gte: inicioDelDia } } });
     await prisma.visitaDemo.create({ data: { slug, dispositivo } });
-    if (yaHabiaHoy === 0) avisarARuben(slug, dispositivo); // sin await: no demora la respuesta, nunca lanza
+    if (yaHabiaHoy === 0) avisarARuben(slug, dispositivo, inicioDelDia); // sin await: no demora la respuesta, nunca lanza
 
     res.sendStatus(204);
   } catch (error) {
