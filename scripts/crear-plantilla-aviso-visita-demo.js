@@ -36,9 +36,7 @@ async function main() {
     components: [
       {
         type: 'BODY',
-        text: 'Alerta de actividad de tu cuenta Multidigital: tu página de demostración {{1}} registró su primera visita de hoy, desde un {{2}}.
-
-Esta alerta se envía una vez al día por página.',
+        text: 'Alerta de actividad de tu cuenta Multidigital: tu página de demostración {{1}} registró su primera visita de hoy, desde un {{2}}.\n\nEsta alerta se envía una vez al día por página.',
         example: { body_text: [['carima.html', 'celular']] },
       },
       { type: 'FOOTER', text: 'Multidigital' },
