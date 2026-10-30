@@ -1683,3 +1683,14 @@ model PagoWeb {
 
   @@index([suscripcionWebId])
 }
+// Visitas a las demos de muestras.multidigital.cl (2026-10-30): las avisa un script en
+// cada demo (muestras/visita.js) a POST /visitas-demo. Solo navegadores reales: las
+// vistas previas de WhatsApp/Facebook no ejecutan JavaScript. Ver src/routes/visitasDemo.js.
+model VisitaDemo {
+  id          String   @id @default(uuid())
+  slug        String   // nombre del archivo de la demo, sin .html (ej. "carima")
+  dispositivo String   // "celular" | "computador"
+  creadoEn    DateTime @default(now())
+
+  @@index([slug, creadoEn])
+}

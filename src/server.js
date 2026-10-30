@@ -257,6 +257,7 @@ app.use('/disponibilidad', require('./routes/disponibilidad'));
 app.use('/suscripcion', suscripcionRouter);
 app.use('/web', require('./routes/suscripcionWeb')); // suscripción Multidigital sitio web + correos (Flow)
 app.use('/website-leads', websiteLeadsRouter);
+app.use('/visitas-demo', require('./routes/visitasDemo')); // visitas a las demos de muestras.multidigital.cl
 app.use('/admin-vendedores', require('./routes/adminVendedores'));
 app.use('/admin-vendedores/catalogo-demo', require('./routes/catalogoDemoAdmin'));
 app.use('/admin-vendedores/clientes-web', require('./routes/clientesWeb')); // panel Clientes Web (Multidigital)
