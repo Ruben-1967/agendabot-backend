@@ -106,8 +106,11 @@ app.use(express.urlencoded({ extended: true }));
 // comentario de arriba, y bloqueando cualquier prueba local o de Staging
 // que no tuviera esa env var seteada exactamente igual.
 app.use((req, res, next) => {
+  // /visitas-demo maneja su propio CORS (solo muestras.multidigital.cl): si este bloque
+  // contestara el preflight, el navegador bloquearía el aviso de visita.
+  if (req.path.startsWith('/visitas-demo')) return next();
   const origen = req.get('origin');
-  const permitido = origenesPermitidos === true || origenesPermitidos.includes(origen) || origenesPermitidos.includes('*');
+  const permitido =origenesPermitidos === true || origenesPermitidos.includes(origen) || origenesPermitidos.includes('*');
 
   if (permitido) {
     res.header('Access-Control-Allow-Origin', origen);
