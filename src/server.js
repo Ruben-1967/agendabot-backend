@@ -73,6 +73,7 @@ require('./jobs/rankingCache');
 require('./jobs/cierreRankingMensual');
 require('./jobs/pausaCoexistence');
 require('./jobs/chequeoSaludDiario');
+require('./jobs/enviarPortafolio');
 iniciarJobBloqueoVencidas();
 iniciarJobImpagos();
 iniciarJobReconciliarCobrosWeb();
