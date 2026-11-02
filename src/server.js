@@ -63,6 +63,7 @@ const websiteLeadsRouter = require('./routes/websiteLeads');
 const { iniciarJobBloqueoVencidas } = require('./jobs/bloquearEmpresasVencidas');
 const { iniciarJobImpagos } = require('./jobs/impagos');
 const { iniciarJobReconciliarCobrosWeb } = require('./jobs/reconciliarCobrosWeb');
+const { iniciarJobVigilarTokensWhatsApp } = require('./jobs/vigilarTokensWhatsApp');
 const { serviciosPausadosPorImpago } = require('./lib/estadoServicio');
 
 // Job de opt-in de campañas (node-cron autoprogramado dentro de este mismo
@@ -78,6 +79,7 @@ require('./jobs/resumenVisitasDemo');
 iniciarJobBloqueoVencidas();
 iniciarJobImpagos();
 iniciarJobReconciliarCobrosWeb();
+iniciarJobVigilarTokensWhatsApp();
 
 const app = express();
 app.set('trust proxy', 1);
