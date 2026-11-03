@@ -12,7 +12,7 @@
  *   3. GET|POST /web/flow-callback-tarjeta?ref=  -> Flow vuelve acá; se crean
  *      2 suscripciones: el plan (mensual/anual, con trial hasta
  *      fechaPrimerCobro si el primer período ya se pagó por fuera) y el hosting
- *      anual (1 UF + IVA) que parte en el primer aniversario.
+ *      anual (UF_HOSTING_WEB + IVA, ver src/lib/preciosWeb.js) que parte en el primer aniversario.
  *   4. POST /web/flow-webhook  -> urlCallback de los 3 planes web de Flow
  *      (scripts/crear-planes-flow-web.js); registra cada cobro en PagoWeb.
  *

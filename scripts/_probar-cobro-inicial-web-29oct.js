@@ -26,19 +26,20 @@ ok('sin promo desde el 1-dic', () => {
   assert.strictEqual(descuentoHostingPrimerAnio(dia('2027-03-10')), 0);
 });
 
-const UF = 41199.85; // UF del 22-oct (la usada al crear el plan de hosting en Flow)
-ok('hosting completo = el monto del plan de Flow ($49.028)', () => {
-  assert.strictEqual(calcularCobroInicial({ montoPlanConIva: 11781, valorUf: UF, fecha: dia('2026-12-15') }).montoHosting, 49028);
+const UF = 41199.85; // UF del 22-oct
+const HOSTING = Math.round(UF * 0.9 * 1.19); // 0,9 UF + IVA (afiches de noviembre, 03-nov)
+ok('hosting completo = 0,9 UF + IVA, sin promo desde el 1-dic', () => {
+  assert.strictEqual(calcularCobroInicial({ montoPlanConIva: 11781, valorUf: UF, fecha: dia('2026-12-15') }).montoHosting, HOSTING);
 });
 ok('mensual + hosting con 50%', () => {
   const c = calcularCobroInicial({ montoPlanConIva: 11781, valorUf: UF, fecha: dia('2026-10-29') });
-  assert.strictEqual(c.montoHosting, Math.round(UF * 0.5 * 1.19));
+  assert.strictEqual(c.montoHosting, Math.round(UF * 0.9 * 0.5 * 1.19));
   assert.strictEqual(c.total, 11781 + c.montoHosting);
-  assert.strictEqual(c.montoHostingCompleto, 49028);
+  assert.strictEqual(c.montoHostingCompleto, HOSTING);
 });
-ok('anual + hosting con 20%', () => {
+ok('anual + hosting con 20% (0,72 UF + IVA, como el afiche)', () => {
   const c = calcularCobroInicial({ montoPlanConIva: 113050, valorUf: UF, fecha: dia('2026-11-10') });
-  assert.strictEqual(c.montoHosting, Math.round(UF * 0.8 * 1.19));
+  assert.strictEqual(c.montoHosting, Math.round(UF * 0.72 * 1.19));
   assert.strictEqual(c.total, 113050 + c.montoHosting);
 });
 
@@ -47,6 +48,7 @@ ok('la pagina muestra "Hoy pagas" con el desglose', () => {
   const c = calcularCobroInicial({ montoPlanConIva: 11781, valorUf: UF, fecha: dia('2026-10-29') });
   const html = renderSuscribir(sw, { cobroInicial: c });
   assert.ok(html.includes('Hoy pagas'));
+  assert.ok(html.includes('0,9 UF + IVA') && !html.includes('1 UF'));
   assert.ok(html.includes('50% de descuento'));
   assert.ok(html.includes(c.total.toLocaleString('es-CL')));
 });

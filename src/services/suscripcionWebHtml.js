@@ -96,11 +96,11 @@ function renderSuscribir(sw, { error, valores = {}, cobroInicial = null } = {}) 
   const v = (campo, porDefecto = '') => escapar(valores[campo] ?? porDefecto);
   const puntos = cobroInicial
     ? `<li>El plan se vuelve a cobrar automáticamente cada ${esAnual ? 'año' : 'mes'}, con la tarjeta que registres.</li>
-    <li>Hosting: desde el primer aniversario, 1 UF + IVA al año.</li>
+    <li>Hosting: desde el primer aniversario, 0,9 UF + IVA al año.</li>
     <li>Sin permanencia: te das de baja cuando quieras, avisándonos por escrito.</li>`
     : `<li>${textoPrimerCargo(sw)}</li>
     <li>Luego se cobra automáticamente cada ${esAnual ? 'año' : 'mes'} con la tarjeta que registres.</li>
-    <li>Hosting: 1 UF + IVA al año, salvo condiciones especiales acordadas contigo.</li>
+    <li>Hosting: 0,9 UF + IVA al año, salvo condiciones especiales acordadas contigo.</li>
     <li>Sin permanencia: te das de baja cuando quieras, avisándonos por escrito.</li>`;
   const cuerpo = `
 <h1>Activa tu suscripción</h1>

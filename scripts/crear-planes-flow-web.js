@@ -4,7 +4,8 @@
  * de Multidigital (sitio web + correos), ver src/routes/suscripcionWeb.js:
  *   - multidigital-web-mensual: $9.900 + IVA al mes
  *   - multidigital-web-anual:   $95.000 + IVA al año
- *   - multidigital-web-hosting: 1 UF + IVA al año (valor de la UF del día en que se crea)
+ *   - multidigital-web-hosting: UF_HOSTING_WEB + IVA al año (valor de la UF del día en que se crea).
+ *     En producción ya existe (1 UF, 22-oct); el de 0,9 UF lo crea _crear-plan-hosting-09uf-web-03nov.js
  * Su urlCallback es /web/flow-webhook, NO el de TotemSystem.
  *
  * Imprime los planId: guardarlos en Render como FLOW_PLAN_ID_WEB_MENSUAL,
@@ -19,7 +20,7 @@ require('dotenv').config();
 const { crearPlanFlow } = require('../src/services/flowClient');
 const { obtenerValorUfHoy } = require('../src/lib/uf');
 const { conIva } = require('../src/lib/iva');
-const { PRECIOS_NETOS_WEB } = require('../src/lib/preciosWeb');
+const { PRECIOS_NETOS_WEB, UF_HOSTING_WEB } = require('../src/lib/preciosWeb');
 
 const VARIABLES = ['FLOW_PLAN_ID_WEB_MENSUAL', 'FLOW_PLAN_ID_WEB_ANUAL', 'FLOW_PLAN_ID_WEB_HOSTING'];
 
@@ -41,7 +42,7 @@ async function main() {
   const planes = [
     { variable: 'FLOW_PLAN_ID_WEB_MENSUAL', planId: 'multidigital-web-mensual', nombre: 'Multidigital Sitio web + correos (mensual)', montoClp: conIva(PRECIOS_NETOS_WEB.MENSUAL), interval: 3 },
     { variable: 'FLOW_PLAN_ID_WEB_ANUAL', planId: 'multidigital-web-anual', nombre: 'Multidigital Sitio web + correos (anual)', montoClp: conIva(PRECIOS_NETOS_WEB.ANUAL), interval: 4 },
-    { variable: 'FLOW_PLAN_ID_WEB_HOSTING', planId: 'multidigital-web-hosting', nombre: 'Multidigital Hosting anual (1 UF)', montoClp: conIva(valorUf), interval: 4 },
+    { variable: 'FLOW_PLAN_ID_WEB_HOSTING', planId: 'multidigital-web-hosting', nombre: `Multidigital Hosting anual (${UF_HOSTING_WEB} UF)`, montoClp: conIva(valorUf * UF_HOSTING_WEB), interval: 4 },
   ];
 
   for (const p of planes) {

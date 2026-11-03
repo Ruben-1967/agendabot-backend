@@ -7,9 +7,14 @@ const { conIva } = require('./iva');
 
 const PRECIOS_NETOS_WEB = { MENSUAL: 9900, ANUAL: 95000 };
 
+// Hosting anual en UF, neto (afiches de noviembre, decisión de Rubén 2026-11-03;
+// antes 1 UF). El cobro de cada aniversario lo hace el plan de Flow de
+// FLOW_PLAN_ID_WEB_HOSTING, que se creó con este valor: si cambia, crear un plan nuevo.
+const UF_HOSTING_WEB = 0.9;
+
 // Descuento sobre el hosting del PRIMER año (decisión de Rubén, 2026-10-29):
 // 50% hasta el 31-oct, 20% durante noviembre. Pasado noviembre no hay promo
-// (1 UF + IVA completo) hasta que se defina otra: agregar un tramo acá.
+// (UF_HOSTING_WEB + IVA completo) hasta que se defina otra: agregar un tramo acá.
 // "hasta" es el último día (inclusive) en hora de Chile, formato AAAA-MM-DD.
 const TRAMOS_DESCUENTO_HOSTING_1ER_ANIO = [
   { hasta: '2026-10-31', descuento: 0.5 },
@@ -30,7 +35,7 @@ function descuentoHostingPrimerAnio(fecha = new Date()) {
 /**
  * Lo que se cobra al registrar la tarjeta (con IVA): el plan del primer
  * período + el hosting del primer año con el descuento vigente. El hosting
- * completo (1 UF + IVA) recién se cobra en cada aniversario.
+ * completo (UF_HOSTING_WEB + IVA) recién se cobra en cada aniversario.
  * @param {Object} p
  * @param {number} p.montoPlanConIva  - lo que cobra Flow por período del plan
  * @param {number} p.valorUf          - valor de la UF del día
@@ -38,14 +43,15 @@ function descuentoHostingPrimerAnio(fecha = new Date()) {
  */
 function calcularCobroInicial({ montoPlanConIva, valorUf, fecha = new Date() }) {
   const descuento = descuentoHostingPrimerAnio(fecha);
-  const montoHosting = conIva(valorUf * (1 - descuento));
+  const hostingNeto = valorUf * UF_HOSTING_WEB;
+  const montoHosting = conIva(hostingNeto * (1 - descuento));
   return {
     descuento,
     montoPlan: montoPlanConIva,
     montoHosting,
-    montoHostingCompleto: conIva(valorUf),
+    montoHostingCompleto: conIva(hostingNeto),
     total: montoPlanConIva + montoHosting,
   };
 }
 
-module.exports = { PRECIOS_NETOS_WEB, descuentoHostingPrimerAnio, calcularCobroInicial, diaChileTexto, TRAMOS_DESCUENTO_HOSTING_1ER_ANIO };
+module.exports = { PRECIOS_NETOS_WEB, UF_HOSTING_WEB, descuentoHostingPrimerAnio, calcularCobroInicial, diaChileTexto, TRAMOS_DESCUENTO_HOSTING_1ER_ANIO };
