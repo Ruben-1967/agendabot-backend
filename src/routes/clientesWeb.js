@@ -90,6 +90,20 @@ function vistaSuscripcion(sw) {
   };
 }
 
+// Los 4 datos que pide el guion del bot (2026-11-09): sin ellos no se puede preparar el ejemplo
+// ni pasar el interesado a imágenes/video. El bot crea la ficha igual (no se pierde el contacto),
+// y el panel muestra lo que falta. Un negocio "Interesado +569..." o "por definir" no cuenta.
+const NEGOCIO_SIN_NOMBRE = /^interesado\b|por definir|sin nombre|^no s[eé]$|^\(?ninguno\)?$/i;
+function datosFaltantes(c) {
+  const vacio = (v) => !v || !String(v).trim();
+  const faltan = [];
+  if (vacio(c.contactoNombre)) faltan.push('nombre');
+  if (vacio(c.rubro)) faltan.push('rubro');
+  if (vacio(c.negocio) || NEGOCIO_SIN_NOMBRE.test(String(c.negocio).trim())) faltan.push('empresa');
+  if (vacio(c.comuna)) faltan.push('ciudad');
+  return faltan;
+}
+
 router.get('/', async (req, res) => {
   try {
     const clientes = await prisma.clienteWeb.findMany({
@@ -104,6 +118,7 @@ router.get('/', async (req, res) => {
       etapas: ETAPAS,
       clientes: clientes.map(({ movimientos, suscripcionWeb, ...c }) => ({
         ...c,
+        datosFaltantes: datosFaltantes(c),
         cuenta: resumenCuenta(movimientos),
         suscripcion: vistaSuscripcion(suscripcionWeb),
       })),
@@ -125,7 +140,7 @@ router.get('/:id', async (req, res) => {
     });
     if (!c) return res.status(404).json({ error: 'Cliente no encontrado' });
     const { suscripcionWeb, ...resto } = c;
-    res.json({ ...resto, cuenta: resumenCuenta(c.movimientos), suscripcion: vistaSuscripcion(suscripcionWeb) });
+    res.json({ ...resto, datosFaltantes: datosFaltantes(c), cuenta: resumenCuenta(c.movimientos), suscripcion: vistaSuscripcion(suscripcionWeb) });
   } catch (error) {
     console.error('[clientes-web GET :id] Error:', error);
     res.status(500).json({ error: 'No se pudo cargar el cliente' });
@@ -295,4 +310,4 @@ async function registrarPagoFlowEnClienteWeb({ suscripcionWebId, pagoWebId, tipo
 
 module.exports = router;
 module.exports.registrarPagoFlowEnClienteWeb = registrarPagoFlowEnClienteWeb;
-module.exports._interno = { resumenCuenta, fechasPorEtapa, datosDesdeBody, ETAPAS };
+module.exports._interno = { resumenCuenta, fechasPorEtapa, datosDesdeBody, datosFaltantes, ETAPAS };
