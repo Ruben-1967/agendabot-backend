@@ -7,6 +7,7 @@
 const prisma = require('./prisma');
 const { extraerDatosLeadWeb } = require('../services/claude');
 const { esIdUsuarioWhatsApp } = require('../services/whatsapp');
+const { buscarOrigenAnuncio } = require('./origenAnuncio');
 
 // Empresa cuyos interesados alimentan el panel (Multidigital, la del WhatsApp de anuncios).
 const EMPRESA_ID_CLIENTES_WEB = process.env.EMPRESA_ID_CLIENTES_WEB || 'b087c530-5f89-4ecd-8cfb-9fda7069a426';
@@ -36,6 +37,10 @@ async function registrarLeadDesdeBot({ empresa, telefono, canal, mensajes }) {
       : esIdUsuarioWhatsApp(telefono) ? String(telefono) : String(telefono).replace(/\D/g, '');
     const preferencia = ['EJEMPLO', 'LLAMADA'].includes(datos.preferencia) ? datos.preferencia : null;
     const notaCanal = canal !== 'whatsapp' ? `Llegó por ${canal} (id ${telefono}).` : null;
+    // Anuncio desde el que escribió (solo WhatsApp: Meta lo manda en el primer mensaje).
+    const origen = canal === 'whatsapp'
+      ? await buscarOrigenAnuncio({ phoneNumberId: empresa.whatsappNumeroId, telefono })
+      : null;
     const campos = {
       negocio: limpio(datos.negocio),
       rubro: limpio(datos.rubro),
@@ -43,6 +48,10 @@ async function registrarLeadDesdeBot({ empresa, telefono, canal, mensajes }) {
       comuna: limpio(datos.comuna),
       preferencia,
       horarioLlamada: limpio(datos.horarioLlamada),
+      anuncioOrigen: origen ? {
+        sourceId: origen.sourceId, sourceType: origen.sourceType, sourceUrl: origen.sourceUrl,
+        titulo: origen.titulo, texto: origen.texto, fecha: origen.creadoEn,
+      } : null,
     };
 
     // Misma persona con una ficha abierta: se completan los datos que falten, sin duplicar.

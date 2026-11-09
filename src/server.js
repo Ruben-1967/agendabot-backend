@@ -54,6 +54,7 @@ const authVendedorRouter = require('./routes/authVendedor');
 const demosRouter = require('./routes/demos');
 const { generarHorasSimuladasParaDia } = require('./lib/agendaDemoSimulada');
 const { intentarMarcarProcesado } = require('./lib/idempotenciaWebhook');
+const { guardarOrigenAnuncio } = require('./lib/origenAnuncio');
 const { renderPanelDemo } = require('./services/panelDemoHtml');
 const { renderSitioNegocio } = require('./services/sitioNegocioHtml');
 const listaEsperaRouter = require('./routes/listaEspera');
@@ -709,6 +710,12 @@ app.post('/webhook/whatsapp', verificarFirmaWebhookWhatsApp, async (req, res) =>
     // ese id pasa a ser su identificador acá, y los envíos usan "recipient" (whatsapp.js).
     const telefonoCliente = mensaje.from || mensaje.from_user_id;
     const nombreContacto = value.contacts?.[0]?.profile?.name || null;
+
+    // Escribió desde un anuncio "Click to WhatsApp": se guarda de cuál, para medir qué
+    // campaña trae clientes que pagan (ver src/lib/origenAnuncio.js). Sin await: no demora la respuesta.
+    if (mensaje.referral) {
+      guardarOrigenAnuncio({ phoneNumberId, telefono: telefonoCliente, referral: mensaje.referral });
+    }
 
     // ------------------------------------------------------------
     // NUEVO: detección de modo demo. Si el mensaje llegó al número

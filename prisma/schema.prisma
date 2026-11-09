@@ -1641,6 +1641,9 @@ model ClienteWeb {
   origen             String   @default("MANUAL") // "MANUAL" | "BOT"
   preferencia        String?  // lo que eligió en el bot: "EJEMPLO" | "LLAMADA"
   horarioLlamada     String?
+  // Anuncio desde el que escribió por WhatsApp (2026-11-09): {sourceId, sourceType, sourceUrl,
+  // titulo, texto, fecha}. null = no vino de un anuncio o llegó antes de guardarlo. Ver src/lib/origenAnuncio.js.
+  anuncioOrigen      Json?
   fechaActivacion    DateTime?
   fechaBaja          DateTime?
   suscripcionWebId   String?  @unique
@@ -1652,6 +1655,24 @@ model ClienteWeb {
 
   @@index([etapa])
   @@index([telefono])
+}
+
+// Anuncio "Click to WhatsApp" desde el que escribió un contacto (2026-11-09): sale de
+// mensaje.referral del webhook. Se guarda por número del negocio + teléfono del cliente,
+// porque la ficha de Clientes Web se crea recién cuando el bot deriva. Ver src/lib/origenAnuncio.js.
+model OrigenAnuncio {
+  id            String   @id @default(uuid())
+  phoneNumberId String
+  telefono      String
+  sourceId      String?  // id del anuncio en Meta
+  sourceType    String?  // "ad" | "post"
+  sourceUrl     String?
+  titulo        String?  // headline del anuncio
+  texto         String?  @db.Text
+  ctwaClid      String?
+  creadoEn      DateTime @default(now())
+
+  @@index([phoneNumberId, telefono])
 }
 
 model MovimientoClienteWeb {
