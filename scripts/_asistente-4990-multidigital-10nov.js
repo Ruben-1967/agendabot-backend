@@ -24,6 +24,8 @@ const CAMBIOS = [
     'Asistente: $4.990 + IVA al mes adicional al sitio web (sitio + asistente: $14.890 + IVA al mes)'],
   ['tiene un valor de $5.000 + IVA al mes adicional, en total $14.900 + IVA al mes',
     'tiene un valor de $4.990 + IVA al mes adicional, en total $14.890 + IVA al mes'],
+  ['El asistente 24/7 para el sitio web es adicional: $5.000 + IVA al mes',
+    'El asistente 24/7 para el sitio web es adicional: $4.990 + IVA al mes'],
 ];
 
 function contar(texto, frase) { return texto.split(frase).length - 1; }
