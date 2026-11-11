@@ -16,6 +16,7 @@ const {
   MAX_MENSAJES_POR_SESION, MAX_LARGO_MENSAJE, REGEX_SESION, MAX_CONVERSACIONES_NUEVAS_POR_IP_DIA,
   asistentePorClave, origenPermitido, inicioMesChile,
 } = require('../lib/asistenteWeb');
+const { avisarInteresadoWeb } = require('../lib/avisoInteresadoWeb');
 
 const ARCHIVO_WIDGET = path.join(__dirname, '..', '..', 'public', 'asistente-web.js');
 
@@ -34,8 +35,9 @@ const textoError = (a) => `Uy, tuve un problema para responderte.${textoWhatsApp
  * @param {Object} deps - inyectables para las pruebas
  * @param {Object} deps.prisma
  * @param {Function} deps.procesarMensajeEntrante - chatbotEngine.procesarMensajeEntrante
+ * @param {Function} [deps.avisarInteresado] - aviso al negocio al derivar (por defecto, correo)
  */
-function crearRouterChatWeb({ prisma, procesarMensajeEntrante }) {
+function crearRouterChatWeb({ prisma, procesarMensajeEntrante, avisarInteresado = avisarInteresadoWeb }) {
   const router = express.Router();
   // El body se lee aquí (el parser global de server.js se salta /chat-web): máximo 4 KB.
   router.use(express.json({ limit: '4kb' }));
@@ -111,7 +113,7 @@ function crearRouterChatWeb({ prisma, procesarMensajeEntrante }) {
 
       const conversacion = await prisma.conversacion.findFirst({
         where: { empresaId: empresa.id, telefono: telefonoCliente, canal: 'web' },
-        select: { id: true, mensajes: true },
+        select: { id: true, mensajes: true, escaladoAHumano: true, pausadaPorHumanoEn: true },
       });
       if (!conversacion) {
         // Conversación nueva: cuenta para el tope del plan.
@@ -130,6 +132,10 @@ function crearRouterChatWeb({ prisma, procesarMensajeEntrante }) {
         return res.json({ respuesta: textoLimite(asistente), derivado: false, limite: true });
       }
 
+      // Pausa antes de este mensaje, para saber si se deriva justo ahora. Se mira la pausa y no
+      // escaladoAHumano: ese queda en true para siempre, y si la persona vuelve días después
+      // (el job de pausa reactivó el bot) y deja datos de nuevo, también hay que avisar.
+      const pausaAntes = conversacion?.pausadaPorHumanoEn ? new Date(conversacion.pausadaPorHumanoEn).getTime() : 0;
       const resultado = await procesarMensajeEntrante({
         empresa, telefonoCliente, textoEntrante: mensaje, nombreContacto: null, canal: 'web',
       });
@@ -138,9 +144,15 @@ function crearRouterChatWeb({ prisma, procesarMensajeEntrante }) {
 
       const actual = await prisma.conversacion.findFirst({
         where: { empresaId: empresa.id, telefono: telefonoCliente, canal: 'web' },
-        select: { escaladoAHumano: true },
+        select: { escaladoAHumano: true, pausadaPorHumanoEn: true },
       });
-      res.json({ respuesta: resultado.respuestaTexto, derivado: !!actual?.escaladoAHumano });
+      const derivado = !!actual?.escaladoAHumano;
+      const pausaDespues = actual?.pausadaPorHumanoEn ? new Date(actual.pausadaPorHumanoEn).getTime() : 0;
+      // Recién derivado en este mensaje: se avisa al negocio una sola vez (sin esperar el correo).
+      if (pausaDespues > pausaAntes) {
+        avisarInteresado({ prisma, asistente, empresaId: empresa.id, telefonoCliente });
+      }
+      res.json({ respuesta: resultado.respuestaTexto, derivado });
     } catch (error) {
       console.error(`[chat-web] Error con ${clave}/${sesion}:`, error.message);
       res.status(500).json({ respuesta: textoError(asistente), derivado: false });

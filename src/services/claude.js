@@ -1386,6 +1386,41 @@ async function extraerDatosLeadWeb(mensajes) {
   return uso ? uso.input : {};
 }
 
+/**
+ * Asistente 24/7 de sitios web (2026-11-11): datos de la persona que dejó sus datos en el
+ * chat del sitio de un negocio cliente, para el correo de aviso al negocio
+ * (src/lib/avisoInteresadoWeb.js). Genérico para cualquier rubro; solo lo que la persona dijo.
+ */
+async function resumirInteresadoWeb(mensajes) {
+  const transcripcion = mensajes
+    .filter((m) => m.rol === 'usuario' || m.rol === 'asistente')
+    .map((m) => `${m.rol === 'asistente' ? 'Asistente' : 'Cliente'}: ${m.contenido}`)
+    .join('\n')
+    .slice(-6000);
+  const response = await anthropic.messages.create({
+    model: MODEL,
+    max_tokens: 400,
+    system: 'Lees la conversación del chat del sitio web de un negocio, entre su asistente y una persona interesada, y anotas sus datos de contacto y qué necesita. Usa SOLO lo que la persona escribió; si un dato no aparece, déjalo vacío. Nunca inventes.',
+    tools: [{
+      name: 'guardar_interesado',
+      description: 'Guarda los datos de la persona interesada.',
+      input_schema: {
+        type: 'object',
+        properties: {
+          nombre: { type: 'string', description: 'Nombre de la persona, tal como lo dijo' },
+          telefono: { type: 'string', description: 'Número de WhatsApp o teléfono que escribió, tal cual' },
+          correo: { type: 'string', description: 'Correo electrónico que escribió, si dio uno' },
+          necesidad: { type: 'string', description: 'Qué necesita o pregunta, en una o dos frases cortas en español de Chile (ej. "Cotizar instalación de tablero eléctrico en Ñuñoa, urgente")' },
+        },
+      },
+    }],
+    tool_choice: { type: 'tool', name: 'guardar_interesado' },
+    messages: [{ role: 'user', content: `Conversación:\n${transcripcion}` }],
+  });
+  const uso = response.content.find((b) => b.type === 'tool_use');
+  return uso ? uso.input : {};
+}
+
 // Segundo paso del ciclo de herramientas: con escalar_a_humano ya llamado (y el chat por
 // pausarse), se le pide al modelo SOLO el mensaje de cierre del guion. Sin herramientas
 // disponibles para esta respuesta (tool_choice none). Si falla, devuelve '' y se usa el
@@ -1665,6 +1700,7 @@ module.exports = {
   extraerRutYTelefono,
   saludoSegunHoraChile,
   extraerDatosLeadWeb,
+  resumirInteresadoWeb,
   paisDesdeTelefono,
   llamadasFueraDeHorario,
 };

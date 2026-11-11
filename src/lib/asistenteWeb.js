@@ -13,6 +13,9 @@ const ASISTENTES_WEB = {
   multidigital: {
     empresaId: EMPRESA_ID_CLIENTES_WEB,
     titulo: 'Asistente Multidigital',
+    nombreNegocio: 'Multidigital',
+    // Correo del negocio que recibe cada interesado (src/services/emailInteresadoWeb.js).
+    correoAvisos: ['contacto@multidigital.cl'],
     saludo: '¡Hola! 👋 Soy el asistente de Multidigital. ¿Quieres saber cómo tener el sitio web de tu negocio? Pregúntame lo que quieras.',
     color: '#1D4ED8',
     whatsapp: '56966108858',

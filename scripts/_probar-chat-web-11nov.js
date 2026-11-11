@@ -37,9 +37,10 @@ function crearMotor(prisma, { derivarAl = null, respuesta = 'Respuesta de prueba
     llamadas.push(p);
     let c = prisma.convs.find((x) => x.telefono === p.telefonoCliente);
     if (!c) { c = { telefono: p.telefonoCliente, canal: p.canal, mensajes: [], escaladoAHumano: false }; prisma.convs.push(c); }
-    if (c.escaladoAHumano) return { respuestaTexto: null };
+    // Como chatbotEngine: con el chat pausado no responde; al derivar marca escalado + pausa.
+    if (c.pausadaPorHumanoEn) return { respuestaTexto: null };
     c.mensajes.push({ rol: 'usuario', contenido: p.textoEntrante }, { rol: 'asistente', contenido: respuesta });
-    if (derivarAl && c.mensajes.length / 2 >= derivarAl) c.escaladoAHumano = true;
+    if (derivarAl && c.mensajes.length / 2 >= derivarAl) { c.escaladoAHumano = true; c.pausadaPorHumanoEn = new Date(Date.UTC(2026, 10, 11, 18, c.mensajes.length)); }
     return { respuestaTexto: respuesta };
   };
   fn.llamadas = llamadas;
@@ -50,7 +51,8 @@ async function servidor(deps) {
   const app = express();
   app.set('trust proxy', 1);
   // Sin parser global: como en server.js, /chat-web lee su propio body (4 KB).
-  app.use('/chat-web', crearRouterChatWeb(deps));
+  // El aviso real llama a Anthropic y Resend: en las pruebas siempre va simulado.
+  app.use('/chat-web', crearRouterChatWeb({ avisarInteresado: () => {}, ...deps }));
   return new Promise((resolve) => { const s = app.listen(0, () => resolve(s)); });
 }
 async function post(s, body, origin = ORIGEN) {
@@ -204,6 +206,70 @@ const SES = 'abcdefghijklmnopqrstuvwx';
       await assert.rejects(sendWhatsAppTextMessage({ phoneNumberId: '1', to: `web:${SES}`, text: 'x', accessToken: 't' }), /chat web/);
     } finally { global.fetch = fetchOriginal; }
     assert.strictEqual(llamoAMeta, false);
+  });
+  {
+    const prisma = crearPrisma(); const motor = crearMotor(prisma, { derivarAl: 2 });
+    const avisos = [];
+    const s = await servidor({ prisma, procesarMensajeEntrante: motor, avisarInteresado: (p) => avisos.push(p) });
+    await caso('aviso al negocio: una sola vez, justo al derivar', async () => {
+      await post(s, { clave: 'multidigital', sesion: SES, texto: 'a' });
+      assert.strictEqual(avisos.length, 0);
+      await post(s, { clave: 'multidigital', sesion: SES, texto: 'mis datos' });
+      assert.strictEqual(avisos.length, 1);
+      assert.strictEqual(avisos[0].telefonoCliente, `web:${SES}`); assert.strictEqual(avisos[0].asistente.titulo, 'Asistente Multidigital');
+      await post(s, { clave: 'multidigital', sesion: SES, texto: 'gracias' });
+      assert.strictEqual(avisos.length, 1);
+    });
+    await caso('aviso de nuevo si vuelve después de reactivarse el bot y deja datos otra vez', async () => {
+      // El job de pausa reactiva el bot borrando solo pausadaPorHumanoEn (escaladoAHumano queda en true).
+      prisma.convs.find((c) => c.telefono === `web:${SES}`).pausadaPorHumanoEn = null;
+      await post(s, { clave: 'multidigital', sesion: SES, texto: 'volví, mis datos nuevos' });
+      assert.strictEqual(avisos.length, 2);
+    });
+    s.close();
+  }
+  await caso('el nombre se limpia (sin saltos de línea y acotado) antes del asunto', async () => {
+    const { avisarInteresadoWeb } = require('../src/lib/avisoInteresadoWeb');
+    const prisma = { conversacion: { findFirst: async () => ({ mensajes: [{ rol: 'usuario', contenido: 'x' }] }) } };
+    const enviados = [];
+    await avisarInteresadoWeb({
+      prisma, asistente: { titulo: 'X' }, empresaId: 'e', telefonoCliente: `web:${SES}`,
+      deps: { resumir: async () => ({ nombre: `Ana\r\nBcc: otro\t${'x'.repeat(100)}` }), enviar: async (p) => enviados.push(p) },
+    });
+    const nombre = enviados[0].datos.nombre;
+    assert.ok(!/[\r\n\t]/.test(nombre)); assert.ok(nombre.length <= 60); assert.ok(nombre.startsWith('Ana Bcc: otro'));
+  });
+  await caso('correo al negocio: datos, botón de WhatsApp y texto escapado', () => {
+    const { armarCorreoInteresado } = require('../src/services/emailInteresadoWeb');
+    const asistente = { titulo: 'Asistente IACE', nombreNegocio: 'IACE Ingeniería Eléctrica' };
+    const { asunto, html } = armarCorreoInteresado({
+      asistente,
+      datos: { nombre: 'Juan Pérez', telefono: '56912345678', correo: 'juan@ejemplo.cl', necesidad: 'Tablero <urgente>' },
+      mensajes: [{ rol: 'usuario', contenido: '<script>alert(1)</script> hola' }, { rol: 'asistente', contenido: 'Hola Juan' }, { rol: 'admin', contenido: 'interno' }],
+      ahora: new Date('2026-11-11T18:00:00Z'),
+    });
+    assert.ok(asunto.includes('Juan Pérez'));
+    assert.ok(html.includes('https://wa.me/56912345678?text=Hola%20Juan%2C%20te%20escribo%20de%20IACE'));
+    assert.ok(html.includes('&lt;script&gt;') && !html.includes('<script>'));
+    assert.ok(html.includes('Tablero &lt;urgente&gt;'));
+    assert.ok(!html.includes('interno'));
+    const sinFono = armarCorreoInteresado({ asistente, datos: { nombre: null, telefono: null, telefonoEscrito: '123' }, mensajes: [] });
+    assert.ok(sinFono.html.includes('No dejó un número de WhatsApp válido') && !sinFono.html.includes('wa.me'));
+  });
+  await caso('avisarInteresadoWeb normaliza el teléfono y nunca lanza', async () => {
+    const { avisarInteresadoWeb } = require('../src/lib/avisoInteresadoWeb');
+    const prisma = { conversacion: { findFirst: async () => ({ mensajes: [{ rol: 'usuario', contenido: 'Soy Ana, +56 9 1234 5678' }] }) } };
+    const enviados = [];
+    await avisarInteresadoWeb({
+      prisma, asistente: { titulo: 'X' }, empresaId: 'e', telefonoCliente: `web:${SES}`,
+      deps: { resumir: async () => ({ nombre: ' Ana ', telefono: '+56 9 1234 5678', necesidad: 'Cotizar' }), enviar: async (p) => enviados.push(p) },
+    });
+    assert.strictEqual(enviados.length, 1);
+    assert.deepStrictEqual(enviados[0].datos, { nombre: 'Ana', telefono: '56912345678', telefonoEscrito: '+56 9 1234 5678', correo: null, necesidad: 'Cotizar' });
+    await avisarInteresadoWeb({
+      prisma, asistente: { titulo: 'X' }, empresaId: 'e', telefonoCliente: `web:${SES}`,
+      deps: { resumir: async () => { throw new Error('Anthropic caído'); }, enviar: async () => {} },
+    }); // no lanza
   });
   console.log(`\n${ok} casos OK`);
 })().catch((e) => { console.error('FALLÓ:', e.message); process.exit(1); });
