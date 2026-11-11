@@ -162,9 +162,10 @@
     pintar('bot', config.saludo);
     if (config.whatsapp) {
       var chip = document.createElement('a');
-      chip.className = 'chip-wa'; chip.target = '_blank'; chip.rel = 'noopener noreferrer';
+      // Mismo botón verde que aparece al derivar (clase .wa): así tampoco se duplica después.
+      chip.className = 'wa'; chip.target = '_blank'; chip.rel = 'noopener noreferrer';
       chip.href = linkWhatsApp();
-      chip.textContent = 'Prefiero hablar por WhatsApp';
+      chip.textContent = 'Escribir por WhatsApp';
       msgs.appendChild(chip);
     }
     historial.forEach(function (m) { pintar(m.r, m.t); });
