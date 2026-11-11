@@ -107,7 +107,7 @@
       '.pie textarea{flex:1;resize:none;border:1px solid #D5DAE3;border-radius:12px;padding:9px 12px;font-size:14px;height:42px;max-height:100px;outline:none;color:#0B1D3A}' +
       '.pie textarea:focus{border-color:' + color + '}' +
       '.pie button{border:0;background:' + color + ';color:#fff;border-radius:12px;width:44px;cursor:pointer}.pie button:disabled{opacity:.5;cursor:default}' +
-      '.marca{font-size:11px;color:#8A93A3;text-align:center;padding:0 0 8px;background:#fff}' +
+      '.marca{font-size:11px;color:#8A93A3;text-align:center;padding:0 12px 8px;background:#fff;line-height:1.4}.marca a{color:#8A93A3;text-decoration:underline}' +
       '@media (max-width:480px){.panel{' + lado + ':0;bottom:0;width:100vw;max-width:100vw;height:100%;max-height:100%;border-radius:0}}' +
       '</style>' +
       '<div class="teaser" hidden></div>' +
@@ -123,7 +123,7 @@
       '<div class="cab"><div><div class="t">' + escapar(config.titulo) + '</div><div class="s">Responde al instante · 24/7</div></div><div class="acc">' + (config.whatsapp ? '<a class="wa-cab" href="' + linkWhatsApp() + '" target="_blank" rel="noopener noreferrer" aria-label="Escribir por WhatsApp" title="Escribir por WhatsApp">' + ICONO_WA + '</a>' : '') + '<button class="x" aria-label="Cerrar chat">×</button></div></div>' +
       '<div class="msgs" aria-live="polite"></div>' +
       '<div class="pie"><textarea rows="1" placeholder="Escribe tu mensaje…" aria-label="Escribe tu mensaje" maxlength="800"></textarea><button aria-label="Enviar"><svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M3 20l18-8L3 4v6l12 2-12 2z"/></svg></button></div>' +
-      '<div class="marca">Asistente con IA · puede cometer errores</div>' +
+      '<div class="marca">Asistente con IA, puede cometer errores. Al escribir aceptas el <a href="' + api + '/privacidad?clave=' + encodeURIComponent(clave) + '" target="_blank" rel="noopener noreferrer">aviso de privacidad</a>.</div>' +
       '</section>';
 
     var btn = root.querySelector('.btn');

@@ -231,6 +231,9 @@ model Empresa {
   // reporte de bonos por vendedor (ver GET /demos/reporte-origen-caso).
   origenCaso     String?
 
+  // Asistente 24/7 del sitio web del negocio (chat del sitio, canal 'web'), si lo tiene.
+  asistenteWeb   AsistenteWeb?
+
   @@index([rubroTemplateId])
   @@index([vendedorId])
 }
@@ -1673,6 +1676,29 @@ model OrigenAnuncio {
   creadoEn      DateTime @default(now())
 
   @@index([phoneNumberId, telefono])
+}
+
+// Asistente 24/7 de sitios web (2026-11-11): configuración del chat del sitio de cada negocio
+// (widget public/asistente-web.js, ruta src/routes/chatWeb.js). La clave va en el <script> del
+// sitio (pública, no es un secreto). El asistente responde con la información y el guion de su
+// Empresa (modo informativo). Alta con scripts/alta-asistente-web.js.
+model AsistenteWeb {
+  id                String    @id @default(uuid())
+  clave             String    @unique
+  empresa           Empresa   @relation(fields: [empresaId], references: [id])
+  empresaId         String    @unique
+  titulo            String    // "Asistente IACE"
+  nombreNegocio     String    // para el saludo del correo al negocio
+  saludo            String    @db.Text
+  color             String    @default("#1D4ED8")
+  whatsapp          String?   // solo dígitos, con código de país
+  origenes          String[]  // hosts permitidos (ej. "iace.cl", "www.iace.cl")
+  correoAvisos      String[]  // correos que reciben cada interesado
+  conversacionesMes Int       @default(150) // plan: 150 (Asistente) o 400 (Pro)
+  activo            Boolean   @default(true)
+  gratisHasta       DateTime? // fin del período gratis (oferta 3 meses), para avisarle antes
+  creadoEn          DateTime  @default(now())
+  actualizadoEn     DateTime  @updatedAt
 }
 
 model MovimientoClienteWeb {

@@ -37,6 +37,47 @@ function asistentePorClave(clave) {
   return Object.prototype.hasOwnProperty.call(ASISTENTES_WEB, clave) ? ASISTENTES_WEB[clave] : null;
 }
 
+// Asistentes en la base de datos (tabla AsistenteWeb, alta con scripts/alta-asistente-web.js).
+// Si la clave no está en la base, se usa la lista fija de arriba (piloto Multidigital).
+// Caché de 1 minuto por clave: cada mensaje del chat no necesita ir a la base por esto.
+const MS_CACHE = 60 * 1000;
+const REGEX_CLAVE = /^[a-z0-9-]{3,40}$/;
+
+function desdeFila(fila) {
+  if (!fila || !fila.activo) return null;
+  return {
+    empresaId: fila.empresaId,
+    titulo: fila.titulo,
+    nombreNegocio: fila.nombreNegocio,
+    saludo: fila.saludo,
+    color: fila.color,
+    whatsapp: fila.whatsapp || null,
+    origenes: (fila.origenes || []).map((h) => String(h).toLowerCase()),
+    correoAvisos: fila.correoAvisos || [],
+    conversacionesMes: fila.conversacionesMes,
+  };
+}
+
+function crearBuscadorAsistentes(prisma, { ahora = () => Date.now() } = {}) {
+  const cache = new Map();
+  return async function buscarAsistente(clave) {
+    const k = String(clave || '').toLowerCase();
+    if (!REGEX_CLAVE.test(k)) return null;
+    const enCache = cache.get(k);
+    if (enCache && ahora() - enCache.en < MS_CACHE) return enCache.valor;
+    let valor = null;
+    try {
+      const fila = prisma.asistenteWeb ? await prisma.asistenteWeb.findUnique({ where: { clave: k } }) : null;
+      valor = fila ? desdeFila(fila) : asistentePorClave(k);
+    } catch (error) {
+      console.error(`[chat-web] No se pudo leer el asistente "${k}" de la base:`, error.message);
+      valor = asistentePorClave(k);
+    }
+    cache.set(k, { valor, en: ahora() });
+    return valor;
+  };
+}
+
 // Hostname del Origin si está en la lista del asistente. En pruebas locales se puede
 // permitir localhost con CHAT_WEB_PERMITIR_LOCALHOST=1 (nunca en producción).
 function origenPermitido(asistente, origin) {
@@ -62,5 +103,5 @@ function inicioMesChile(ahora = new Date()) {
 
 module.exports = {
   ASISTENTES_WEB, MAX_MENSAJES_POR_SESION, MAX_LARGO_MENSAJE, REGEX_SESION, MAX_CONVERSACIONES_NUEVAS_POR_IP_DIA,
-  asistentePorClave, origenPermitido, inicioMesChile,
+  asistentePorClave, crearBuscadorAsistentes, origenPermitido, inicioMesChile, REGEX_CLAVE,
 };

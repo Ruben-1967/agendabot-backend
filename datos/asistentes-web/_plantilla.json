@@ -1,0 +1,12 @@
+{
+  "clave": "nombre-corto-del-negocio",
+  "nombreNegocio": "Nombre del Negocio",
+  "sitios": ["dominiodelnegocio.cl"],
+  "correoAvisos": ["contacto@dominiodelnegocio.cl"],
+  "whatsapp": "56900000000",
+  "plan": "ASISTENTE",
+  "mesesGratis": 3,
+  "color": "#1D4ED8",
+  "saludo": "¡Hola! 👋 Soy el asistente de Nombre del Negocio. ¿En qué te puedo ayudar?",
+  "informacion": "Esta es la ÚNICA información que puedes citar sobre Nombre del Negocio. Si te preguntan algo que no está aquí, no lo inventes: ofrece que una persona del equipo la contacte.\nQuiénes somos: ...\nServicios y precios: ...\nHorario de atención: ...\nZona de cobertura: ...\nCómo se paga: ...\nPreguntas frecuentes: ..."
+}

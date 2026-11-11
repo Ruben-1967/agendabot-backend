@@ -271,5 +271,52 @@ const SES = 'abcdefghijklmnopqrstuvwx';
       deps: { resumir: async () => { throw new Error('Anthropic caído'); }, enviar: async () => {} },
     }); // no lanza
   });
+  await caso('asistentes desde la base: activo, inactivo, caché y respaldo si la base falla', async () => {
+    const { crearBuscadorAsistentes } = require('../src/lib/asistenteWeb');
+    const filas = {
+      iace: { clave: 'iace', empresaId: 'emp-iace', activo: true, titulo: 'Asistente IACE', nombreNegocio: 'IACE', saludo: 'Hola', color: '#123456', whatsapp: '56964256705', origenes: ['IACE.cl', 'www.iace.cl'], correoAvisos: ['a@iace.cl'], conversacionesMes: 150 },
+      apagado: { clave: 'apagado', empresaId: 'x', activo: false, titulo: 't', nombreNegocio: 'n', saludo: 's', color: '#000', origenes: [], correoAvisos: [], conversacionesMes: 150 },
+    };
+    let lecturas = 0; let reloj = 0;
+    const prisma = { asistenteWeb: { findUnique: async ({ where }) => { lecturas++; return filas[where.clave] || null; } } };
+    const buscar = crearBuscadorAsistentes(prisma, { ahora: () => reloj });
+    const a = await buscar('IACE');
+    assert.strictEqual(a.empresaId, 'emp-iace'); assert.deepStrictEqual(a.origenes, ['iace.cl', 'www.iace.cl']);
+    assert.ok(origenPermitido(a, 'https://iace.cl') && !origenPermitido(a, 'https://multidigital.cl'));
+    await buscar('iace'); assert.strictEqual(lecturas, 1); // caché
+    reloj = 61000; await buscar('iace'); assert.strictEqual(lecturas, 2); // caché vencida
+    assert.strictEqual(await buscar('apagado'), null);
+    assert.strictEqual((await buscar('multidigital')).titulo, 'Asistente Multidigital'); // respaldo fijo
+    assert.strictEqual(await buscar('../x'), null); assert.strictEqual(lecturas, 4);
+    const caida = crearBuscadorAsistentes({ asistenteWeb: { findUnique: async () => { throw new Error('sin base'); } } });
+    assert.strictEqual((await caida('multidigital')).titulo, 'Asistente Multidigital');
+    assert.strictEqual(await caida('iace'), null);
+  });
+  {
+    const prisma = crearPrisma(); const motor = crearMotor(prisma);
+    const buscarAsistente = async (c) => (c === 'iace' ? { titulo: 'Asistente IACE', nombreNegocio: 'IACE <Ingeniería>', correoAvisos: ['a@iace.cl'], origenes: ['iace.cl'] } : null);
+    const s = await servidor({ prisma, procesarMensajeEntrante: motor, buscarAsistente });
+    await caso('aviso de privacidad: por negocio, escapado, y 404 si no existe', async () => {
+      const base = `http://127.0.0.1:${s.address().port}/chat-web/privacidad`;
+      const r = await fetch(`${base}?clave=iace`); const html = await r.text();
+      assert.strictEqual(r.status, 200); assert.ok(html.includes('IACE &lt;Ingeniería&gt;') && !html.includes('<Ingeniería>'));
+      assert.ok(html.includes('mailto:a@iace.cl') && html.includes('inteligencia artificial'));
+      assert.strictEqual((await fetch(`${base}?clave=otra`)).status, 404);
+    });
+    s.close();
+  }
+  await caso('alta: valida el archivo del cliente y arma sitios con y sin www', () => {
+    const fs = require('fs'); const os = require('os'); const path = require('path');
+    const { leerDatos } = require('./alta-asistente-web');
+    const escribir = (o) => { const f = path.join(os.tmpdir(), `alta-prueba-${Object.keys(o).length}-${o.clave || 'x'}.json`); fs.writeFileSync(f, JSON.stringify(o)); return f; };
+    const base = { clave: 'iace', nombreNegocio: 'IACE Ingeniería Eléctrica', sitios: ['https://www.iace.cl/'], correoAvisos: ['Contacto@IACE.cl'], whatsapp: '+56 9 6425 6705', mesesGratis: 3, informacion: 'x'.repeat(100) };
+    const d = leerDatos(escribir(base));
+    assert.deepStrictEqual(d.origenes.sort(), ['iace.cl', 'www.iace.cl']);
+    assert.strictEqual(d.whatsapp, '56964256705'); assert.deepStrictEqual(d.correoAvisos, ['contacto@iace.cl']);
+    assert.strictEqual(d.conversacionesMes, 150); assert.ok(d.gratisHasta instanceof Date);
+    assert.ok(d.guion.includes('IACE Ingeniería Eléctrica') && d.guion.includes('WhatsApp'));
+    assert.throws(() => leerDatos(escribir({ ...base, clave: 'Mal Clave', correoAvisos: ['no-es-correo'], informacion: 'corta', sitios: [] })), /clave[\s\S]*informacion[\s\S]*sitios[\s\S]*correoAvisos/);
+    assert.strictEqual(leerDatos(escribir({ ...base, plan: 'pro' })).conversacionesMes, 400);
+  });
   console.log(`\n${ok} casos OK`);
 })().catch((e) => { console.error('FALLÓ:', e.message); process.exit(1); });

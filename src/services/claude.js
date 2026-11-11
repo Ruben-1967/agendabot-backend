@@ -199,6 +199,9 @@ const MODEL = 'claude-sonnet-5';
 // ~US$0,0008 por respuesta. Solo el modo informativo CON guion; el agendamiento
 // (Ahorróptica y el resto) sigue en MODEL.
 const MODEL_ATENCION_GUION = 'claude-haiku-5-5';
+// Empresa de Multidigital (el WhatsApp de los anuncios); mismo valor que leadClienteWeb.js,
+// repetido aquí porque ese archivo importa este (evita la dependencia circular).
+const EMPRESA_ID_MULTIDIGITAL = process.env.EMPRESA_ID_CLIENTES_WEB || 'b087c530-5f89-4ecd-8cfb-9fda7069a426';
 const modeloInformativo = (empresa) => (empresa?.guionAtencion ? MODEL_ATENCION_GUION : MODEL);
 // Sonnet 5 piensa por defecto (thinking adaptativo) y esos tokens cuentan contra
 // max_tokens: si se los come todos, la respuesta vuelve sin texto. Visto en
@@ -1332,7 +1335,9 @@ ${empresa.guionAtencion}
 
 Saludo que corresponde a la hora actual ${pais ? `en ${PAISES_GUION[pais].nombre}` : 'en Chile'}: "${saludoSegunHoraChile(ahora, pais ? PAISES_GUION[pais].zonaHoraria : undefined)}". Úsalo tal cual en tu primer mensaje de la conversación (no lo repitas después).
 Fecha de hoy en Chile: ${new Intl.DateTimeFormat('es-CL', { timeZone: 'America/Santiago', day: 'numeric', month: 'long', year: 'numeric' }).format(ahora)}. Si una promoción del guion o de la información tiene una fecha de término que ya pasó, NO la menciones ni la ofrezcas.${(() => {
-  const fuera = llamadasFueraDeHorario(ahora);
+  // Horario de llamadas de Multidigital: solo para su propio bot. Los negocios clientes con
+  // asistente web (2026-11-11) tienen sus propios horarios, que van en su información.
+  const fuera = empresa.id === EMPRESA_ID_MULTIDIGITAL ? llamadasFueraDeHorario(ahora) : null;
   return fuera ? `
 LLAMADAS: hoy no hacemos llamadas (${fuera.motivo}). Si la persona elige la llamada o pide que la llamen, dile que la llamamos ${fuera.proximoDia} y pregúntale en qué horario de ese día le acomoda. En el cierre de la llamada di "Te llamamos ${fuera.proximoDia} en el horario que nos indicaste" en vez de solo "en el horario que nos indicaste". Nunca prometas llamar hoy.` : '';
 })()}
