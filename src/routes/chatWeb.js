@@ -23,7 +23,10 @@ const ARCHIVO_WIDGET = path.join(__dirname, '..', '..', 'public', 'asistente-web
 function textoWhatsApp(asistente) {
   return asistente.whatsapp ? ` Escríbenos por WhatsApp: https://wa.me/${asistente.whatsapp}` : '';
 }
-const textoDerivado = (a) => `¡Gracias! Ya le avisamos al equipo y te contactamos a la brevedad 🙌.${textoWhatsApp(a)}`;
+// Después de que la persona dejó sus datos (chat derivado): solo se confirma, sin volver a
+// invitarla a escribir por WhatsApp (Rubén, 11-nov: sonaba a que no habíamos tomado sus datos).
+// eslint-disable-next-line no-unused-vars
+const textoDerivado = (a) => '¡De nada! 🙌 Ya tenemos tus datos y te contactamos a la brevedad por WhatsApp.';
 const textoLimite = (a) => `En este momento el asistente no está disponible.${textoWhatsApp(a) || ' Escríbenos por los datos de contacto del sitio.'}`;
 const textoError = (a) => `Uy, tuve un problema para responderte.${textoWhatsApp(a) || ' Intenta de nuevo en un momento.'}`;
 

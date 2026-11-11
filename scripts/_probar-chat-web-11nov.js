@@ -136,11 +136,11 @@ const SES = 'abcdefghijklmnopqrstuvwx';
   {
     const prisma = crearPrisma(); const motor = crearMotor(prisma, { derivarAl: 2 });
     const s = await servidor({ prisma, procesarMensajeEntrante: motor });
-    await caso('al derivar: derivado=true, y luego texto fijo con WhatsApp', async () => {
+    await caso('al derivar: derivado=true, y luego texto fijo sin invitar a WhatsApp', async () => {
       assert.strictEqual((await post(s, { clave: 'multidigital', sesion: SES, texto: 'a' })).json.derivado, false);
       assert.strictEqual((await post(s, { clave: 'multidigital', sesion: SES, texto: 'b' })).json.derivado, true);
       const r = await post(s, { clave: 'multidigital', sesion: SES, texto: 'c' });
-      assert.strictEqual(r.json.derivado, true); assert.ok(/equipo/.test(r.json.respuesta) && /wa\.me/.test(r.json.respuesta));
+      assert.strictEqual(r.json.derivado, true); assert.ok(/tus datos/.test(r.json.respuesta) && !/wa\.me/.test(r.json.respuesta));
     });
     s.close();
   }
