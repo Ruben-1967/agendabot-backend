@@ -155,8 +155,18 @@ function crearRouterChatWeb({ prisma, procesarMensajeEntrante, avisarInteresado 
 
       const conversacion = await prisma.conversacion.findFirst({
         where: { empresaId: empresa.id, telefono: telefonoCliente, canal: 'web' },
-        select: { id: true, mensajes: true, escaladoAHumano: true, alertaUrgenteEnviadaEn: true },
+        select: { id: true, mensajes: true, escaladoAHumano: true, alertaUrgenteEnviadaEn: true, pausadaPorHumanoEn: true },
       });
+      // En el chat web nunca hay una persona tomando la conversación: una pausa que haya quedado
+      // (derivaciones de antes del 11-nov) se levanta aquí. Si no, como la persona sigue
+      // escribiendo, el job de pausa nunca la reactiva y recibe siempre la misma frase.
+      // El "silenciar bot" del panel usa botSilenciadoEn, que no se toca.
+      if (conversacion?.pausadaPorHumanoEn) {
+        await prisma.conversacion.updateMany({
+          where: { empresaId: empresa.id, telefono: telefonoCliente, canal: 'web' },
+          data: { pausadaPorHumanoEn: null, contencionEnviadaEn: null },
+        });
+      }
       if (!conversacion) {
         // Conversación nueva: cuenta para el tope del plan.
         const delMes = await prisma.conversacion.count({

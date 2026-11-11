@@ -46,7 +46,7 @@ function crearMotor(prisma, { derivarAl = null, derivarEn = null, respuesta = 'R
     if (!c) { c = { telefono: p.telefonoCliente, canal: p.canal, mensajes: [], escaladoAHumano: false }; prisma.convs.push(c); }
     // Como chatbotEngine: con el bot silenciado (pausa) no responde. En el canal web derivar
     // ya NO pausa: marca escaladoAHumano y devuelve escalado: true en ese turno.
-    if (c.pausadaPorHumanoEn) return { respuestaTexto: null };
+    if (c.pausadaPorHumanoEn || c.botSilenciadoEn) return { respuestaTexto: null };
     c.mensajes.push({ rol: 'usuario', contenido: p.textoEntrante }, { rol: 'asistente', contenido: respuesta });
     const escalado = turnos.includes(c.mensajes.length / 2);
     if (escalado) c.escaladoAHumano = true;
@@ -154,8 +154,14 @@ const SES = 'abcdefghijklmnopqrstuvwx';
       assert.strictEqual(r.json.respuesta, 'Respuesta de prueba'); assert.strictEqual(r.json.derivado, false);
       assert.strictEqual(motor.llamadas.length, 3);
     });
-    await caso('bot silenciado: texto fijo sin invitar a WhatsApp', async () => {
-      prisma.convs.find((c) => c.telefono === `web:${SES}`).pausadaPorHumanoEn = new Date();
+    await caso('una pausa antigua (de antes del cambio) se levanta sola y vuelve a responder', async () => {
+      const c = prisma.convs.find((x) => x.telefono === `web:${SES}`);
+      c.pausadaPorHumanoEn = new Date();
+      const r = await post(s, { clave: 'multidigital', sesion: SES, texto: 'necesito saber otra cosa' });
+      assert.strictEqual(r.json.respuesta, 'Respuesta de prueba'); assert.strictEqual(c.pausadaPorHumanoEn, null);
+    });
+    await caso('bot silenciado desde el panel: texto fijo sin invitar a WhatsApp', async () => {
+      prisma.convs.find((x) => x.telefono === `web:${SES}`).botSilenciadoEn = new Date();
       const r = await post(s, { clave: 'multidigital', sesion: SES, texto: 'hola?' });
       assert.ok(/tus datos/.test(r.json.respuesta) && !/wa\.me/.test(r.json.respuesta));
     });
