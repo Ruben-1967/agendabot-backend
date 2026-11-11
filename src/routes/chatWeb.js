@@ -37,6 +37,7 @@ const escaparHtml = (t) => String(t ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&
 // acceso o eliminación. Si cambia el tratamiento (plazos, proveedores), actualizar este texto.
 function paginaPrivacidad(asistente) {
   const negocio = escaparHtml(asistente.nombreNegocio || asistente.titulo);
+  const esMultidigital = /^multidigital$/i.test(String(asistente.nombreNegocio || '').trim());
   const correo = escaparHtml((asistente.correoAvisos || [])[0] || 'contacto@multidigital.cl');
   return `<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Aviso de privacidad del asistente · ${negocio}</title>
@@ -44,16 +45,18 @@ function paginaPrivacidad(asistente) {
 <h1>Aviso de privacidad del asistente de ${negocio}</h1>
 <p>Este aviso explica qué hacemos con los datos que escribes en el chat del sitio web de ${negocio} (el «asistente»).</p>
 <h2>Quién es responsable</h2>
-<p><b>${negocio}</b> es responsable de tus datos. Multidigital (multidigital.cl) le presta el servicio del asistente y trata los datos solo por encargo de ${negocio}.</p>
+<p>${esMultidigital
+    ? '<b>Multidigital</b> (multidigital.cl) es responsable de tus datos.'
+    : `<b>${negocio}</b> es responsable de tus datos. Multidigital (multidigital.cl) le presta el servicio del asistente y trata los datos solo por encargo de ${negocio}.`}</p>
 <h2>Qué datos se guardan</h2>
 <ul><li>Los mensajes que escribes en el chat y las respuestas del asistente.</li><li>Los datos que decidas entregar para que te contacten, como tu nombre, tu número de WhatsApp o teléfono y tu correo.</li></ul>
 <p>No pidas ni entregues datos sensibles (de salud, financieros o claves) por este chat.</p>
 <h2>Para qué se usan</h2>
-<p>Para responder tus consultas y, si lo pides, para que el equipo de ${negocio} te contacte. Cuando dejas tus datos, se le envían a ${negocio} por correo junto con la conversación. No se usan para publicidad de terceros ni se venden.</p>
+<p>Para responder tus consultas y, si lo pides, para que el equipo de ${negocio} te contacte. Cuando dejas tus datos, se le envían a ${negocio} por correo junto con la conversación${esMultidigital ? '' : ', con una copia a Multidigital para el control del servicio'}. No se usan para publicidad de terceros ni se venden.</p>
 <h2>Cómo funciona el asistente</h2>
 <p>Las respuestas las genera un sistema de inteligencia artificial y pueden tener errores; la información oficial siempre la confirma el equipo de ${negocio}. Para funcionar, los mensajes son procesados por proveedores tecnológicos de Multidigital ubicados fuera de Chile (servicio de inteligencia artificial, servidores y envío de correos), que los tratan solo para prestar el servicio.</p>
 <h2>Cuánto tiempo se guardan</h2>
-<p>Mientras sean necesarios para atender tu consulta. Puedes pedir que se eliminen cuando quieras.</p>
+<p>Mientras sean necesarios para atender tu consulta. Puedes pedir que se eliminen cuando quieras, escribiendo al correo de abajo.</p>
 <h2>Tus derechos</h2>
 <p>Puedes pedir acceso, rectificación, eliminación u oposición al uso de tus datos escribiendo a <a href="mailto:${correo}">${correo}</a>. Escribir en el chat es voluntario: si no estás de acuerdo con este aviso, no lo uses y contacta a ${negocio} por otro medio.</p>
 </body></html>`;
@@ -72,7 +75,8 @@ function crearRouterChatWeb({ prisma, procesarMensajeEntrante, avisarInteresado 
   router.use(express.json({ limit: '4kb' }));
 
   // CORS propio: solo los sitios del asistente (la clave viene en la query o el body).
-  router.use(async (req, res, next) => {
+  router.use((req, res, next) => corsPropio(req, res, next).catch(next));
+  async function corsPropio(req, res, next) {
     const origin = req.get('origin');
     if (origin) {
       res.header('Vary', 'Origin');
@@ -90,7 +94,7 @@ function crearRouterChatWeb({ prisma, procesarMensajeEntrante, avisarInteresado 
     }
     if (req.method === 'OPTIONS') return res.sendStatus(204);
     next();
-  });
+  }
 
   router.get('/widget.js', (req, res) => {
     res.type('application/javascript');

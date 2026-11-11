@@ -317,6 +317,24 @@ const SES = 'abcdefghijklmnopqrstuvwx';
     assert.ok(d.guion.includes('IACE Ingeniería Eléctrica') && d.guion.includes('WhatsApp'));
     assert.throws(() => leerDatos(escribir({ ...base, clave: 'Mal Clave', correoAvisos: ['no-es-correo'], informacion: 'corta', sitios: [] })), /clave[\s\S]*informacion[\s\S]*sitios[\s\S]*correoAvisos/);
     assert.strictEqual(leerDatos(escribir({ ...base, plan: 'pro' })).conversacionesMes, 400);
+    assert.throws(() => leerDatos(escribir({ ...base, clave: 'multidigital' })), /reservada/);
+    assert.ok(!('telefonoContacto' in d), 'el alta no debe poner telefonoContacto (alertas por WhatsApp)');
   });
+  await caso('alta: el fin del período gratis no se pasa de mes', () => {
+    const { sumarMeses } = require('./alta-asistente-web');
+    const f = (s) => sumarMeses(new Date(s), 3);
+    assert.strictEqual(f('2026-11-30T12:00:00').getMonth(), 1); assert.strictEqual(f('2026-11-30T12:00:00').getDate(), 28);
+    assert.strictEqual(f('2026-11-11T12:00:00').getMonth(), 1); assert.strictEqual(f('2026-11-11T12:00:00').getDate(), 11);
+  });
+  {
+    const prisma = crearPrisma(); const motor = crearMotor(prisma);
+    const s = await servidor({ prisma, procesarMensajeEntrante: motor });
+    await caso('privacidad de Multidigital: responsable Multidigital, sin "por encargo de Multidigital"', async () => {
+      const html = await (await fetch(`http://127.0.0.1:${s.address().port}/chat-web/privacidad?clave=multidigital`)).text();
+      assert.ok(html.includes('<b>Multidigital</b> (multidigital.cl) es responsable'));
+      assert.ok(!html.includes('por encargo de Multidigital') && !html.includes('copia a Multidigital'));
+    });
+    s.close();
+  }
   console.log(`\n${ok} casos OK`);
 })().catch((e) => { console.error('FALLÓ:', e.message); process.exit(1); });

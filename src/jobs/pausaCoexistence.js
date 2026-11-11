@@ -31,6 +31,9 @@ const { sendInstagramTextMessage } = require('../services/instagram');
 const { sendFacebookTextMessage } = require('../services/facebook');
 const { descifrarSiCorresponde } = require('../lib/cifrado');
 const { obtenerUrlPanelPrincipal } = require('../lib/urlPanel');
+// Misma constante que leadClienteWeb.js (Multidigital): se lee del entorno para no cargar
+// ese módulo (y claude.js) en este job.
+const EMPRESA_ID_CLIENTES_WEB = process.env.EMPRESA_ID_CLIENTES_WEB || 'b087c530-5f89-4ecd-8cfb-9fda7069a426';
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 const MODEL_RESUMEN = 'claude-haiku-4-5-20251001';
@@ -263,7 +266,13 @@ async function procesarPausasCoexistence() {
       // 3. Alerta interna — el umbral lo decide cada negocio (decisión
       // 2026-09-04, antes era un fijo global de 10 min para todos).
       const minutosAlerta = empresa.minutosAlertaUrgente ?? MINUTOS_ALERTA_DEFECTO;
-      if (minutosDesdePausa >= minutosAlerta && !conversacion.alertaUrgenteEnviadaEn) {
+      // Chat web de un negocio cliente (asistente 24/7): el negocio ya recibió el correo con el
+      // interesado; la alerta por WhatsApp sería un duplicado con costo y un link de panel que
+      // no usa. Solo Multidigital la mantiene.
+      const alertaWebDeCliente = conversacion.canal === 'web' && empresa.id !== EMPRESA_ID_CLIENTES_WEB;
+      if (alertaWebDeCliente && !conversacion.alertaUrgenteEnviadaEn) {
+        await prisma.conversacion.update({ where: { id: conversacion.id }, data: { alertaUrgenteEnviadaEn: new Date() } });
+      } else if (minutosDesdePausa >= minutosAlerta && !conversacion.alertaUrgenteEnviadaEn) {
         await enviarAlertaUrgenteInterna(conversacion, empresa);
         await prisma.conversacion.update({
           where: { id: conversacion.id },

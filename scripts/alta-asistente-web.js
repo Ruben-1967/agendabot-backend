@@ -18,6 +18,8 @@ require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
 
+const { ASISTENTES_WEB } = require('../src/lib/asistenteWeb');
+
 const WIDGET = 'https://agendabot-backend-bbw5.onrender.com/chat-web/widget.js';
 const EMPRESA_ID_MULTIDIGITAL = process.env.EMPRESA_ID_CLIENTES_WEB || 'b087c530-5f89-4ecd-8cfb-9fda7069a426';
 const CONVERSACIONES_POR_PLAN = { ASISTENTE: 150, PRO: 400 };
@@ -35,6 +37,17 @@ function guionPorDefecto(negocio) {
   ].join('\n');
 }
 
+// Mismo día N meses después; si ese mes es más corto (ej. 30-nov + 3 meses), el último día.
+function sumarMeses(fecha, meses) {
+  const d = new Date(fecha);
+  const dia = d.getDate();
+  d.setDate(1);
+  d.setMonth(d.getMonth() + meses);
+  const ultimo = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
+  d.setDate(Math.min(dia, ultimo));
+  return d;
+}
+
 function soloDigitos(v) { return String(v || '').replace(/\D/g, ''); }
 function host(v) {
   const s = String(v || '').trim().toLowerCase();
@@ -46,6 +59,7 @@ function leerDatos(archivo) {
   const errores = [];
   const clave = String(d.clave || '').toLowerCase();
   if (!/^[a-z0-9-]{3,40}$/.test(clave)) errores.push('clave: solo minúsculas, números y guiones (3 a 40), ej. "iace"');
+  else if (Object.prototype.hasOwnProperty.call(ASISTENTES_WEB, clave)) errores.push(`clave: "${clave}" está reservada (asistente fijo del sistema)`);
   if (!d.nombreNegocio) errores.push('nombreNegocio es obligatorio');
   if (!d.informacion || String(d.informacion).trim().length < 80) errores.push('informacion: falta (o es muy corta) la información del negocio');
   const sitios = [...new Set((d.sitios || []).flatMap((s) => { const h = host(s); return h ? (h.startsWith('www.') ? [h, h.slice(4)] : [h, `www.${h}`]) : []; }))];
@@ -60,8 +74,7 @@ function leerDatos(archivo) {
   if (errores.length) throw new Error(`Revisa ${archivo}:\n- ${errores.join('\n- ')}`);
 
   const meses = Number(d.mesesGratis || 0);
-  let gratisHasta = null;
-  if (meses > 0) { gratisHasta = new Date(); gratisHasta.setMonth(gratisHasta.getMonth() + meses); }
+  const gratisHasta = meses > 0 ? sumarMeses(new Date(), meses) : null;
   return {
     clave,
     empresaId: d.empresaId || null,
@@ -75,9 +88,9 @@ function leerDatos(archivo) {
     conversacionesMes: CONVERSACIONES_POR_PLAN[plan],
     gratisHasta,
     informacion: String(d.informacion).trim(),
+    guionDado: d.guion ? String(d.guion).trim() : null,
     guion: d.guion ? String(d.guion).trim() : guionPorDefecto(String(d.nombreNegocio).trim()),
     sitioWeb: d.sitioWeb || `https://${sitios.find((s) => !s.startsWith('www.')) || sitios[0]}`,
-    telefonoContacto: d.telefonoContacto || (whatsapp ? `+${whatsapp}` : null),
   };
 }
 
@@ -88,28 +101,47 @@ async function main() {
   const prisma = require('../src/lib/prisma');
   try {
     const existente = await prisma.asistenteWeb.findUnique({ where: { clave: datos.clave } });
+    if (existente && datos.empresaId && datos.empresaId !== existente.empresaId) {
+      throw new Error(`La clave "${datos.clave}" ya es de la empresa ${existente.empresaId}, no de ${datos.empresaId}. Revisa el archivo.`);
+    }
     const empresaId = datos.empresaId || existente?.empresaId || null;
-    const empresa = empresaId ? await prisma.empresa.findUnique({ where: { id: empresaId } }) : null;
+    const empresa = empresaId ? await prisma.empresa.findUnique({
+      where: { id: empresaId },
+      include: { suscripcion: true, asistenteWeb: true, _count: { select: { usuarios: true } } },
+    }) : null;
     if (empresaId && !empresa) throw new Error(`No existe la empresa ${empresaId}`);
     if (empresa && empresa.id === EMPRESA_ID_MULTIDIGITAL) throw new Error('Este script no es para la empresa de Multidigital');
+    if (empresa && empresa.asistenteWeb && empresa.asistenteWeb.clave !== datos.clave) {
+      throw new Error(`La empresa ${empresa.id} ya tiene el asistente "${empresa.asistenteWeb.clave}".`);
+    }
+    // Empresa que ya usa AgendaBot (bot de WhatsApp, suscripción o usuarios del panel): este
+    // script le cambiaría el modo, la información y el guion. Solo con FORZAR=1, a propósito.
+    if (empresa && !existente && process.env.FORZAR !== '1'
+      && (!empresa.modoInformativo || empresa.whatsappNumeroId || empresa.suscripcion || empresa._count.usuarios > 0)) {
+      throw new Error(`La empresa ${empresa.id} (${empresa.nombre}) ya usa AgendaBot (WhatsApp, suscripción o usuarios): no la modifico. Si de verdad corresponde, corre con FORZAR=1.`);
+    }
     const plantilla = await prisma.empresa.findUnique({ where: { id: EMPRESA_ID_MULTIDIGITAL }, select: { rubroTemplateId: true } });
     if (!plantilla) throw new Error('No encontré la empresa de Multidigital para copiar el rubro');
 
+    // Sin telefonoContacto: ese número recibe las alertas por WhatsApp de AgendaBot; los
+    // negocios del asistente web reciben los interesados por correo.
+    // Al actualizar, si el archivo no trae guion se respeta el que ya tiene (pudo ajustarse a mano).
     const datosEmpresa = {
       nombre: datos.nombreNegocio,
       modoInformativo: true,
       informacionAdicional: datos.informacion,
-      guionAtencion: datos.guion,
+      guionAtencion: empresa && !datos.guionDado && empresa.guionAtencion ? empresa.guionAtencion : datos.guion,
       sitioWeb: datos.sitioWeb,
-      telefonoContacto: datos.telefonoContacto,
       emailContacto: datos.correoAvisos[0],
     };
     const datosAsistente = {
       titulo: datos.titulo, nombreNegocio: datos.nombreNegocio, saludo: datos.saludo, color: datos.color,
       whatsapp: datos.whatsapp, origenes: datos.origenes, correoAvisos: datos.correoAvisos,
-      conversacionesMes: datos.conversacionesMes, activo: true,
+      conversacionesMes: datos.conversacionesMes,
       ...(datos.gratisHasta && !existente?.gratisHasta ? { gratisHasta: datos.gratisHasta } : {}),
     };
+    // activo solo se fija al crear: actualizar la información no reactiva un asistente apagado.
+    if (existente && !existente.activo) console.log('⚠️  Este asistente está APAGADO (activo=false); se actualiza sin encenderlo.');
 
     console.log(`${existente ? 'ACTUALIZAR' : 'CREAR'} asistente "${datos.clave}" — ${empresa ? `empresa existente ${empresa.id} (${empresa.nombre})` : 'empresa NUEVA'}`);
     console.log(JSON.stringify({ empresa: { ...datosEmpresa, informacionAdicional: `${datos.informacion.slice(0, 120)}… (${datos.informacion.length} caracteres)`, guionAtencion: `${datos.guion.slice(0, 80)}…` }, asistente: datosAsistente }, null, 2));
@@ -128,7 +160,7 @@ async function main() {
       const asis = await tx.asistenteWeb.upsert({
         where: { clave: datos.clave },
         update: datosAsistente,
-        create: { ...datosAsistente, clave: datos.clave, empresaId: emp.id },
+        create: { ...datosAsistente, activo: true, clave: datos.clave, empresaId: emp.id },
       });
       return { emp, asis };
     });
@@ -145,4 +177,4 @@ if (require.main === module) {
   main().catch((err) => { console.error('❌', err.message); process.exitCode = 1; });
 }
 
-module.exports = { leerDatos, guionPorDefecto };
+module.exports = { leerDatos, guionPorDefecto, sumarMeses };

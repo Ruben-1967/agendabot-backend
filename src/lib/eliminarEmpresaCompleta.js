@@ -76,6 +76,7 @@ async function eliminarEmpresaCompleta(tx, empresaId) {
     await tx.suscripcion.delete({ where: { id: suscripcion.id } });
   }
 
+  await tx.asistenteWeb.deleteMany({ where: { empresaId } });
   await tx.empresa.delete({ where: { id: empresaId } });
 }
 

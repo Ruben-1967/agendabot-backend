@@ -73,7 +73,12 @@ function crearBuscadorAsistentes(prisma, { ahora = () => Date.now() } = {}) {
       console.error(`[chat-web] No se pudo leer el asistente "${k}" de la base:`, error.message);
       valor = asistentePorClave(k);
     }
-    cache.set(k, { valor, en: ahora() });
+    // Solo se guardan asistentes que existen: una clave inventada no ocupa memoria. Tope de
+    // tamaño por si acaso (se vacía entera; se vuelve a llenar sola).
+    if (valor) {
+      if (cache.size >= 500) cache.clear();
+      cache.set(k, { valor, en: ahora() });
+    }
     return valor;
   };
 }
