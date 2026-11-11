@@ -1556,7 +1556,11 @@ ${empresa.guionAtencion ? '' : 'Instrucciones:\n'}${instruccionesModoInformativo
     // el chat: "ya avisamos a nuestro equipo, en breve te contactan", "le paso el horario
     // a nuestro equipo para que te llamen".
     || (!!empresa.guionAtencion && !/\?/.test(texto || '')
-      && /\bte\s+(contact|llam|escrib)(an|ar[aá]n)\b|\bpara\s+que\s+te\s+(contacten|llamen|escriban)\b|\b(ya\s+)?(avis[eé]|avisamos|le\s+paso|les\s+paso|paso\s+(el|tu|los)[^.!\n]{0,40}?)\s+(a|al)\s+(nuestro\s+|el\s+)?equipo\b/i.test(texto || ''));
+      && /\bte\s+(contact|llam|escrib)(an|ar[aá]n)\b|\bpara\s+que\s+te\s+(contacten|llamen|escriban)\b|\b(ya\s+)?(avis[eé]|avisamos|le\s+paso|les\s+paso|paso\s+(el|tu|los)[^.!\n]{0,40}?)\s+(a|al)\s+(nuestro\s+|el\s+)?equipo\b/i.test(texto || ''))
+    // Lo mismo tratando de "usted" (asistentes web de negocios formales, ej. NEXIA, 2026-11-11):
+    // "un profesional le contactará", "le contactamos", "para que le llamen".
+    || (!!empresa.guionAtencion && !/\?/.test(texto || '')
+      && /\ble\s+(contact|llam|escrib)(amos|aremos|ar[aá]n|ar[aá]|an)(?![a-záéíóúñ])|\bpara\s+que\s+le\s+(contacten|llamen|escriban)\b/i.test(texto || ''));
 
   // Perú/Colombia preguntando el precio: aun con los precios en la información, el modelo
   // a veces derivaba en vez de darlos (prueba en staging 2026-10-24, misma pregunta: una
