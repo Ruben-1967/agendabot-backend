@@ -64,6 +64,12 @@
 
   function montar(config) {
     var color = /^#[0-9a-fA-F]{3,8}$/.test(config.color || '') ? config.color : '#1D4ED8';
+    // WhatsApp del negocio siempre a mano dentro del chat (cabecera + botón bajo el saludo):
+    // en los sitios con asistente reemplaza al botón flotante de WhatsApp.
+    var ICONO_WA = '<svg viewBox="0 0 24 24" fill="#fff" aria-hidden="true"><path d="M12 2a10 10 0 0 0-8.6 15.1L2 22l5-1.3A10 10 0 1 0 12 2zm0 18.2c-1.5 0-3-.4-4.2-1.2l-.3-.2-3 .8.8-2.9-.2-.3A8.2 8.2 0 1 1 12 20.2zm4.5-6.1c-.2-.1-1.5-.7-1.7-.8-.2-.1-.4-.1-.6.1l-.8 1c-.1.2-.3.2-.5.1a6.7 6.7 0 0 1-3.3-2.9c-.2-.4.2-.4.7-1.3.1-.2 0-.3 0-.4l-.8-1.8c-.2-.5-.4-.4-.6-.4h-.5a1 1 0 0 0-.7.3 3 3 0 0 0-.9 2.2 5.2 5.2 0 0 0 1.1 2.8 11.9 11.9 0 0 0 4.6 4c1.7.7 2.4.8 3.2.7.5-.1 1.5-.6 1.8-1.2.2-.6.2-1.1.1-1.2l-.4-.2z"/></svg>';
+    function linkWhatsApp() {
+      return 'https://wa.me/' + encodeURIComponent(config.whatsapp || '') + '?text=' + encodeURIComponent('Hola, vengo del sitio web');
+    }
     var host = document.createElement('div');
     host.setAttribute('data-asistente-web', '');
     document.body.appendChild(host);
@@ -86,7 +92,9 @@
       '.panel{position:fixed;' + lado + ':20px;bottom:92px;z-index:2147483001;width:370px;max-width:calc(100vw - 24px);height:560px;max-height:calc(100vh - 120px);background:#fff;border-radius:18px;box-shadow:0 16px 48px rgba(0,0,0,.28);display:none;flex-direction:column;overflow:hidden}' +
       '.panel.abierto{display:flex}' +
       '.cab{background:' + color + ';color:#fff;padding:14px 16px;display:flex;align-items:center;gap:10px}' +
-      '.cab .t{font-weight:700;font-size:15px}.cab .s{font-size:12px;opacity:.85}.cab .x{margin-left:auto;background:rgba(255,255,255,.18);border:0;color:#fff;width:32px;height:32px;border-radius:50%;cursor:pointer;font-size:18px;line-height:1}' +
+      '.cab .t{font-weight:700;font-size:15px}.cab .s{font-size:12px;opacity:.85}.cab .acc{margin-left:auto;display:flex;gap:8px;align-items:center}.cab .x{background:rgba(255,255,255,.18);border:0;color:#fff;width:32px;height:32px;border-radius:50%;cursor:pointer;font-size:18px;line-height:1}' +
+      '.cab .wa-cab{width:32px;height:32px;border-radius:50%;background:#25D366;display:flex;align-items:center;justify-content:center}.cab .wa-cab svg{width:18px;height:18px}' +
+      '.chip-wa{align-self:flex-start;border:1.5px solid #25D366;color:#128C4A;background:#fff;padding:7px 13px;border-radius:999px;font-weight:700;font-size:13px;text-decoration:none}.chip-wa:hover{background:#ECFDF3}' +
       '.msgs{flex:1;overflow-y:auto;padding:14px;background:#F4F6FA;display:flex;flex-direction:column;gap:8px}' +
       '.m{max-width:85%;padding:9px 13px;border-radius:14px;font-size:14px;line-height:1.45;white-space:normal;word-wrap:break-word}' +
       '.m.bot{background:#fff;color:#0B1D3A;align-self:flex-start;border-bottom-left-radius:4px;box-shadow:0 1px 2px rgba(0,0,0,.06)}' +
@@ -112,7 +120,7 @@
           '<path fill="#7C3AED" d="M20.5 15.5l.7 1.8 1.8.7-1.8.7-.7 1.8-.7-1.8-1.8-.7 1.8-.7z"/></svg>') +
       '<span class="en-linea" aria-hidden="true"></span><span class="ia" aria-hidden="true">IA</span></button>' +
       '<section class="panel" role="dialog" aria-label="' + escapar(config.titulo) + '">' +
-      '<div class="cab"><div><div class="t">' + escapar(config.titulo) + '</div><div class="s">Responde al instante · 24/7</div></div><button class="x" aria-label="Cerrar chat">×</button></div>' +
+      '<div class="cab"><div><div class="t">' + escapar(config.titulo) + '</div><div class="s">Responde al instante · 24/7</div></div><div class="acc">' + (config.whatsapp ? '<a class="wa-cab" href="' + linkWhatsApp() + '" target="_blank" rel="noopener noreferrer" aria-label="Escribir por WhatsApp" title="Escribir por WhatsApp">' + ICONO_WA + '</a>' : '') + '<button class="x" aria-label="Cerrar chat">×</button></div></div>' +
       '<div class="msgs" aria-live="polite"></div>' +
       '<div class="pie"><textarea rows="1" placeholder="Escribe tu mensaje…" aria-label="Escribe tu mensaje" maxlength="800"></textarea><button aria-label="Enviar"><svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M3 20l18-8L3 4v6l12 2-12 2z"/></svg></button></div>' +
       '<div class="marca">Asistente con IA · puede cometer errores</div>' +
@@ -139,7 +147,7 @@
       if (!config.whatsapp || root.querySelector('.wa')) return;
       var a = document.createElement('a');
       a.className = 'wa'; a.target = '_blank'; a.rel = 'noopener noreferrer';
-      a.href = 'https://wa.me/' + encodeURIComponent(config.whatsapp);
+      a.href = linkWhatsApp();
       a.textContent = 'Escribir por WhatsApp';
       msgs.appendChild(a);
       msgs.scrollTop = msgs.scrollHeight;
@@ -152,6 +160,13 @@
     }
 
     pintar('bot', config.saludo);
+    if (config.whatsapp) {
+      var chip = document.createElement('a');
+      chip.className = 'chip-wa'; chip.target = '_blank'; chip.rel = 'noopener noreferrer';
+      chip.href = linkWhatsApp();
+      chip.textContent = 'Prefiero hablar por WhatsApp';
+      msgs.appendChild(chip);
+    }
     historial.forEach(function (m) { pintar(m.r, m.t); });
 
     function abrir() {
