@@ -16,7 +16,7 @@ const ASISTENTES_WEB = {
     nombreNegocio: 'Multidigital',
     // Correo del negocio que recibe cada interesado (src/services/emailInteresadoWeb.js).
     correoAvisos: ['contacto@multidigital.cl'],
-    saludo: '¡Hola! 👋 Soy el asistente de Multidigital. ¿Quieres saber cómo tener el sitio web de tu negocio? Pregúntame lo que quieras.',
+    saludo: 'Hola, soy el asistente de Multidigital.\nEstoy para ayudarte, ¿qué necesitas saber?',
     color: '#1D4ED8',
     whatsapp: '56966108858',
     // Sitios desde donde se puede usar (el navegador manda el Origin; se compara el host).

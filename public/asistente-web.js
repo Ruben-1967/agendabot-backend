@@ -88,7 +88,7 @@
       '.btn.pulso::before{content:"";position:absolute;inset:-3px;border-radius:50%;border:3px solid ' + color + ';animation:pulso 1.8s ease-out 4}' +
       '@keyframes pulso{0%{transform:scale(1);opacity:.7}100%{transform:scale(1.6);opacity:0}}' +
       '@media (prefers-reduced-motion:reduce){.btn.pulso::before{animation:none}}' +
-      '.teaser{position:fixed;' + lado + ':90px;bottom:30px;z-index:2147483000;max-width:240px;background:#fff;color:#0B1D3A;padding:10px 14px;border-radius:14px;box-shadow:0 6px 20px rgba(0,0,0,.18);font-size:14px;line-height:1.4;cursor:pointer}' +
+      '.teaser{position:fixed;' + lado + ':90px;bottom:30px;z-index:2147483000;max-width:240px;background:#fff;color:#0B1D3A;padding:10px 14px;border-radius:14px;box-shadow:0 6px 20px rgba(0,0,0,.18);font-size:14px;line-height:1.4;cursor:pointer;white-space:pre-line}' +
       '.panel{position:fixed;' + lado + ':20px;bottom:92px;z-index:2147483001;width:370px;max-width:calc(100vw - 24px);height:560px;max-height:calc(100vh - 120px);background:#fff;border-radius:18px;box-shadow:0 16px 48px rgba(0,0,0,.28);display:none;flex-direction:column;overflow:hidden}' +
       '.panel.abierto{display:flex}' +
       '.cab{background:' + color + ';color:#fff;padding:14px 16px;display:flex;align-items:center;gap:10px}' +

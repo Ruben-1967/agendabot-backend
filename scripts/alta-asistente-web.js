@@ -80,7 +80,7 @@ function leerDatos(archivo) {
     empresaId: d.empresaId || null,
     nombreNegocio: String(d.nombreNegocio).trim(),
     titulo: d.titulo || `Asistente ${String(d.nombreNegocio).trim()}`,
-    saludo: d.saludo || `¡Hola! 👋 Soy el asistente de ${String(d.nombreNegocio).trim()}. ¿En qué te puedo ayudar?`,
+    saludo: d.saludo || `Hola, soy el asistente de ${String(d.nombreNegocio).trim()}.\nEstoy para ayudarte, ¿qué necesitas saber?`,
     color: d.color || '#1D4ED8',
     whatsapp: whatsapp || null,
     origenes: sitios,
