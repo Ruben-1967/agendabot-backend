@@ -2,7 +2,8 @@
  * Asistente 24/7 de Multidigital — widget de chat para sitios web.
  * Se instala con una línea antes de </body>:
  *   <script src="https://agendabot-backend-bbw5.onrender.com/chat-web/widget.js" data-clave="CLAVE" defer></script>
- * Opcional: data-posicion="izquierda" (por defecto, abajo a la derecha).
+ * Opcional: data-posicion="izquierda" (por defecto, abajo a la derecha) y data-icono="https://..."
+ * (imagen propia para el botón, por ejemplo el logo del negocio).
  */
 (function () {
   'use strict';
@@ -13,6 +14,9 @@
   var clave = script.getAttribute('data-clave') || '';
   var api = (script.getAttribute('data-api') || new URL(script.src).origin) + '/chat-web';
   var izquierda = script.getAttribute('data-posicion') === 'izquierda';
+  // Opcional: imagen propia para el botón (logo o avatar del negocio), solo https.
+  var icono = script.getAttribute('data-icono') || '';
+  if (!/^https:\/\/[^\s"'<>]+$/.test(icono)) icono = '';
   if (!clave) return;
 
   // Almacenamiento tolerante a fallos (modo incógnito, bloqueos de cookies).
@@ -70,8 +74,14 @@
       '<style>' +
       ':host{all:initial}' +
       '*{box-sizing:border-box;font-family:system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif}' +
-      '.btn{position:fixed;' + lado + ':20px;bottom:20px;z-index:2147483000;width:60px;height:60px;border-radius:50%;border:0;background:' + color + ';color:#fff;cursor:pointer;box-shadow:0 8px 24px rgba(0,0,0,.25);display:flex;align-items:center;justify-content:center;transition:transform .15s}' +
-      '.btn:hover{transform:scale(1.06)}.btn svg{width:28px;height:28px}' +
+      '.btn{position:fixed;' + lado + ':20px;bottom:20px;z-index:2147483000;width:64px;height:64px;border-radius:50%;border:3px solid #fff;background:linear-gradient(135deg,' + color + ' 0%,#7C3AED 100%);color:#fff;cursor:pointer;box-shadow:0 8px 24px rgba(0,0,0,.28);display:flex;align-items:center;justify-content:center;transition:transform .15s;padding:0;overflow:visible}' +
+      '.btn:hover{transform:scale(1.07)}.btn svg{width:34px;height:34px}' +
+      '.btn img{width:100%;height:100%;border-radius:50%;object-fit:cover}' +
+      '.btn .en-linea{position:absolute;top:1px;right:1px;width:15px;height:15px;border-radius:50%;background:#22C55E;border:2.5px solid #fff}' +
+      '.btn .ia{position:absolute;bottom:-6px;left:50%;transform:translateX(-50%);background:#fff;color:' + color + ';font-size:10px;font-weight:800;letter-spacing:.06em;padding:2px 7px;border-radius:999px;box-shadow:0 2px 6px rgba(0,0,0,.2)}' +
+      '.btn.pulso::before{content:"";position:absolute;inset:-3px;border-radius:50%;border:3px solid ' + color + ';animation:pulso 1.8s ease-out 4}' +
+      '@keyframes pulso{0%{transform:scale(1);opacity:.7}100%{transform:scale(1.6);opacity:0}}' +
+      '@media (prefers-reduced-motion:reduce){.btn.pulso::before{animation:none}}' +
       '.teaser{position:fixed;' + lado + ':90px;bottom:30px;z-index:2147483000;max-width:240px;background:#fff;color:#0B1D3A;padding:10px 14px;border-radius:14px;box-shadow:0 6px 20px rgba(0,0,0,.18);font-size:14px;line-height:1.4;cursor:pointer}' +
       '.panel{position:fixed;' + lado + ':20px;bottom:92px;z-index:2147483001;width:370px;max-width:calc(100vw - 24px);height:560px;max-height:calc(100vh - 120px);background:#fff;border-radius:18px;box-shadow:0 16px 48px rgba(0,0,0,.28);display:none;flex-direction:column;overflow:hidden}' +
       '.panel.abierto{display:flex}' +
@@ -93,7 +103,14 @@
       '@media (max-width:480px){.panel{' + lado + ':0;bottom:0;width:100vw;max-width:100vw;height:100%;max-height:100%;border-radius:0}}' +
       '</style>' +
       '<div class="teaser" hidden></div>' +
-      '<button class="btn" aria-label="Abrir chat con ' + escapar(config.titulo) + '"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 3C6.5 3 2 6.9 2 11.7c0 2.4 1.1 4.6 3 6.2L4 22l4.4-2.2c1.1.3 2.3.5 3.6.5 5.5 0 10-3.9 10-8.6S17.5 3 12 3z"/></svg></button>' +
+      '<button class="btn pulso" aria-label="Abrir chat con ' + escapar(config.titulo) + '">' +
+      (icono
+        ? '<img src="' + escapar(icono) + '" alt="">'
+        // Globo de chat con chispas de IA.
+        : '<svg viewBox="0 0 32 32" aria-hidden="true"><path fill="#fff" d="M16 4C9.4 4 4 8.6 4 14.3c0 2.9 1.4 5.5 3.7 7.4L6.5 27l5.3-2.6c1.3.4 2.7.6 4.2.6 6.6 0 12-4.6 12-10.3S22.6 4 16 4z"/>' +
+          '<path fill="' + color + '" d="M15 8.5l1.3 3.6 3.6 1.3-3.6 1.3-1.3 3.6-1.3-3.6-3.6-1.3 3.6-1.3z"/>' +
+          '<path fill="#7C3AED" d="M20.5 15.5l.7 1.8 1.8.7-1.8.7-.7 1.8-.7-1.8-1.8-.7 1.8-.7z"/></svg>') +
+      '<span class="en-linea" aria-hidden="true"></span><span class="ia" aria-hidden="true">IA</span></button>' +
       '<section class="panel" role="dialog" aria-label="' + escapar(config.titulo) + '">' +
       '<div class="cab"><div><div class="t">' + escapar(config.titulo) + '</div><div class="s">Responde al instante · 24/7</div></div><button class="x" aria-label="Cerrar chat">×</button></div>' +
       '<div class="msgs" aria-live="polite"></div>' +
