@@ -19,6 +19,7 @@ const {
 const { avisarInteresadoWeb } = require('../lib/avisoInteresadoWeb');
 
 const ARCHIVO_WIDGET = path.join(__dirname, '..', '..', 'public', 'asistente-web.js');
+const HORAS_ENTRE_AVISOS = 6;
 
 // Textos fijos (sin modelo) para cuando el asistente no puede responder.
 function textoWhatsApp(asistente) {
@@ -154,7 +155,7 @@ function crearRouterChatWeb({ prisma, procesarMensajeEntrante, avisarInteresado 
 
       const conversacion = await prisma.conversacion.findFirst({
         where: { empresaId: empresa.id, telefono: telefonoCliente, canal: 'web' },
-        select: { id: true, mensajes: true, escaladoAHumano: true, pausadaPorHumanoEn: true },
+        select: { id: true, mensajes: true, escaladoAHumano: true, alertaUrgenteEnviadaEn: true },
       });
       if (!conversacion) {
         // Conversación nueva: cuenta para el tope del plan.
@@ -173,24 +174,24 @@ function crearRouterChatWeb({ prisma, procesarMensajeEntrante, avisarInteresado 
         return res.json({ respuesta: textoLimite(asistente), derivado: false, limite: true });
       }
 
-      // Pausa antes de este mensaje, para saber si se deriva justo ahora. Se mira la pausa y no
-      // escaladoAHumano: ese queda en true para siempre, y si la persona vuelve días después
-      // (el job de pausa reactivó el bot) y deja datos de nuevo, también hay que avisar.
-      const pausaAntes = conversacion?.pausadaPorHumanoEn ? new Date(conversacion.pausadaPorHumanoEn).getTime() : 0;
+      // Último aviso al negocio de esta conversación. En el chat web no se usa la alerta interna
+      // de WhatsApp, así que alertaUrgenteEnviadaEn guarda cuándo se le avisó por correo.
+      const ultimoAviso = conversacion?.alertaUrgenteEnviadaEn ? new Date(conversacion.alertaUrgenteEnviadaEn).getTime() : 0;
       const resultado = await procesarMensajeEntrante({
         empresa, telefonoCliente, textoEntrante: mensaje, nombreContacto: null, canal: 'web',
       });
       // Sin respuesta = chat ya derivado (pausado para una persona): se confirma con texto fijo.
       if (!resultado?.respuestaTexto) return res.json({ respuesta: textoDerivado(asistente), derivado: true });
 
-      const actual = await prisma.conversacion.findFirst({
-        where: { empresaId: empresa.id, telefono: telefonoCliente, canal: 'web' },
-        select: { escaladoAHumano: true, pausadaPorHumanoEn: true },
-      });
-      const derivado = !!actual?.escaladoAHumano;
-      const pausaDespues = actual?.pausadaPorHumanoEn ? new Date(actual.pausadaPorHumanoEn).getTime() : 0;
-      // Recién derivado en este mensaje: se avisa al negocio una sola vez (sin esperar el correo).
-      if (pausaDespues > pausaAntes) {
+      // Derivó en este mensaje: se avisa al negocio (sin esperar el correo). Si ya se le avisó
+      // hace poco por esta misma conversación, no se repite (el asistente puede volver a derivar
+      // en la charla que sigue); pasadas 6 horas, sí, porque puede ser una consulta nueva.
+      const derivado = !!resultado.escalado;
+      if (derivado && Date.now() - ultimoAviso > HORAS_ENTRE_AVISOS * 3600000) {
+        await prisma.conversacion.updateMany({
+          where: { empresaId: empresa.id, telefono: telefonoCliente, canal: 'web' },
+          data: { alertaUrgenteEnviadaEn: new Date() },
+        });
         avisarInteresado({ prisma, asistente, empresaId: empresa.id, telefonoCliente });
       }
       res.json({ respuesta: resultado.respuestaTexto, derivado });

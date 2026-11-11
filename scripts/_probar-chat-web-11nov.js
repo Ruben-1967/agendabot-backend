@@ -27,21 +27,30 @@ function crearPrisma({ conversacionesDelMes = 0, empresa = { id: EMP, modoInform
     conversacion: {
       findFirst: async ({ where }) => convs.find((c) => c.telefono === where.telefono && c.canal === where.canal) || null,
       count: async () => conversacionesDelMes,
+      updateMany: async ({ where, data }) => {
+        const c = convs.find((x) => x.telefono === where.telefono && x.canal === where.canal);
+        if (c) Object.assign(c, data);
+        return { count: c ? 1 : 0 };
+      },
     },
   };
 }
 // Motor simulado: guarda el turno como lo haría chatbotEngine.
-function crearMotor(prisma, { derivarAl = null, respuesta = 'Respuesta de prueba' } = {}) {
+// derivarEn: números de turno (1, 2, ...) en que el asistente deriva.
+function crearMotor(prisma, { derivarAl = null, derivarEn = null, respuesta = 'Respuesta de prueba' } = {}) {
   const llamadas = [];
+  const turnos = derivarEn || (derivarAl ? [derivarAl] : []);
   const fn = async (p) => {
     llamadas.push(p);
     let c = prisma.convs.find((x) => x.telefono === p.telefonoCliente);
     if (!c) { c = { telefono: p.telefonoCliente, canal: p.canal, mensajes: [], escaladoAHumano: false }; prisma.convs.push(c); }
-    // Como chatbotEngine: con el chat pausado no responde; al derivar marca escalado + pausa.
+    // Como chatbotEngine: con el bot silenciado (pausa) no responde. En el canal web derivar
+    // ya NO pausa: marca escaladoAHumano y devuelve escalado: true en ese turno.
     if (c.pausadaPorHumanoEn) return { respuestaTexto: null };
     c.mensajes.push({ rol: 'usuario', contenido: p.textoEntrante }, { rol: 'asistente', contenido: respuesta });
-    if (derivarAl && c.mensajes.length / 2 >= derivarAl) { c.escaladoAHumano = true; c.pausadaPorHumanoEn = new Date(Date.UTC(2026, 10, 11, 18, c.mensajes.length)); }
-    return { respuestaTexto: respuesta };
+    const escalado = turnos.includes(c.mensajes.length / 2);
+    if (escalado) c.escaladoAHumano = true;
+    return { respuestaTexto: respuesta, escalado };
   };
   fn.llamadas = llamadas;
   return fn;
@@ -138,11 +147,17 @@ const SES = 'abcdefghijklmnopqrstuvwx';
   {
     const prisma = crearPrisma(); const motor = crearMotor(prisma, { derivarAl: 2 });
     const s = await servidor({ prisma, procesarMensajeEntrante: motor });
-    await caso('al derivar: derivado=true, y luego texto fijo sin invitar a WhatsApp', async () => {
+    await caso('al derivar: derivado=true y el asistente SIGUE conversando después', async () => {
       assert.strictEqual((await post(s, { clave: 'multidigital', sesion: SES, texto: 'a' })).json.derivado, false);
       assert.strictEqual((await post(s, { clave: 'multidigital', sesion: SES, texto: 'b' })).json.derivado, true);
-      const r = await post(s, { clave: 'multidigital', sesion: SES, texto: 'c' });
-      assert.strictEqual(r.json.derivado, true); assert.ok(/tus datos/.test(r.json.respuesta) && !/wa\.me/.test(r.json.respuesta));
+      const r = await post(s, { clave: 'multidigital', sesion: SES, texto: '¿cuándo me llaman?' });
+      assert.strictEqual(r.json.respuesta, 'Respuesta de prueba'); assert.strictEqual(r.json.derivado, false);
+      assert.strictEqual(motor.llamadas.length, 3);
+    });
+    await caso('bot silenciado: texto fijo sin invitar a WhatsApp', async () => {
+      prisma.convs.find((c) => c.telefono === `web:${SES}`).pausadaPorHumanoEn = new Date();
+      const r = await post(s, { clave: 'multidigital', sesion: SES, texto: 'hola?' });
+      assert.ok(/tus datos/.test(r.json.respuesta) && !/wa\.me/.test(r.json.respuesta));
     });
     s.close();
   }
@@ -208,22 +223,22 @@ const SES = 'abcdefghijklmnopqrstuvwx';
     assert.strictEqual(llamoAMeta, false);
   });
   {
-    const prisma = crearPrisma(); const motor = crearMotor(prisma, { derivarAl: 2 });
+    const prisma = crearPrisma(); const motor = crearMotor(prisma, { derivarEn: [2, 4, 5] });
     const avisos = [];
     const s = await servidor({ prisma, procesarMensajeEntrante: motor, avisarInteresado: (p) => avisos.push(p) });
-    await caso('aviso al negocio: una sola vez, justo al derivar', async () => {
+    await caso('aviso al negocio: al derivar, y no se repite si vuelve a derivar enseguida', async () => {
       await post(s, { clave: 'multidigital', sesion: SES, texto: 'a' });
       assert.strictEqual(avisos.length, 0);
       await post(s, { clave: 'multidigital', sesion: SES, texto: 'mis datos' });
       assert.strictEqual(avisos.length, 1);
       assert.strictEqual(avisos[0].telefonoCliente, `web:${SES}`); assert.strictEqual(avisos[0].asistente.titulo, 'Asistente Multidigital');
       await post(s, { clave: 'multidigital', sesion: SES, texto: 'gracias' });
+      await post(s, { clave: 'multidigital', sesion: SES, texto: 'deriva otra vez' }); // turno 4: deriva de nuevo
       assert.strictEqual(avisos.length, 1);
     });
-    await caso('aviso de nuevo si vuelve después de reactivarse el bot y deja datos otra vez', async () => {
-      // El job de pausa reactiva el bot borrando solo pausadaPorHumanoEn (escaladoAHumano queda en true).
-      prisma.convs.find((c) => c.telefono === `web:${SES}`).pausadaPorHumanoEn = null;
-      await post(s, { clave: 'multidigital', sesion: SES, texto: 'volví, mis datos nuevos' });
+    await caso('aviso de nuevo si vuelve a derivar pasadas 6 horas', async () => {
+      prisma.convs.find((c) => c.telefono === `web:${SES}`).alertaUrgenteEnviadaEn = new Date(Date.now() - 7 * 3600000);
+      await post(s, { clave: 'multidigital', sesion: SES, texto: 'volví, mis datos nuevos' }); // turno 5
       assert.strictEqual(avisos.length, 2);
     });
     s.close();

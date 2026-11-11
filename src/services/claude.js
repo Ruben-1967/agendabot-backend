@@ -1496,7 +1496,8 @@ CANAL: estás respondiendo en el CHAT DEL SITIO WEB del negocio, no en WhatsApp.
 - El chat ya le mostró un saludo de bienvenida: no vuelvas a saludar con "Buenos días/tardes/noches"; responde directo a lo que pregunta (con la información de la apertura del guion, si corresponde).
 - No tienes el número de la persona. Cuando pidas sus datos, pide también su número de WhatsApp con el código de país (ej. +56 9 1234 5678) para contactarla, en el mismo mensaje.
 - Nunca digas "por este mismo chat": di que la contactamos por WhatsApp (o la llamamos, si eligió la llamada) al número que te dio. Si no quiere dar su número, ofrécele escribir directo al WhatsApp del negocio, si figura en la información.
-- Escribe en texto simple y corto, sin títulos ni markdown; si quieres destacar algo, usa *un asterisco* a cada lado.`;
+- Escribe en texto simple y corto, sin títulos ni markdown; si quieres destacar algo, usa *un asterisco* a cada lado.
+- Si la persona YA dejó sus datos en esta conversación (ya le dijiste que la contactan), sigue respondiendo sus dudas con la información: no le vuelvas a pedir los datos ni repitas el cierre. Si pregunta cuándo la contactan, dile que el equipo ya recibió sus datos y la contacta por WhatsApp a la brevedad (no prometas una hora). Vuelve a derivar solo si entrega datos nuevos o pide otra cosa que requiera a una persona.`;
 
 async function generarRespuestaInformativa({ empresa: empresaOriginal, historial, mensajeEntrante, ahora = new Date(), pais: paisTelefono = null, canal = 'whatsapp' }) {
   // Solo con guion se distingue el país (ver paisDesdeTelefono).

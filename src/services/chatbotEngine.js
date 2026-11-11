@@ -251,7 +251,12 @@ async function procesarMensajeEntranteSinLock({ empresa, telefonoCliente, textoE
       { rol: 'usuario', contenido: textoEntrante, timestamp: new Date().toISOString() },
       { rol: 'asistente', contenido: respuestaInfo, timestamp: new Date().toISOString() },
     ];
-    const pausaInfo = escaladoInfo ? { escaladoAHumano: true, pausadaPorHumanoEn: new Date() } : {};
+    // En el chat del sitio web (canal 'web') nadie responde desde el panel: derivar avisa al
+    // negocio (correo) pero NO pausa al asistente, que sigue conversando (Rubén, 11-nov: con la
+    // pausa repetía la misma frase a cualquier pregunta nueva).
+    const pausaInfo = !escaladoInfo ? {}
+      : canal === 'web' ? { escaladoAHumano: true }
+        : { escaladoAHumano: true, pausadaPorHumanoEn: new Date() };
     await prisma.conversacion.upsert({
       where: { id: conversacion?.id || '00000000-0000-0000-0000-000000000000' },
       update: { mensajes: mensajesInfo, clienteId: cliente.id, reservaEnCurso: null, ...pausaInfo },
@@ -262,7 +267,7 @@ async function procesarMensajeEntranteSinLock({ empresa, telefonoCliente, textoE
     if (escaladoInfo && correspondeRegistrarLead(empresa)) {
       registrarLeadDesdeBot({ empresa, telefono: telefonoCliente, canal, mensajes: mensajesInfo });
     }
-    return { respuestaTexto: respuestaInfo, interactivo: null, cliente };
+    return { respuestaTexto: respuestaInfo, interactivo: null, cliente, escalado: escaladoInfo };
   }
 
   let respuestaTexto;
