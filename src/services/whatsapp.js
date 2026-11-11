@@ -48,6 +48,11 @@ function esIdUsuarioWhatsApp(destino) {
   return /^[A-Z]{2}\.[A-Za-z0-9.]+$/.test(String(destino || ''));
 }
 function destinatario(destino) {
+  // Resguardo: los contactos del chat del sitio web se guardan como "web:<sesión>" (no son
+  // un número). Ningún envío de WhatsApp debe salir hacia ellos, venga del job que venga.
+  if (/^web:/i.test(String(destino || ''))) {
+    throw new Error(`Destino de WhatsApp inválido (contacto del chat web): ${destino}`);
+  }
   return esIdUsuarioWhatsApp(destino) ? { recipient: destino } : { to: destino };
 }
 

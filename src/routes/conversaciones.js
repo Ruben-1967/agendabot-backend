@@ -238,6 +238,11 @@ router.post('/:empresaId/:conversacionId/mensaje', requireAuth, async (req, res)
     // Enviar primero por el canal real de la conversación — si falla, no
     // guardamos el mensaje como si hubiera llegado al cliente (antes este
     // endpoint solo lo guardaba en la BD sin enviarlo nunca de verdad).
+    if (conversacion.canal === 'web') {
+      // Chat del sitio web: la persona ya no está en la página, no hay por dónde
+      // mandarle la respuesta. Se le escribe al WhatsApp que dejó (ver ficha).
+      return res.status(400).json({ error: 'Las conversaciones del chat del sitio web no se responden desde aquí: escríbele por WhatsApp al número que dejó en el chat.' });
+    }
     if (conversacion.canal === 'instagram') {
       if (!empresa?.instagramToken || !empresa?.instagramCuentaId) {
         return res.status(400).json({ error: 'Esta empresa no tiene Instagram conectado, no se puede enviar el mensaje' });

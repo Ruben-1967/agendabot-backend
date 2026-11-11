@@ -189,7 +189,13 @@ async function procesarPausasCoexistence() {
         let contencionEnviada = false;
         try {
 
-          if (conversacion.canal === 'instagram') {
+          if (conversacion.canal === 'web') {
+            // Chat del sitio web: la persona ya recibió en el chat el aviso de que la
+            // contactamos, y no hay a dónde mandarle más. Se marca como hecha (sin enviar ni
+            // agregar nada al historial) para que el job no reintente; la alerta interna al
+            // negocio sigue igual.
+            await prisma.conversacion.update({ where: { id: conversacion.id }, data: { contencionEnviadaEn: new Date() } });
+          } else if (conversacion.canal === 'instagram') {
             // instagramToken llega anidado (Conversacion -> Empresa), la
             // extensión de Prisma no lo descifra automáticamente ahí.
             const accessTokenInstagram = descifrarSiCorresponde(empresa.instagramToken);

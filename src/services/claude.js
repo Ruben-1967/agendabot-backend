@@ -671,7 +671,7 @@ async function generarRespuestaChatbotSinCorregirVoseo({ empresa, cliente, histo
   // Modo informativo (empresas que no agendan, ej. Multidigital): camino corto y
   // aparte, sin nada de la lógica de citas de más abajo. Ver generarRespuestaInformativa.
   if (empresa.modoInformativo) {
-    return generarRespuestaInformativa({ empresa, historial, mensajeEntrante, ahora, pais: paisDesdeTelefono(cliente?.telefono, canal) });
+    return generarRespuestaInformativa({ empresa, historial, mensajeEntrante, ahora, pais: paisDesdeTelefono(cliente?.telefono, canal), canal });
   }
 
   // Preferimos los Servicio reales que la empresa cargó en el panel de
@@ -1362,7 +1362,7 @@ async function extraerDatosLeadWeb(mensajes) {
   const response = await anthropic.messages.create({
     model: MODEL,
     max_tokens: 400,
-    system: 'Extraes datos de contacto de una conversación de WhatsApp entre un bot y una persona interesada en un sitio web. Usa SOLO lo que la persona escribió; si un dato no aparece, déjalo vacío. Nunca inventes.',
+    system: 'Extraes datos de contacto de una conversación de chat (WhatsApp, redes sociales o el chat de un sitio web) entre un bot y una persona interesada en un sitio web. Usa SOLO lo que la persona escribió; si un dato no aparece, déjalo vacío. Nunca inventes.',
     tools: [{
       name: 'guardar_lead',
       description: 'Guarda los datos del interesado.',
@@ -1375,6 +1375,7 @@ async function extraerDatosLeadWeb(mensajes) {
           comuna: { type: 'string', description: 'Comuna o ciudad' },
           preferencia: { type: 'string', enum: ['EJEMPLO', 'LLAMADA', ''], description: 'Qué eligió: el ejemplo gratis o una llamada' },
           horarioLlamada: { type: 'string', description: 'Horario en que pidió que lo llamen, si eligió llamada' },
+          telefono: { type: 'string', description: 'Número de WhatsApp o teléfono que la persona escribió en la conversación, tal cual (vacío si no dio ninguno)' },
         },
       },
     }],
@@ -1447,7 +1448,17 @@ function agregarPresentacionPais(texto, pais) {
   return texto.replace(/Sobre tu consulta/i, `Somos una empresa chilena que crea sitios web para toda Latinoamérica, 100% online, con precios especiales para ${nombre}. Sobre tu consulta`);
 }
 
-async function generarRespuestaInformativa({ empresa: empresaOriginal, historial, mensajeEntrante, ahora = new Date(), pais: paisTelefono = null }) {
+// Chat del sitio web (asistente 24/7, canal 'web', 2026-11-11): la persona escribe desde la
+// burbuja del sitio, no desde WhatsApp, así que el bot no tiene su número ni puede seguir
+// "por este mismo chat". Se agrega al final del prompt para que mande sobre el guion.
+const INSTRUCCIONES_CHAT_WEB = `
+CANAL: estás respondiendo en el CHAT DEL SITIO WEB del negocio, no en WhatsApp. Esto cambia tres cosas, y manda sobre el guion:
+- El chat ya le mostró un saludo de bienvenida: no vuelvas a saludar con "Buenos días/tardes/noches"; responde directo a lo que pregunta (con la información de la apertura del guion, si corresponde).
+- No tienes el número de la persona. Cuando pidas sus datos, pide también su número de WhatsApp con el código de país (ej. +56 9 1234 5678) para contactarla, en el mismo mensaje.
+- Nunca digas "por este mismo chat": di que la contactamos por WhatsApp (o la llamamos, si eligió la llamada) al número que te dio. Si no quiere dar su número, ofrécele escribir directo al WhatsApp del negocio, si figura en la información.
+- Escribe en texto simple y corto, sin títulos ni markdown; si quieres destacar algo, usa *un asterisco* a cada lado.`;
+
+async function generarRespuestaInformativa({ empresa: empresaOriginal, historial, mensajeEntrante, ahora = new Date(), pais: paisTelefono = null, canal = 'whatsapp' }) {
   // Solo con guion se distingue el país (ver paisDesdeTelefono).
   const pais = empresaOriginal.guionAtencion ? paisTelefono : null;
   const empresa = pais
@@ -1482,7 +1493,7 @@ Este negocio NO agenda citas ni reuniones por este chat: tu trabajo es informar 
 
 ${bloques.join('\n\n')}
 
-${empresa.guionAtencion ? '' : 'Instrucciones:\n'}${instruccionesModoInformativo(empresa, ahora, pais)}`;
+${empresa.guionAtencion ? '' : 'Instrucciones:\n'}${instruccionesModoInformativo(empresa, ahora, pais)}${canal === 'web' ? `\n${INSTRUCCIONES_CHAT_WEB}` : ''}`;
 
   const herramientas = construirTools(empresa, false, false).filter((t) => t.name === 'escalar_a_humano');
   const messages = [

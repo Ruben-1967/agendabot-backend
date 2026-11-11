@@ -21,6 +21,16 @@ function limpio(valor) {
   return v || null;
 }
 
+// Chat del sitio web: el número lo escribe la persona ("+56 9 1234 5678", "912345678").
+// Solo dígitos, con el 56 de Chile si dio un celular chileno de 9 dígitos; si no parece
+// un teléfono, null (mejor una ficha sin teléfono que uno inventado).
+function telefonoDado(valor) {
+  const d = String(valor || '').replace(/\D/g, '');
+  if (/^9\d{8}$/.test(d)) return `56${d}`;
+  if (d.length >= 10 && d.length <= 15) return d;
+  return null;
+}
+
 /**
  * @param {Object} p
  * @param {Object} p.empresa
@@ -33,10 +43,14 @@ async function registrarLeadDesdeBot({ empresa, telefono, canal, mensajes }) {
     if (!correspondeRegistrarLead(empresa)) return;
     const datos = await extraerDatosLeadWeb(mensajes);
     // Con nombre de usuario de WhatsApp no hay teléfono: se guarda su id (BSUID) tal cual.
-    const telefonoWhatsApp = canal !== 'whatsapp' ? null
-      : esIdUsuarioWhatsApp(telefono) ? String(telefono) : String(telefono).replace(/\D/g, '');
+    // En el chat del sitio web no hay número de canal: se usa el que la persona escribió.
+    const telefonoWhatsApp = canal === 'web' ? telefonoDado(datos.telefono)
+      : canal !== 'whatsapp' ? null
+        : esIdUsuarioWhatsApp(telefono) ? String(telefono) : String(telefono).replace(/\D/g, '');
     const preferencia = ['EJEMPLO', 'LLAMADA'].includes(datos.preferencia) ? datos.preferencia : null;
-    const notaCanal = canal !== 'whatsapp' ? `Llegó por ${canal} (id ${telefono}).` : null;
+    const notaCanal = canal === 'web'
+      ? `Llegó por el chat del sitio web (id ${telefono}).${limpio(datos.telefono) ? ` Número que escribió: "${limpio(datos.telefono)}".` : ''}`
+      : canal !== 'whatsapp' ? `Llegó por ${canal} (id ${telefono}).` : null;
     // Anuncio desde el que escribió (solo WhatsApp: Meta lo manda en el primer mensaje).
     const origen = canal === 'whatsapp'
       ? await buscarOrigenAnuncio({ phoneNumberId: empresa.whatsappNumeroId, telefono })
@@ -68,6 +82,11 @@ async function registrarLeadDesdeBot({ empresa, telefono, canal, mensajes }) {
       for (const [k, v] of Object.entries(campos)) if (v && !existente[k]) faltantes[k] = v;
       // Una ficha "sin nombre" del bot recibe el negocio real si ahora lo dio.
       if (campos.negocio && existente.origen === 'BOT' && /^Interesado /.test(existente.negocio)) faltantes.negocio = campos.negocio;
+      // Desde el chat web cualquiera puede escribir un número: se deja constancia en la
+      // ficha para que el equipo sepa de dónde vinieron los datos.
+      if (canal === 'web' && notaCanal && !(existente.notas || '').includes(`(id ${telefono})`)) {
+        faltantes.notas = [existente.notas, notaCanal].filter(Boolean).join('\n');
+      }
       if (Object.keys(faltantes).length) {
         await prisma.clienteWeb.update({ where: { id: existente.id }, data: faltantes });
       }
@@ -91,4 +110,4 @@ async function registrarLeadDesdeBot({ empresa, telefono, canal, mensajes }) {
   }
 }
 
-module.exports = { registrarLeadDesdeBot, correspondeRegistrarLead, EMPRESA_ID_CLIENTES_WEB };
+module.exports = { registrarLeadDesdeBot, correspondeRegistrarLead, EMPRESA_ID_CLIENTES_WEB, _interno: { telefonoDado } };

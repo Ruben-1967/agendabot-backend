@@ -92,14 +92,16 @@ const origenesPermitidos = process.env.PANEL_FRONTEND_URL
   ? process.env.PANEL_FRONTEND_URL.split(',').map((s) => s.trim())
   : true;
 
-app.use(express.json({
+// /chat-web (asistente de sitios web, público) lee su propio body con límite de 4 KB.
+const parserJsonGlobal = express.json({
   // 8mb para cubrir imágenes de hasta 5MB del Catálogo Visual codificadas en
   // base64 (~6.8MB) más margen para el resto del payload JSON.
   limit: '8mb',
   verify: (req, res, buf) => {
     req.rawBody = buf;
   },
-}));
+});
+app.use((req, res, next) => (req.path.startsWith('/chat-web') ? next() : parserJsonGlobal(req, res, next)));
 app.use(express.urlencoded({ extended: true }));
 
 // Middleware CORS con soporte para múltiples orígenes. Bug real encontrado
@@ -113,6 +115,8 @@ app.use((req, res, next) => {
   // /visitas-demo maneja su propio CORS (solo muestras.multidigital.cl): si este bloque
   // contestara el preflight, el navegador bloquearía el aviso de visita.
   if (req.path.startsWith('/visitas-demo')) return next();
+  // /chat-web (asistente de sitios web) también: solo acepta los sitios de cada asistente.
+  if (req.path.startsWith('/chat-web')) return next();
   const origen = req.get('origin');
   const permitido =origenesPermitidos === true || origenesPermitidos.includes(origen) || origenesPermitidos.includes('*');
 
@@ -265,6 +269,7 @@ app.use('/suscripcion', suscripcionRouter);
 app.use('/web', require('./routes/suscripcionWeb')); // suscripción Multidigital sitio web + correos (Flow)
 app.use('/website-leads', websiteLeadsRouter);
 app.use('/visitas-demo', require('./routes/visitasDemo')); // visitas a las demos de muestras.multidigital.cl
+app.use('/chat-web', require('./routes/chatWeb').crearRouterChatWeb({ prisma, procesarMensajeEntrante })); // asistente 24/7 de sitios web
 app.use('/admin-vendedores', require('./routes/adminVendedores'));
 app.use('/admin-vendedores/catalogo-demo', require('./routes/catalogoDemoAdmin'));
 app.use('/admin-vendedores/clientes-web', require('./routes/clientesWeb')); // panel Clientes Web (Multidigital)

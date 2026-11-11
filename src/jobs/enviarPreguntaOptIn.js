@@ -36,6 +36,8 @@ async function enviarPreguntasOptInPendientes() {
     where: {
       optInCampanasPreguntado: false,
       telefono: { not: null },
+      // Contactos del chat del sitio web ("web:<sesión>"): no tienen WhatsApp.
+      NOT: { telefono: { startsWith: 'web:' } },
       empresa: { esDemo: false, whatsappNumeroId: { not: null }, usaOptInMarketing: true },
     },
     include: { empresa: true },
