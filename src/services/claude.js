@@ -1560,7 +1560,12 @@ ${empresa.guionAtencion ? '' : 'Instrucciones:\n'}${instruccionesModoInformativo
     // Lo mismo tratando de "usted" (asistentes web de negocios formales, ej. NEXIA, 2026-11-11):
     // "un profesional le contactará", "le contactamos", "para que le llamen".
     || (!!empresa.guionAtencion && !/\?/.test(texto || '')
-      && /\ble\s+(contact|llam|escrib)(amos|aremos|ar[aá]n|ar[aá]|an)(?![a-záéíóúñ])|\bpara\s+que\s+le\s+(contacten|llamen|escriban)\b/i.test(texto || ''));
+      && /\ble\s+(contact|llam|escrib)(amos|aremos|ar[aá]n|ar[aá]|an)(?![a-záéíóúñ])|\bpara\s+que\s+le\s+(contacten|llamen|escriban)\b/i.test(texto || ''))
+    // Asistentes web multilingües (ej. Puna Travel, 2026-11-12): el mismo cierre en inglés
+    // ("we'll contact you", "I've let the team know") y en portugués ("vamos te contatar",
+    // "já avisei a equipe"). Sin esto, el cierre en otro idioma no derivaba y no salía el aviso.
+    || (!!empresa.guionAtencion && !/\?/.test(texto || '')
+      && /\b(we|they|our\s+team|the\s+team|someone)\s*(will|'ll|’ll|are\s+going\s+to)\s+(be\s+)?(contact|reach|writ|messag|call|get\s+back|be\s+in\s+touch|in\s+touch)|\bI(\s+have|'ve|’ve)?\s+(let|notified|told|informed|passed)\b[^.!\n]{0,40}\bteam\b|\b(vamos|iremos|vai|v[aã]o)\s+(te\s+|lhe\s+)?(contatar|entrar\s+em\s+contato|escrever|chamar|ligar|responder)|\b(te|lhe)\s+(contat|escrev|cham|lig)(amos|aremos|ar[aã]o|ar[aá])\b|\bj[aá]\s+avisei\b|\bavisei\s+(a|à)\s+equipe\b/i.test(texto || ''));
 
   // Perú/Colombia preguntando el precio: aun con los precios en la información, el modelo
   // a veces derivaba en vez de darlos (prueba en staging 2026-10-24, misma pregunta: una
