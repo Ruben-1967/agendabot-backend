@@ -39,6 +39,17 @@ async function avisarInteresadoWeb({ prisma, asistente, empresaId, telefonoClien
       correo: limpio(extraidos.correo, 120),
       necesidad: limpio(extraidos.necesidad),
     };
+    // Sin ningún dato de contacto no hay a quién llamar: no se manda el correo (visto en NEXIA
+    // el 2026-11-12, un "indíqueme sus datos" se tomó como cierre). Se borra la marca del aviso
+    // para que, cuando la persona sí deje sus datos, el correo salga aunque no pasen 6 horas.
+    if (!datos.telefono && !datos.telefonoEscrito && !datos.correo) {
+      await prisma.conversacion.updateMany({
+        where: { empresaId, telefono: telefonoCliente, canal: 'web' },
+        data: { alertaUrgenteEnviadaEn: null },
+      });
+      console.log(`[chat-web] Derivación sin datos de contacto: no se avisa (${asistente.titulo}, ${telefonoCliente}).`);
+      return;
+    }
     await enviar({ asistente, datos, mensajes });
     console.log(`[chat-web] Aviso de interesado enviado (${asistente.titulo}, ${telefonoCliente}).`);
   } catch (error) {

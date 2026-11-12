@@ -255,10 +255,26 @@ const SES = 'abcdefghijklmnopqrstuvwx';
     const enviados = [];
     await avisarInteresadoWeb({
       prisma, asistente: { titulo: 'X' }, empresaId: 'e', telefonoCliente: `web:${SES}`,
-      deps: { resumir: async () => ({ nombre: `Ana\r\nBcc: otro\t${'x'.repeat(100)}` }), enviar: async (p) => enviados.push(p) },
+      deps: { resumir: async () => ({ nombre: `Ana\r\nBcc: otro\t${'x'.repeat(100)}`, telefono: '+56 9 1234 5678' }), enviar: async (p) => enviados.push(p) },
     });
     const nombre = enviados[0].datos.nombre;
     assert.ok(!/[\r\n\t]/.test(nombre)); assert.ok(nombre.length <= 60); assert.ok(nombre.startsWith('Ana Bcc: otro'));
+  });
+  await caso('sin datos de contacto no se manda el correo y se borra la marca del aviso', async () => {
+    const { avisarInteresadoWeb } = require('../src/lib/avisoInteresadoWeb');
+    const cambios = [];
+    const prisma = { conversacion: {
+      findFirst: async () => ({ mensajes: [{ rol: 'usuario', contenido: 'Mi jefe me grita, ¿es acoso?' }] }),
+      updateMany: async (q) => cambios.push(q),
+    } };
+    const enviados = [];
+    await avisarInteresadoWeb({
+      prisma, asistente: { titulo: 'X' }, empresaId: 'e', telefonoCliente: `web:${SES}`,
+      deps: { resumir: async () => ({ nombre: null, telefono: null, necesidad: 'Consulta por acoso' }), enviar: async (p) => enviados.push(p) },
+    });
+    assert.strictEqual(enviados.length, 0);
+    assert.strictEqual(cambios.length, 1);
+    assert.strictEqual(cambios[0].data.alertaUrgenteEnviadaEn, null);
   });
   await caso('correo al negocio: datos, botón de WhatsApp y texto escapado', () => {
     const { armarCorreoInteresado } = require('../src/services/emailInteresadoWeb');

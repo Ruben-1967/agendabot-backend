@@ -1543,7 +1543,13 @@ ${empresa.guionAtencion ? '' : 'Instrucciones:\n'}${instruccionesModoInformativo
   ];
   // Mismo resguardo que el camino de agendamiento: si el texto promete "te paso con una
   // persona" sin llamar a la herramienta, la conversación nunca se pausa de verdad.
-  const pareceOfertaDeHumanoInventada = (texto) =>
+  // Un mensaje que PIDE los datos ("indíqueme su nombre y su WhatsApp... y un profesional le
+  // contactará") no es un cierre: la persona todavía no dio nada. Visto en NEXIA el 2026-11-12:
+  // se derivaba y salía el aviso por correo sin nombre ni teléfono.
+  const pideDatosDeContacto = (texto) =>
+    /\b(ind[ií]q?u[ée]me|indica(me)?|ind[ií]queme|env[ií](e|a)me|d[ée]jeme|d[ée]jame|dame|deme|necesito|comp[aá]rta(me)?|compárteme|escr[ií]ba(me)?|please\s+(share|send|tell)|send\s+me|tell\s+me|i\s+need|me\s+(envie|passe|informe)|preciso)\b/i.test(texto || '')
+    && /\b(su|tu)\s+(nombre|n[uú]mero|whatsapp|tel[eé]fono)\b|c[oó]digo\s+de\s+pa[ií]s|\byour\s+(name|whatsapp|phone|number)\b|country\s+code|\bseu\s+(nome|whatsapp|telefone|n[uú]mero)\b|c[oó]digo\s+do\s+pa[ií]s/i.test(texto || '');
+  const pareceOfertaDeHumanoInventada = (texto) => !pideDatosDeContacto(texto) && (
     /te (paso|comunico|conecto|derivo)\s+(con|a)\s+(un|una|el|la)?\s*(ejecutivo|persona|agente|humano)/i.test(texto || '')
     || /(una\s+)?persona\s+del\s+equipo\s+(te\s+|se\s+|le\s+)?(contact|confirm|escrib|respond|llam|ayud)/i.test(texto || '')
     || /alguien\s+del\s+equipo\s+(te\s+|se\s+|le\s+)?(contact|confirm|escrib|respond|llam|ayud)/i.test(texto || '')
@@ -1565,7 +1571,7 @@ ${empresa.guionAtencion ? '' : 'Instrucciones:\n'}${instruccionesModoInformativo
     // ("we'll contact you", "I've let the team know") y en portugués ("vamos te contatar",
     // "já avisei a equipe"). Sin esto, el cierre en otro idioma no derivaba y no salía el aviso.
     || (!!empresa.guionAtencion && !/\?/.test(texto || '')
-      && /\b(we|they|our\s+team|the\s+team|someone)\s*(will|'ll|’ll|are\s+going\s+to)\s+(be\s+)?(contact|reach|writ|messag|call|get\s+back|be\s+in\s+touch|in\s+touch)|\bI(\s+have|'ve|’ve)?\s+(let|notified|told|informed|passed)\b[^.!\n]{0,40}\bteam\b|\b(vamos|iremos|vai|v[aã]o)\s+(te\s+|lhe\s+)?(contatar|entrar\s+em\s+contato|escrever|chamar|ligar|responder)|\b(te|lhe)\s+(contat|escrev|cham|lig)(amos|aremos|ar[aã]o|ar[aá])\b|\bj[aá]\s+avisei\b|\bavisei\s+(a|à)\s+equipe\b/i.test(texto || ''));
+      && /\b(we|they|our\s+team|the\s+team|someone)\s*(will|'ll|’ll|are\s+going\s+to)\s+(be\s+)?(contact|reach|writ|messag|call|get\s+back|be\s+in\s+touch|in\s+touch)|\bI(\s+have|'ve|’ve)?\s+(let|notified|told|informed|passed)\b[^.!\n]{0,40}\bteam\b|\b(vamos|iremos|vai|v[aã]o)\s+(te\s+|lhe\s+)?(contatar|entrar\s+em\s+contato|escrever|chamar|ligar|responder)|\b(te|lhe)\s+(contat|escrev|cham|lig)(amos|aremos|ar[aã]o|ar[aá])\b|\bj[aá]\s+avisei\b|\bavisei\s+(a|à)\s+equipe\b/i.test(texto || '')));
 
   // Perú/Colombia preguntando el precio: aun con los precios en la información, el modelo
   // a veces derivaba en vez de darlos (prueba en staging 2026-10-24, misma pregunta: una
