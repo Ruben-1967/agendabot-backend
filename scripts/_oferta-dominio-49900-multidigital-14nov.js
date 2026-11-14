@@ -55,9 +55,14 @@ const CAMBIOS_GUION = [
   ['apertura Chile', /^ {3}En Chile, <precio mensual> se dice así:.*$/m, APERTURA_CHILE, true],
   ['precio punto 4', 'cuesta $9.900 + IVA al mes, y a la cuota 12 el sitio es tuyo, o $95.000 + IVA al año;', PRECIO_CHILE_P4, true],
   ['asistente en el párrafo del precio', 'al final del primer párrafo agrega', 'al final del párrafo del precio agrega', false],
+  // El hosting ya va dentro de los $49.900: su precio suelto solo aplica sin dominio o a la renovación.
+  ['hosting punto 4', 'Hosting: 0,9 UF + IVA al año; contratando hasta',
+    'Hosting (ya incluido en la primera cuota de $49.900; nunca lo sumes aparte a esa cuota. Este valor solo aplica si el cliente no incluye el dominio, y a la renovación desde el segundo año): 0,9 UF + IVA al año; contratando hasta', true],
 ];
 const CAMBIOS_INFO = [
   ['valor', 'Valor: $9.900 + IVA al mes, y a la cuota 12 el sitio es del cliente, o pago anual', VALOR_INFO, true],
+  ['hosting', 'Hosting: 0,9 UF + IVA al año. Contratando hasta',
+    'Hosting (ya incluido en la primera cuota de $49.900; nunca se suma aparte a esa cuota. Este valor solo aplica si el cliente no incluye el dominio, y a la renovación desde el segundo año): 0,9 UF + IVA al año. Contratando hasta', true],
 ];
 
 function aplicar(texto, cambios, donde, errores) {
