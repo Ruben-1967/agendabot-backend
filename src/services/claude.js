@@ -1295,14 +1295,28 @@ function llamadasFueraDeHorario(ahora = new Date()) {
   else if (hoy.diaSemana === 'Sun') motivo = 'es domingo';
   else if (hoy.diaSemana === 'Sat' && hoy.hora >= HORA_FIN_LLAMADAS_SABADO) motivo = 'es sábado en la tarde';
   if (!motivo) return null;
+  return { motivo, proximoDia: proximoDiaHabil(ahora) };
+}
+// "el lunes 26 de octubre": el próximo día que no es sábado, domingo ni feriado.
+function proximoDiaHabil(ahora) {
   for (let i = 1; i <= 10; i++) {
     const dia = new Date(ahora.getTime() + i * 86400000);
     const p = partesFechaChile(dia);
     if (p.diaSemana === 'Sat' || p.diaSemana === 'Sun' || FERIADOS_CHILE.has(p.iso)) continue;
     const texto = new Intl.DateTimeFormat('es-CL', { timeZone: 'America/Santiago', weekday: 'long', day: 'numeric', month: 'long' }).format(dia);
-    return { motivo, proximoDia: `el ${texto.replace(',', '')}` };
+    return `el ${texto.replace(',', '')}`;
   }
-  return { motivo, proximoDia: 'el próximo día hábil' };
+  return 'el próximo día hábil';
+}
+// Ejemplos del sitio (demos) de Multidigital: no se preparan sábado, domingo ni feriados
+// (pedido de Rubén, 2026-11-15). null = hoy sí. Si no, { motivo, proximoDia }.
+function demoFueraDeDiaHabil(ahora = new Date()) {
+  const hoy = partesFechaChile(ahora);
+  let motivo = null;
+  if (FERIADOS_CHILE.has(hoy.iso)) motivo = 'es feriado en Chile';
+  else if (hoy.diaSemana === 'Sun') motivo = 'es domingo';
+  else if (hoy.diaSemana === 'Sat') motivo = 'es sábado';
+  return motivo ? { motivo, proximoDia: proximoDiaHabil(ahora) } : null;
 }
 
 // Instrucciones del modo informativo. Con guionAtencion, el guion manda: no se parte
@@ -1340,6 +1354,10 @@ Fecha de hoy en Chile: ${new Intl.DateTimeFormat('es-CL', { timeZone: 'America/S
   const fuera = empresa.id === EMPRESA_ID_MULTIDIGITAL ? llamadasFueraDeHorario(ahora) : null;
   return fuera ? `
 LLAMADAS: hoy no hacemos llamadas (${fuera.motivo}). Si la persona elige la llamada o pide que la llamen, dile que la llamamos ${fuera.proximoDia} y pregúntale en qué horario de ese día le acomoda. En el cierre de la llamada di "Te llamamos ${fuera.proximoDia} en el horario que nos indicaste" en vez de solo "en el horario que nos indicaste". Nunca prometas llamar hoy.` : '';
+})()}${(() => {
+  const sinDemo = empresa.id === EMPRESA_ID_MULTIDIGITAL ? demoFueraDeDiaHabil(ahora) : null;
+  return sinDemo ? `
+EJEMPLO DEL SITIO: hoy no preparamos ejemplos (${sinDemo.motivo}). En el cierre del ejemplo, en vez de "Te contactamos durante el día por este mismo chat", di "Te enviamos tu ejemplo ${sinDemo.proximoDia} por este mismo chat 🙌". Nunca prometas enviarlo hoy ni "durante el día".` : '';
 })()}
 
 Instrucciones:
@@ -1724,4 +1742,5 @@ module.exports = {
   resumirInteresadoWeb,
   paisDesdeTelefono,
   llamadasFueraDeHorario,
+  demoFueraDeDiaHabil,
 };
