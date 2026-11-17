@@ -13,7 +13,7 @@ const { conIva } = require('../lib/iva');
 // (src/routes/agenda.js): A=1, B=2, C=5, D=ilimitado.
 const PLANES = {
   PLAN_A: { etiqueta: 'Plan A', montoMensual: 14900, citasIncluidas: 150, precioCitaExcedente: 130 },
-  PLAN_B: { etiqueta: 'Plan B', montoMensual: 24900, citasIncluidas: 400, precioCitaExcedente: 85 },
+  PLAN_B: { etiqueta: 'Plan B', montoMensual: 29900, citasIncluidas: 400, precioCitaExcedente: 85 },
   PLAN_C: { etiqueta: 'Plan C', montoMensual: 59900, citasIncluidas: 1000, precioCitaExcedente: 70 },
   // 149900 desde 2026-09-30 (antes 99900) -- mismo valor ya actualizado en
   // el plan real de Flow (agendabot-plan-d) vía /plans/edit.

@@ -27,7 +27,8 @@ const {
   ID_FILA_SERVICIO_OTRO_DEMO,
 } = require('./whatsapp');
 const { fechaLegibleDesdeISO } = require('../lib/formatoFechas');
-const { generarProximosDiasSimulados } = require('../lib/agendaDemoSimulada');
+// Días reales si la demo tiene agenda propia (ver src/lib/agendaDemoReal.js); si no, simulados.
+const { diasParaDemo, grabarCitaDemo } = require('../lib/agendaDemoReal');
 const { TEXTO_REMATE_GENERICO } = require('../config/remateDemoPanel');
 
 // Categoría reservada de CatalogoDemoItem para la captura de remate del
@@ -556,7 +557,7 @@ async function procesarMensajeDemo({ demoAsignada, telefonoCliente, mensaje, nom
       if (indiceServicio != null && serviciosBase[indiceServicio]) {
         nuevoCitaDemo = { servicio: serviciosBase[indiceServicio] };
         respuestaTexto = '¡Perfecto! Estos son los próximos días disponibles:';
-        interactivo = { tipo: 'lista_dias', dias: generarProximosDiasSimulados() };
+        interactivo = { tipo: 'lista_dias', dias: await diasParaDemo(empresaDemo, nuevoCitaDemo?.servicio) };
         nuevoPaso = PASOS.SIMULACION_LIBRE;
         yaResuelto = true;
       }
@@ -673,7 +674,7 @@ async function procesarMensajeDemo({ demoAsignada, telefonoCliente, mensaje, nom
 
             nuevoCitaDemo = { servicio: servicioMencionado };
             respuestaTexto = '¡Claro! Estos son los próximos días disponibles:';
-            interactivo = { tipo: 'lista_dias', dias: generarProximosDiasSimulados() };
+            interactivo = { tipo: 'lista_dias', dias: await diasParaDemo(empresaDemo, nuevoCitaDemo?.servicio) };
             nuevoPaso = PASOS.SIMULACION_LIBRE;
             break;
           }
@@ -733,7 +734,7 @@ async function procesarMensajeDemo({ demoAsignada, telefonoCliente, mensaje, nom
         }
 
         respuestaTexto = '¡Dale! Estos son los próximos días disponibles:';
-        interactivo = { tipo: 'lista_dias', dias: generarProximosDiasSimulados() };
+        interactivo = { tipo: 'lista_dias', dias: await diasParaDemo(empresaDemo, nuevoCitaDemo?.servicio) };
         nuevoPaso = PASOS.SIMULACION_LIBRE;
         break;
       }
@@ -760,7 +761,7 @@ async function procesarMensajeDemo({ demoAsignada, telefonoCliente, mensaje, nom
 
         nuevoCitaDemo = { servicio: servicioMencionado };
         respuestaTexto = '¡Perfecto! Estos son los próximos días disponibles:';
-        interactivo = { tipo: 'lista_dias', dias: generarProximosDiasSimulados() };
+        interactivo = { tipo: 'lista_dias', dias: await diasParaDemo(empresaDemo, nuevoCitaDemo?.servicio) };
         nuevoPaso = PASOS.SIMULACION_LIBRE;
         break;
       }
@@ -787,13 +788,34 @@ async function procesarMensajeDemo({ demoAsignada, telefonoCliente, mensaje, nom
         nuevoCitaDemo = { ...(nuevoCitaDemo || {}), nombre: nombreProspecto };
         const fechaLegible = nuevoCitaDemo.fecha ? fechaLegibleDesdeISO(nuevoCitaDemo.fecha) : 'el día elegido';
 
+        // Demo con agenda propia: la cita se graba de verdad en la empresa de demo
+        // y aparece en la Tabla de citas del panel (null = demo sin agenda real).
+        const citaGrabada = await grabarCitaDemo({
+          empresaId: empresaDemo.id,
+          nombreServicio: nuevoCitaDemo.servicio,
+          fechaISO: nuevoCitaDemo.fecha,
+          hora: nuevoCitaDemo.hora,
+          nombre: nombreProspecto,
+          telefono: telefonoCliente,
+        });
+        if (citaGrabada && !citaGrabada.ok && citaGrabada.motivo === 'HORARIO_YA_NO_DISPONIBLE') {
+          respuestaTexto = 'Uy, esa hora se acaba de tomar 😅 Elige otra de la lista 👇';
+          interactivo = { tipo: 'lista_dias', dias: await diasParaDemo(empresaDemo, nuevoCitaDemo.servicio) };
+          nuevoCitaDemo = { servicio: nuevoCitaDemo.servicio };
+          nuevoPaso = PASOS.SIMULACION_LIBRE;
+          break;
+        }
+        const lineaPanel = citaGrabada?.ok
+          ? `\n\n🗓️ Ya quedó en la agenda de *${citaGrabada.recursoNombre}*: si abres el panel, la ves en la Tabla de citas.`
+          : '';
+
         respuestaTexto =
           `📋 *Resumen de tu cita en ${empresaDemo.nombre}*\n\n` +
           `${nuevoCitaDemo.servicio ? `• Servicio: ${nuevoCitaDemo.servicio}\n` : ''}` +
           `• Día: ${fechaLegible}\n` +
           `• Hora: ${nuevoCitaDemo.hora || '-'}\n` +
           `• Nombre: ${nombreProspecto}\n\n` +
-          `✅ Listo, quedaste agendado.\n\n` +
+          `✅ Listo, quedaste agendado.${lineaPanel}\n\n` +
           `Y algo que a los negocios les encanta: 24 horas antes te llegaría un recordatorio automático por este ` +
           `mismo WhatsApp. Si no puedes asistir, solo respondes "No" y tu cupo se libera al instante — y se le ` +
           `ofrece automáticamente a la primera persona en lista de espera. Cero llamadas, cero planillas.`;
@@ -892,7 +914,7 @@ async function procesarMensajeDemo({ demoAsignada, telefonoCliente, mensaje, nom
           if (servicioMencionado) {
             nuevoCitaDemo = { servicio: servicioMencionado };
             respuestaTexto = '¡Claro! Estos son los próximos días disponibles:';
-            interactivo = { tipo: 'lista_dias', dias: generarProximosDiasSimulados() };
+            interactivo = { tipo: 'lista_dias', dias: await diasParaDemo(empresaDemo, nuevoCitaDemo?.servicio) };
             nuevoPaso = PASOS.SIMULACION_LIBRE;
             break;
           }

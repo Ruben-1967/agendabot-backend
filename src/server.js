@@ -52,7 +52,7 @@ const { sincronizarLeadDesdeDemo } = require('./services/leadSync');
 const { CIERRE_ELABORADO_DEMO } = require('./config/remateDemoPanel');
 const authVendedorRouter = require('./routes/authVendedor');
 const demosRouter = require('./routes/demos');
-const { generarHorasSimuladasParaDia } = require('./lib/agendaDemoSimulada');
+const { horasParaDemo } = require('./lib/agendaDemoReal');
 const { intentarMarcarProcesado } = require('./lib/idempotenciaWebhook');
 const { guardarOrigenAnuncio } = require('./lib/origenAnuncio');
 const { renderPanelDemo } = require('./services/panelDemoHtml');
@@ -879,7 +879,7 @@ app.post('/webhook/whatsapp', verificarFirmaWebhookWhatsApp, async (req, res) =>
         const listReplyIdDemo = mensaje.interactive?.list_reply?.id;
         const diaElegidoDemo = decodificarFilaDia(listReplyIdDemo);
         if (diaElegidoDemo) {
-          const horasDemo = generarHorasSimuladasParaDia(diaElegidoDemo.fecha);
+          const horasDemo = await horasParaDemo(demoAsignada, diaElegidoDemo.fecha);
           if (horasDemo.length === 0) {
             const textoSinCupo = 'Ese día ya no tiene cupo disponible, ¿quieres que te muestre otro?';
             await sendWhatsAppTextMessage({
