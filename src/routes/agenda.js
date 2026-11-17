@@ -178,12 +178,14 @@ const mañanaChile = horaChileAFechaUTC(hoyChileISO, '23:59');
       },
     });
 
-    // 2. CONFIRMADAS (solo CONFIRMADA hoy)
+    // 2. CONFIRMADAS hoy: CONFIRMADA o ya atendida (COMPLETADA). Antes solo
+    // contaba CONFIRMADA, y la tarjeta bajaba a 0 a medida que el negocio marcaba
+    // las atenciones del día (pedido de Rubén, 17-nov).
    const confirmadas = await prisma.cita.count({
       where: {
         empresaId,
         ...filtroRecurso,
-        estado: 'CONFIRMADA',
+        estado: { in: ['CONFIRMADA', 'COMPLETADA'] },
         fechaHoraInicio: {
           gte: hoyChile,
           lt: mañanaChile,
@@ -256,9 +258,12 @@ const agendaHoy = await prisma.cita.findMany({
 
     // ------------------------------------------------------------
     // KPIs de negocio para el Dashboard (gráficos) — ver Venta en
-    // schema.prisma, ya usado por POST /clientes/:id/ventas. Las ventas no
-    // están asociadas a un profesional, así que filtroRecurso no aplica acá.
+    // schema.prisma, ya usado por POST /clientes/:id/ventas. Con un profesional
+    // elegido (recursoId), las ventas se filtran por Venta.recursoAgendableId:
+    // solo cuentan las que tienen ese profesional asignado (17-nov; antes el
+    // filtro movía solo las citas y los montos seguían siendo del negocio entero).
     // ------------------------------------------------------------
+    const filtroVentaRecurso = recursoId ? { recursoAgendableId: recursoId } : {};
     function fechaChileISO(fecha) {
       const p = formatter.formatToParts(fecha);
       return `${p.find(x => x.type === 'year').value}-${p.find(x => x.type === 'month').value}-${p.find(x => x.type === 'day').value}`;
@@ -273,9 +278,9 @@ const agendaHoy = await prisma.cita.findMany({
     const inicioSemanaChile = new Date(hoyChile.getTime() - diasDesdeLunes * 24 * 60 * 60 * 1000);
 
     const [ventasHoyAgg, ventasSemanaAgg, atencionesHoy] = await Promise.all([
-      prisma.venta.aggregate({ where: { empresaId, fecha: { gte: hoyChile, lt: mañanaChile } }, _sum: { monto: true } }),
-      prisma.venta.aggregate({ where: { empresaId, fecha: { gte: inicioSemanaChile, lt: mañanaChile } }, _sum: { monto: true } }),
-      prisma.venta.count({ where: { empresaId, fecha: { gte: hoyChile, lt: mañanaChile } } }),
+      prisma.venta.aggregate({ where: { empresaId, ...filtroVentaRecurso, fecha: { gte: hoyChile, lt: mañanaChile } }, _sum: { monto: true } }),
+      prisma.venta.aggregate({ where: { empresaId, ...filtroVentaRecurso, fecha: { gte: inicioSemanaChile, lt: mañanaChile } }, _sum: { monto: true } }),
+      prisma.venta.count({ where: { empresaId, ...filtroVentaRecurso, fecha: { gte: hoyChile, lt: mañanaChile } } }),
     ]);
     const montoHoy = ventasHoyAgg._sum.monto || 0;
     const montoSemana = ventasSemanaAgg._sum.monto || 0;
@@ -334,7 +339,7 @@ const agendaHoy = await prisma.cita.findMany({
     // 8. ATENCIONES POR TIPO DE SERVICIO — Venta.categoriaProducto, último año
     const hace1Anio = new Date(hoyChile.getTime() - 365 * 24 * 60 * 60 * 1000);
     const ventasParaTipo = await prisma.venta.findMany({
-      where: { empresaId, fecha: { gte: hace1Anio, lt: mañanaChile } },
+      where: { empresaId, ...filtroVentaRecurso, fecha: { gte: hace1Anio, lt: mañanaChile } },
       select: { categoriaProducto: true },
     });
     const tipoMap = new Map();
@@ -357,7 +362,7 @@ const agendaHoy = await prisma.cita.findMany({
         select: { fechaHoraInicio: true },
       }),
       prisma.venta.findMany({
-        where: { empresaId, fecha: { gte: inicioRangoMensual, lt: mañanaChile } },
+        where: { empresaId, ...filtroVentaRecurso, fecha: { gte: inicioRangoMensual, lt: mañanaChile } },
         select: { fecha: true, monto: true },
       }),
     ]);
@@ -450,8 +455,12 @@ const agendaHoy = await prisma.cita.findMany({
       citasProximos7Dias,
       citasPorDia,
       atencionesPorTipo,
+      // Período del gráfico "Atenciones por tipo de servicio" (último año, hora Chile).
+      atencionesPorTipoDesde: fechaChileISO(hace1Anio),
+      atencionesPorTipoHasta: hoyChileISO,
       citasPorMes,
       dineroPorMes,
+      ventasFiltradasPorProfesional: Boolean(recursoId),
     });
   } catch (error) {
     console.error('Error en GET /agenda/dashboard/:empresaId:', error);
