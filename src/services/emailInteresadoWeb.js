@@ -32,7 +32,10 @@ function fechaChile(fecha) {
 function armarCorreoInteresado({ asistente, datos, mensajes, ahora = new Date() }) {
   const negocio = asistente.nombreNegocio || asistente.titulo;
   const nombre = datos.nombre || 'Una persona interesada';
-  const saludo = `Hola${datos.nombre ? ` ${datos.nombre.split(' ')[0]}` : ''}, te escribo de ${negocio} por tu consulta en nuestro sitio web.`;
+  // Demo de sitio (2026-11-18): el correo le llega a Multidigital, no al negocio (aún no es cliente).
+  const saludo = asistente.demo
+    ? `Hola${datos.nombre ? ` ${datos.nombre.split(' ')[0]}` : ''}, te escribo de Multidigital por tu consulta en el sitio de ejemplo de ${negocio}.`
+    : `Hola${datos.nombre ? ` ${datos.nombre.split(' ')[0]}` : ''}, te escribo de ${negocio} por tu consulta en nuestro sitio web.`;
   const linkWhatsApp = datos.telefono ? `https://wa.me/${datos.telefono}?text=${encodeURIComponent(saludo)}` : null;
 
   const filas = [
@@ -47,11 +50,15 @@ function armarCorreoInteresado({ asistente, datos, mensajes, ahora = new Date() 
     .map((m) => `<p style="margin:0 0 8px"><b style="color:${m.rol === 'usuario' ? '#0B1D3A' : '#1D4ED8'}">${m.rol === 'usuario' ? 'Cliente' : 'Asistente'}:</b> ${escapar(m.contenido).replace(/\n/g, '<br>')}</p>`)
     .join('');
 
-  const asunto = `🔔 Nuevo interesado desde tu sitio web: ${datos.nombre || 'sin nombre'}`;
+  const asunto = asistente.demo
+    ? `🔔 [Demo ${negocio}] Alguien dejó sus datos: ${datos.nombre || 'sin nombre'}`
+    : `🔔 Nuevo interesado desde tu sitio web: ${datos.nombre || 'sin nombre'}`;
   const html = `
 <div style="font-family:Segoe UI,Arial,sans-serif;max-width:560px;margin:0 auto;color:#0B1D3A">
   <h2 style="margin:0 0 6px">${escapar(nombre)} pidió que lo contactes</h2>
-  <p style="margin:0 0 18px;color:#475569">Escribió en el chat de tu sitio web el ${escapar(fechaChile(ahora))}.</p>
+  <p style="margin:0 0 18px;color:#475569">${asistente.demo
+    ? `Escribió en el asistente de la <b>demo de ${escapar(negocio)}</b> (aún no es cliente) el ${escapar(fechaChile(ahora))}. Si es el propio prospecto probando, es buen momento para hacerle seguimiento.`
+    : `Escribió en el chat de tu sitio web el ${escapar(fechaChile(ahora))}.`}</p>
   <table style="width:100%;border-collapse:collapse;margin:0 0 20px">
     ${filas.map(([k, v]) => `<tr><td style="padding:8px 10px;border-bottom:1px solid #E2E8F0;color:#475569;width:130px">${k}</td><td style="padding:8px 10px;border-bottom:1px solid #E2E8F0;font-weight:600">${escapar(v)}</td></tr>`).join('')}
   </table>

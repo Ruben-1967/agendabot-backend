@@ -101,19 +101,21 @@ async function main() {
   const prisma = require('../src/lib/prisma');
   try {
     const existente = await prisma.asistenteWeb.findUnique({ where: { clave: datos.clave } });
+    if (existente?.demo) throw new Error(`"${datos.clave}" es el asistente de una demo: usa scripts/alta-asistente-demo.js`);
     if (existente && datos.empresaId && datos.empresaId !== existente.empresaId) {
       throw new Error(`La clave "${datos.clave}" ya es de la empresa ${existente.empresaId}, no de ${datos.empresaId}. Revisa el archivo.`);
     }
     const empresaId = datos.empresaId || existente?.empresaId || null;
     const empresa = empresaId ? await prisma.empresa.findUnique({
       where: { id: empresaId },
-      include: { suscripcion: true, asistenteWeb: true, _count: { select: { usuarios: true } } },
+      include: { suscripcion: true, asistentesWeb: true, _count: { select: { usuarios: true } } },
     }) : null;
     if (empresaId && !empresa) throw new Error(`No existe la empresa ${empresaId}`);
     if (empresa && empresa.id === EMPRESA_ID_MULTIDIGITAL) throw new Error('Este script no es para la empresa de Multidigital');
-    if (empresa && empresa.asistenteWeb && empresa.asistenteWeb.clave !== datos.clave) {
-      throw new Error(`La empresa ${empresa.id} ya tiene el asistente "${empresa.asistenteWeb.clave}".`);
-    }
+    // Un negocio cliente tiene UN asistente (las varias claves por empresa son solo para la
+    // empresa de demos, que se da de alta con scripts/alta-asistente-demo.js).
+    const otro = empresa?.asistentesWeb?.find((a) => a.clave !== datos.clave);
+    if (otro) throw new Error(`La empresa ${empresa.id} ya tiene el asistente "${otro.clave}".`);
     // Empresa que ya usa AgendaBot (bot de WhatsApp, suscripción o usuarios del panel): este
     // script le cambiaría el modo, la información y el guion. Solo con FORZAR=1, a propósito.
     if (empresa && !existente && process.env.FORZAR !== '1'

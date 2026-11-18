@@ -232,7 +232,8 @@ model Empresa {
   origenCaso     String?
 
   // Asistente 24/7 del sitio web del negocio (chat del sitio, canal 'web'), si lo tiene.
-  asistenteWeb   AsistenteWeb?
+  // Normalmente uno; la empresa "Demos Multidigital" tiene uno por demo (2026-11-18).
+  asistentesWeb  AsistenteWeb[]
 
   @@index([rubroTemplateId])
   @@index([vendedorId])
@@ -1686,7 +1687,7 @@ model AsistenteWeb {
   id                String    @id @default(uuid())
   clave             String    @unique
   empresa           Empresa   @relation(fields: [empresaId], references: [id])
-  empresaId         String    @unique
+  empresaId         String    // ya no es único (18-nov): la empresa de demos tiene varias claves
   titulo            String    // "Asistente IACE"
   nombreNegocio     String    // para el saludo del correo al negocio
   saludo            String    @db.Text
@@ -1697,8 +1698,17 @@ model AsistenteWeb {
   conversacionesMes Int       @default(150) // plan: 150 (Asistente) o 400 (Pro)
   activo            Boolean   @default(true)
   gratisHasta       DateTime? // fin del período gratis (oferta 3 meses), para avisarle antes
+  // Asistente de una DEMO de sitio web (2026-11-18): todas comparten la empresa "Demos
+  // Multidigital"; la información y el guion de cada demo van aquí y reemplazan los de la
+  // empresa solo para esta clave. Ver src/lib/asistenteWeb.js#empresaParaAsistente.
+  demo              Boolean   @default(false)
+  informacion       String?   @db.Text
+  guion             String?   @db.Text
+  venceEn           DateTime? // pasada esta fecha responde "no disponible" (demo retirada)
   creadoEn          DateTime  @default(now())
   actualizadoEn     DateTime  @updatedAt
+
+  @@index([empresaId])
 }
 
 model MovimientoClienteWeb {

@@ -1,0 +1,9 @@
+{
+  "clave": "demo-nombre-del-negocio",
+  "nombreNegocio": "Nombre del Negocio",
+  "whatsapp": "56900000000",
+  "color": "#1D4ED8",
+  "dias": 45,
+  "conversacionesMes": 30,
+  "informacion": "Quiénes somos: <rubro> en <ciudad>, Chile.\nServicios (de ejemplo, se ajustan a lo que ofrece el negocio): ...\nPlanes (de ejemplo): ...\nZona de atención: ...\nPrecios: no están publicados; cada servicio se cotiza sin compromiso.\nContacto: WhatsApp +56 9 0000 0000"
+}

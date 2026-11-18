@@ -15,6 +15,7 @@ const rateLimit = require('express-rate-limit');
 const {
   MAX_MENSAJES_POR_SESION, MAX_LARGO_MENSAJE, REGEX_SESION, MAX_CONVERSACIONES_NUEVAS_POR_IP_DIA,
   crearBuscadorAsistentes, origenPermitido, inicioMesChile,
+  empresaParaAsistente, telefonoWeb, demoVencida,
 } = require('../lib/asistenteWeb');
 const { avisarInteresadoWeb } = require('../lib/avisoInteresadoWeb');
 
@@ -38,13 +39,15 @@ const escaparHtml = (t) => String(t ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&
 // acceso o eliminación. Si cambia el tratamiento (plazos, proveedores), actualizar este texto.
 function paginaPrivacidad(asistente) {
   const negocio = escaparHtml(asistente.nombreNegocio || asistente.titulo);
-  const esMultidigital = /^multidigital$/i.test(String(asistente.nombreNegocio || '').trim());
+  // En una demo, el responsable es Multidigital: el negocio todavía no es cliente.
+  const esMultidigital = asistente.demo || /^multidigital$/i.test(String(asistente.nombreNegocio || '').trim());
   const correo = escaparHtml((asistente.correoAvisos || [])[0] || 'contacto@multidigital.cl');
   return `<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Aviso de privacidad del asistente · ${negocio}</title>
 <style>body{font-family:system-ui,-apple-system,"Segoe UI",Arial,sans-serif;color:#0B1D3A;max-width:720px;margin:0 auto;padding:32px 20px;line-height:1.6}h1{font-size:24px}h2{font-size:17px;margin-top:26px}p,li{font-size:15px;color:#334155}</style></head><body>
 <h1>Aviso de privacidad del asistente de ${negocio}</h1>
-<p>Este aviso explica qué hacemos con los datos que escribes en el chat del sitio web de ${negocio} (el «asistente»).</p>
+<p>Este aviso explica qué hacemos con los datos que escribes en el chat del sitio web de ${negocio} (el «asistente»).</p>${asistente.demo
+    ? `<p><b>Este sitio es un ejemplo</b> preparado por Multidigital para mostrarle a ${negocio} cómo podría verse su sitio con un asistente. Los datos que dejes aquí los recibe Multidigital.</p>` : ''}
 <h2>Quién es responsable</h2>
 <p>${esMultidigital
     ? '<b>Multidigital</b> (multidigital.cl) es responsable de tus datos.'
@@ -53,7 +56,7 @@ function paginaPrivacidad(asistente) {
 <ul><li>Los mensajes que escribes en el chat y las respuestas del asistente.</li><li>Los datos que decidas entregar para que te contacten, como tu nombre, tu número de WhatsApp o teléfono y tu correo.</li></ul>
 <p>No pidas ni entregues datos sensibles (de salud, financieros o claves) por este chat.</p>
 <h2>Para qué se usan</h2>
-<p>Para responder tus consultas y, si lo pides, para que el equipo de ${negocio} te contacte. Cuando dejas tus datos, se le envían a ${negocio} por correo junto con la conversación${esMultidigital ? '' : ', con una copia a Multidigital para el control del servicio'}. No se usan para publicidad de terceros ni se venden.</p>
+<p>Para responder tus consultas y, si lo pides, para que ${asistente.demo ? 'Multidigital' : `el equipo de ${negocio}`} te contacte. Cuando dejas tus datos, se le envían a ${asistente.demo ? 'Multidigital' : negocio} por correo junto con la conversación${esMultidigital ? '' : ', con una copia a Multidigital para el control del servicio'}. No se usan para publicidad de terceros ni se venden.</p>
 <h2>Cómo funciona el asistente</h2>
 <p>Las respuestas las genera un sistema de inteligencia artificial y pueden tener errores; la información oficial siempre la confirma el equipo de ${negocio}. Para funcionar, los mensajes son procesados por proveedores tecnológicos de Multidigital ubicados fuera de Chile (servicio de inteligencia artificial, servidores y envío de correos), que los tratan solo para prestar el servicio.</p>
 <h2>Cuánto tiempo se guardan</h2>
@@ -113,7 +116,8 @@ function crearRouterChatWeb({ prisma, procesarMensajeEntrante, avisarInteresado 
 
   router.get('/config', async (req, res) => {
     const asistente = await buscarAsistente(String(req.query.clave || ''));
-    if (!asistente || !origenPermitido(asistente, req.get('origin'))) return res.status(403).json({ error: 'Asistente no disponible en este sitio' });
+    // Demo vencida: no se muestra la burbuja (el widget no aparece si config falla).
+    if (!asistente || !origenPermitido(asistente, req.get('origin')) || demoVencida(asistente)) return res.status(403).json({ error: 'Asistente no disponible en este sitio' });
     res.json({ titulo: asistente.titulo, saludo: asistente.saludo, color: asistente.color, whatsapp: asistente.whatsapp || null });
   });
 
@@ -144,13 +148,17 @@ function crearRouterChatWeb({ prisma, procesarMensajeEntrante, avisarInteresado 
     const asistente = await buscarAsistente(String(clave || ''));
     if (!asistente || !origenPermitido(asistente, req.get('origin'))) return res.status(403).json({ error: 'Asistente no disponible en este sitio' });
     if (typeof sesion !== 'string' || !REGEX_SESION.test(sesion)) return res.status(400).json({ error: 'Sesión inválida' });
+    // Demo retirada o vencida: no se llama al modelo.
+    if (demoVencida(asistente)) return res.json({ respuesta: textoLimite(asistente), derivado: false, limite: true });
     const mensaje = typeof texto === 'string' ? texto.trim() : '';
     if (!mensaje) return res.status(400).json({ error: 'Mensaje vacío' });
     if (mensaje.length > MAX_LARGO_MENSAJE) return res.status(400).json({ error: `El mensaje es muy largo (máximo ${MAX_LARGO_MENSAJE} caracteres)` });
 
-    const telefonoCliente = `web:${sesion}`;
+    const telefonoCliente = telefonoWeb(asistente, clave, sesion);
     try {
-      const empresa = await prisma.empresa.findUnique({ where: { id: asistente.empresaId }, include: { rubroTemplate: true } });
+      const empresaBase = await prisma.empresa.findUnique({ where: { id: asistente.empresaId }, include: { rubroTemplate: true } });
+      // En demos, la información y el guion de esta clave reemplazan a los de la empresa compartida.
+      const empresa = empresaParaAsistente(empresaBase, asistente);
       if (!empresa || !empresa.modoInformativo) return res.json({ respuesta: textoLimite(asistente), derivado: false, limite: true });
 
       const conversacion = await prisma.conversacion.findFirst({
@@ -168,9 +176,13 @@ function crearRouterChatWeb({ prisma, procesarMensajeEntrante, avisarInteresado 
         });
       }
       if (!conversacion) {
-        // Conversación nueva: cuenta para el tope del plan.
+        // Conversación nueva: cuenta para el tope del plan. En demos (empresa compartida), solo
+        // las de esta clave.
         const delMes = await prisma.conversacion.count({
-          where: { empresaId: empresa.id, canal: 'web', creadoEn: { gte: inicioMesChile() } },
+          where: {
+            empresaId: empresa.id, canal: 'web', creadoEn: { gte: inicioMesChile() },
+            ...(asistente.demo ? { telefono: { startsWith: `web:${String(clave).toLowerCase()}:` } } : {}),
+          },
         });
         if (delMes >= asistente.conversacionesMes) {
           console.warn(`[chat-web] ${clave}: tope de ${asistente.conversacionesMes} conversaciones del mes alcanzado.`);

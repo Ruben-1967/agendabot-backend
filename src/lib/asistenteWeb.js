@@ -55,7 +55,39 @@ function desdeFila(fila) {
     origenes: (fila.origenes || []).map((h) => String(h).toLowerCase()),
     correoAvisos: fila.correoAvisos || [],
     conversacionesMes: fila.conversacionesMes,
+    demo: !!fila.demo,
+    informacion: fila.informacion || null,
+    guion: fila.guion || null,
+    venceEn: fila.venceEn || null,
   };
+}
+
+// --- Asistentes de DEMOS (2026-11-18) ---------------------------------------------------
+// Todas las demos de muestras.multidigital.cl comparten UNA empresa ("Demos Multidigital").
+// Cada clave trae su propia información y guion, que reemplazan a los de la empresa solo
+// para esa conversación (el motor usa el objeto empresa que recibe, no lo vuelve a leer).
+function empresaParaAsistente(empresa, asistente) {
+  if (!asistente?.demo || !empresa) return empresa;
+  return {
+    ...empresa,
+    nombre: asistente.nombreNegocio,
+    informacionAdicional: asistente.informacion || empresa.informacionAdicional,
+    guionAtencion: asistente.guion || empresa.guionAtencion,
+    // Datos de la empresa contenedora que no son del negocio de la demo.
+    sitioWeb: null,
+    direccion: null,
+  };
+}
+
+// Contacto de la conversación. Todas las demos viven en el mismo dominio, así que el widget
+// guarda la MISMA sesión para todas: en demos se antepone la clave para que una persona que
+// mira dos demos no mezcle conversaciones (ni el tope de una demo cuente las de otra).
+function telefonoWeb(asistente, clave, sesion) {
+  return asistente?.demo ? `web:${String(clave).toLowerCase()}:${sesion}` : `web:${sesion}`;
+}
+
+function demoVencida(asistente, ahora = new Date()) {
+  return !!(asistente?.demo && asistente.venceEn && new Date(asistente.venceEn) <= ahora);
 }
 
 function crearBuscadorAsistentes(prisma, { ahora = () => Date.now() } = {}) {
@@ -109,4 +141,5 @@ function inicioMesChile(ahora = new Date()) {
 module.exports = {
   ASISTENTES_WEB, MAX_MENSAJES_POR_SESION, MAX_LARGO_MENSAJE, REGEX_SESION, MAX_CONVERSACIONES_NUEVAS_POR_IP_DIA,
   asistentePorClave, crearBuscadorAsistentes, origenPermitido, inicioMesChile, REGEX_CLAVE,
+  empresaParaAsistente, telefonoWeb, demoVencida,
 };
