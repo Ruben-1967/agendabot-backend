@@ -85,7 +85,7 @@
       '.btn img{width:100%;height:100%;border-radius:50%;object-fit:cover}' +
       '.btn .en-linea{position:absolute;top:1px;right:1px;width:15px;height:15px;border-radius:50%;background:#22C55E;border:2.5px solid #fff}' +
       '.btn .ia{position:absolute;bottom:-6px;left:50%;transform:translateX(-50%);background:#fff;color:' + color + ';font-size:10px;font-weight:800;letter-spacing:.06em;padding:2px 7px;border-radius:999px;box-shadow:0 2px 6px rgba(0,0,0,.2)}' +
-      '.btn.pulso::before{content:"";position:absolute;inset:-3px;border-radius:50%;border:3px solid ' + color + ';animation:pulso 1.8s ease-out 4}' +
+      '.btn.pulso::before{content:"";position:absolute;inset:-3px;border-radius:50%;border:3px solid ' + color + ';animation:pulso 2.2s ease-out infinite}' +
       '@keyframes pulso{0%{transform:scale(1);opacity:.7}100%{transform:scale(1.6);opacity:0}}' +
       '@media (prefers-reduced-motion:reduce){.btn.pulso::before{animation:none}}' +
       '.teaser{position:fixed;' + lado + ':90px;bottom:30px;z-index:2147483000;max-width:240px;background:#fff;color:#0B1D3A;padding:10px 14px;border-radius:14px;box-shadow:0 6px 20px rgba(0,0,0,.18);font-size:14px;line-height:1.4;cursor:pointer;white-space:pre-line}' +
@@ -171,7 +171,7 @@
     historial.forEach(function (m) { pintar(m.r, m.t); });
 
     function abrir() {
-      panel.classList.add('abierto'); teaser.hidden = true; guardar('asistenteWeb:' + clave + ':visto', '1');
+      panel.classList.add('abierto'); teaser.hidden = true; btn.classList.remove('pulso'); guardar('asistenteWeb:' + clave + ':visto', '1');
       setTimeout(function () { input.focus(); }, 50);
     }
     function cerrar() { panel.classList.remove('abierto'); }
