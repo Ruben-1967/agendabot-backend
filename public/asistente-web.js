@@ -179,10 +179,13 @@
     teaser.addEventListener('click', abrir);
     root.querySelector('.x').addEventListener('click', cerrar);
 
-    // Invitación la primera vez, a los 6 segundos.
+    // Invitación la primera vez, a los 6 segundos; se muestra 5 segundos y desaparece sola.
     if (!leer('asistenteWeb:' + clave + ':visto')) {
       setTimeout(function () {
-        if (!panel.classList.contains('abierto')) { teaser.textContent = config.saludo; teaser.hidden = false; }
+        if (!panel.classList.contains('abierto')) {
+          teaser.textContent = config.saludo; teaser.hidden = false;
+          setTimeout(function () { teaser.hidden = true; }, 5000);
+        }
       }, 6000);
     }
 
